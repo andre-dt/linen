@@ -10,7 +10,14 @@ export default defineConfig({
       // The kernel speaks two channels over one socket: JSON for
       // commands, binary for meshes. Vite proxies both so the browser
       // sees a single origin in development.
-      "/session": { target: "ws://localhost:8080", ws: true },
+      //
+      // Namespaced under /api on purpose: a bare "/session" prefix also
+      // matches the source file session.ts and sends it to the kernel.
+      "/api": {
+        target: "ws://localhost:8080",
+        ws: true,
+        rewrite: (path) => path.replace(/^\/api/, ""),
+      },
     },
   },
 
