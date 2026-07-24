@@ -1,15 +1,28 @@
 // =====================================================================
 // packages/kernel-occt/native/include/linen.h
 //
-// The C boundary between Rust and OCCT. Deliberately narrow in
-// SURFACE and thick in PAYLOAD: every crossing costs, so we pass whole
-// arrays rather than looping in Rust and calling per element.
+// The C boundary between Rust and OCCT.
+//
+// C++ OWNS NO STATE. There is no session here, no registry, no mutex:
+// the shape registry, the per-session lock and every buffer live in
+// Rust, where ownership is checked by the compiler rather than by
+// review.
+//
+// That split is the whole point. OCCT itself is twenty-five-year-old,
+// heavily exercised code — its remaining memory bugs are not the ones
+// we will hit. The bugs that matter live in the code written this
+// week: the registry, the lifetime bookkeeping, the lock discipline.
+// Keeping that in Rust makes a forgotten check a compile error, rather
+// than an invalid TopoDS_Shape reaching OCCT — which segfaults and
+// takes every other session on the server down with it.
+//
+// What remains here is a pure function library: shapes in, shapes out.
+//
+// Narrow in SURFACE, thick in PAYLOAD. Every crossing costs, so we
+// pass whole arrays rather than looping on the Rust side:
 //
 //   wrong:  for (edge in edges) fillet_edge(body, edge, radius)
 //   right:  fillet(body, edges, radii, count)
-//
-// NOTHING here exposes an OCCT type. TopoDS_Shape lives in a registry
-// on the native side; callers only ever see a body_id integer.
 // =====================================================================
 
 #ifndef LINEN_H
@@ -22,15 +35,43 @@
 extern "C" {
 #endif
 
-typedef uint32_t linen_body_id;
-typedef uint32_t linen_face_id;
-typedef uint32_t linen_sketch_id;
-typedef void* linen_session;
+// =====================================================================
+// OPAQUE SHAPES
+// =====================================================================
+// A heap-allocated TopoDS_Shape. Rust holds these in its registry and
+// hands out integer ids to TypeScript; no OCCT type is ever named
+// outside this header.
+//
+// Every shape returned below is owned by the CALLER and released with
+// linen_shape_free. Rust's Drop does that automatically — exactly the
+// guarantee a C++ registry could not give us.
 
-// --- errors as values -------------------------------------------------
+typedef void* linen_shape;
+
+void linen_shape_free(linen_shape shape);
+
+/// Deep copy, for when one shape feeds two operations: OCCT operations
+/// may consume or mutate their input.
+linen_shape linen_shape_clone(linen_shape shape);
+
+/// True when `entity` is part of `body`.
+///
+/// CadQuery carries a live `TODO: we segfault` for skipping this check
+/// in its fillet path. Across our boundary an entity from the wrong
+/// body would do the same, so every local operation asks first.
+int linen_shape_contains(linen_shape body, linen_shape entity);
+
+// =====================================================================
+// ERRORS AS VALUES
+// =====================================================================
 // A C++ exception must NEVER escape into N-API: it would tear down the
-// process. Every entry point below wraps its body in try/catch and
+// process. Every entry point wraps its body in LINEN_GUARD, which
 // converts Standard_Failure into this struct.
+//
+// The message is a heap buffer owned by the CALLER. Rust copies it
+// into a String and calls linen_string_free — no "valid until the next
+// call" contract, because that is precisely the sort of contract that
+// turns into a use-after-free.
 
 typedef enum {
   LINEN_OK = 0,
@@ -42,23 +83,18 @@ typedef enum {
 
 typedef struct {
   linen_status status;
-  // Owned by the session; valid until the next call on it.
-  const char* message;
+  /// Null when status is LINEN_OK. Otherwise owned by the caller.
+  char* message;
 } linen_error;
 
-// --- session ----------------------------------------------------------
-// One session per user session. It owns every live shape, so expiry
-// frees all of it at once. Release is EXPLICIT: OCCT holds a great
-// deal of memory and the V8 collector never sees any of it.
+void linen_string_free(char* message);
 
-linen_session linen_session_open(void);
-void linen_session_close(linen_session session);
-void linen_session_release(linen_session session, const linen_body_id* bodies, size_t count);
-size_t linen_session_live_count(linen_session session);
-
-// --- sketch -----------------------------------------------------------
-// Curves arrive as a flat packed buffer rather than a struct array:
-// zero-copy from the Float64Array on the JavaScript side.
+// =====================================================================
+// SKETCH
+// =====================================================================
+// Curves arrive as one flat packed buffer rather than a struct array:
+// zero-copy from the Float64Array on the JavaScript side, and one
+// crossing instead of one per curve.
 //
 //   [kind, param_count, params...] repeated
 //
@@ -66,7 +102,7 @@ size_t linen_session_live_count(linen_session session);
 //   kind 1 arc      x1 y1 x2 y2 bulge
 //   kind 2 circle   cx cy radius
 //   kind 3 ellipse  cx cy rx ry rotation
-//   kind 4 spline   count x1 y1 x2 y2 ... closed
+//   kind 4 spline   count x1 y1 x2 y2 ...
 
 typedef struct {
   const double* curves;
@@ -77,43 +113,56 @@ typedef struct {
 } linen_sketch_input;
 
 linen_error linen_sketch_build(
-  linen_session session,
   const linen_sketch_input* input,
-  linen_sketch_id* out_sketch);
+  linen_shape* out_face);
 
-// --- extrude ----------------------------------------------------------
-// Expressions are already resolved: the boundary only ever sees
-// numbers.
+// =====================================================================
+// EXTRUDE
+// =====================================================================
+// Expressions are already resolved: the boundary only sees numbers.
 
 typedef struct {
-  linen_sketch_id profile;
-  // Zero vector means "use the sketch normal".
+  linen_shape profile;
+  /// A zero vector means "use the sketch normal".
   double direction[3];
   double forward;
   double backward;
   double taper;
 } linen_extrude_input;
 
-// Face roles, in the DETERMINISTIC order the TypeScript side declares.
-// Stable ordering is what lets `created(reference, "side")` survive a
-// parameter change: if OCCT reordered faces between runs, every stored
-// reference would silently repoint.
+typedef enum {
+  LINEN_ROLE_START = 0,
+  LINEN_ROLE_END = 1,
+  LINEN_ROLE_SIDE = 2,
+} linen_face_role;
+
+/**
+ * Faces come back as parallel arrays in a DETERMINISTIC order.
+ *
+ * Stable ordering is what lets a stored selector survive a parameter
+ * change. It is the problem CadQuery never solved: there, equality is
+ * OCCT pointer identity and every boolean regenerates the shapes, so
+ * `>Z[-2]` can silently pick a different face after an edit and yield
+ * a solid that is valid and wrong, with no error anywhere.
+ *
+ * Both arrays are allocated here and released with linen_faces_free.
+ */
 typedef struct {
-  linen_body_id body;
-  const linen_face_id* start_faces;
-  size_t start_count;
-  const linen_face_id* end_faces;
-  size_t end_count;
-  const linen_face_id* side_faces;
-  size_t side_count;
+  linen_shape body;
+  linen_shape* faces;
+  uint8_t* roles; // one linen_face_role per entry
+  size_t face_count;
 } linen_extrude_output;
 
 linen_error linen_extrude(
-  linen_session session,
   const linen_extrude_input* input,
   linen_extrude_output* out_result);
 
-// --- booleans ---------------------------------------------------------
+void linen_faces_free(linen_extrude_output* result);
+
+// =====================================================================
+// BOOLEANS
+// =====================================================================
 
 typedef enum {
   LINEN_BOOLEAN_UNION = 0,
@@ -122,44 +171,40 @@ typedef enum {
 } linen_boolean_kind;
 
 linen_error linen_boolean(
-  linen_session session,
   linen_boolean_kind kind,
-  linen_body_id first,
-  linen_body_id second,
-  linen_body_id* out_body);
+  linen_shape first,
+  linen_shape second,
+  linen_shape* out_body);
 
-// --- tessellation -----------------------------------------------------
+// =====================================================================
+// TESSELLATION
+// =====================================================================
 // The largest payload in the system, so it is a SINGLE buffer laid out
-// exactly as common/kernel.ts documents. Those same bytes travel to
-// the socket and into the GPU buffer with no re-serialization: one
+// exactly as src/common/kernel.ts documents. Those same bytes travel
+// to the socket and into the GPU buffer with no re-serialization: one
 // format, three consumers.
 //
-// The buffer is allocated natively and owned by the session until
-// linen_mesh_free.
+// `faces` and `face_ids` let the CALLER supply the identifier mapping,
+// rather than C++ inventing identifiers it has no way to keep stable
+// across regenerations.
+//
+// The buffer is allocated here and released with linen_mesh_free.
 
 typedef struct {
-  const uint8_t* data;
+  uint8_t* data;
   size_t length;
 } linen_mesh;
 
 linen_error linen_tessellate(
-  linen_session session,
-  linen_body_id body,
+  linen_shape body,
+  const linen_shape* faces,
+  const uint32_t* face_ids,
+  size_t face_count,
   double linear_tolerance,
   double angular_tolerance,
   linen_mesh* out_mesh);
 
-void linen_mesh_free(linen_session session, linen_mesh* mesh);
-
-// --- validation -------------------------------------------------------
-// CadQuery carries a live `TODO: we segfault` because it never checks
-// this. Across our boundary that would take down the whole process, so
-// callers must ask before every local operation.
-
-int linen_entity_belongs_to(
-  linen_session session,
-  linen_body_id body,
-  linen_face_id face);
+void linen_mesh_free(linen_mesh* mesh);
 
 #ifdef __cplusplus
 }

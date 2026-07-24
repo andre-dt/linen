@@ -7,12 +7,12 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-# napi-rs over C++ N-API: Result<T, E> maps directly onto our
-# KernelResult, and it is far harder to take down the process by
-# accident.
+# napi-rs carries the bridge: the session registry, the per-session
+# lock and every buffer live here, where ownership is checked by the
+# compiler. C++ keeps only the OCCT calls.
 napi = { version = "2", default-features = false, features = ["napi8", "async"] }
 napi-derive = "2"
-parking_lot = "0.12"   # the per-session mutex
+parking_lot = "0.12"
 
 [build-dependencies]
 napi-build = "2"
@@ -21,7 +21,7 @@ cc = "1"
 [profile.release]
 lto = true
 codegen-units = 1
-# OCCT signals failure by throwing; unwinding must survive to our
-# catch. Aborting on panic would turn a recoverable modelling error
-# into a dead process.
+# OCCT signals failure by throwing, and the shim's catch must survive.
+# Aborting would turn a recoverable modelling error into a dead process
+# that takes every other session with it.
 panic = "unwind"
