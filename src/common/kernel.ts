@@ -10,8 +10,8 @@
 // =====================================================================
 // 1. OPAQUE HANDLES
 // =====================================================================
-// Numbers at runtime (the same u32 that crosses the N-API boundary),
-// distinct to the compiler. Passing a FaceId where an EdgeId is
+// Numbers at runtime — the same u32 that crosses the N-API boundary —
+// but distinct to the compiler. Passing a FaceId where an EdgeId is
 // expected will not compile.
 //
 // Kernel objects (TopoDS_Shape and friends) NEVER cross the boundary.
@@ -29,7 +29,7 @@ export type EntityId = BodyId | FaceId | EdgeId | VertexId
 // =====================================================================
 // 2. GEOMETRY
 // =====================================================================
-// Tuples rather than classes: directly serializable, zero-copy into
+// Tuples rather than classes: directly serializable, zero-copy into a
 // Float64Array. Internal units are millimeters and radians, in a
 // right-handed system with Z up.
 
@@ -58,12 +58,12 @@ export type GeometryType =
 // 3. EXPRESSIONS
 // =====================================================================
 // Values are EXPRESSIONS, not numbers. `millimeters`${outerDiameter} /
-// 2`` produces a syntax tree that is stored in git and re-evaluated on
-// every regeneration, so the relationship survives — `outerDiameter /
-// 2` never collapses into `60`. Without this the model is not
-// parametric at all.
+// 2`` produces a syntax tree that goes into git and is re-evaluated on
+// every regeneration, so the relationship survives: `outerDiameter / 2`
+// never collapses into `60`. Without this the model is not parametric
+// at all.
 //
-// The tree also feeds the dependency graph: it is how we know that a
+// The tree also feeds the dependency graph — it is how we know that a
 // feature depends on the variable `wallThickness`.
 
 export type Dimension = "length" | "angle" | "count" | "scalar"
@@ -98,6 +98,7 @@ export type Point2 = readonly [Length, Length]
 // --- template tags ----------------------------------------------------
 // These capture variables BY REFERENCE and validate dimensions while
 // parsing:
+//
 //   millimeters`${outerDiameter} + ${angle}` -> error: length plus angle
 //   millimeters`${outerDiameter} * ${wall}`  -> error: length times length is an area
 //   millimeters`${outerDiameter} * 2`        -> fine
@@ -117,8 +118,8 @@ export declare const quantity: CountTag
 export type Interpolatable = Expression | number | Measurement
 
 // --- measurements: existing geometry as expression input --------------
-// Lets you express "wall thickness is ten percent of the measured bore
-// diameter" while keeping the dependency live across regenerations.
+// Lets you say "wall thickness is ten percent of the measured bore
+// diameter" and keep the dependency live across regenerations.
 
 export type MeasurementReference =
   | { readonly kind: "face-area"; readonly face: FaceId }
@@ -144,7 +145,7 @@ export type EvaluateExpression = <D extends Dimension>(
 ) => number
 export declare const evaluateExpression: EvaluateExpression
 
-/** Variables referenced anywhere in the tree; feeds the regeneration graph. */
+/** Every variable the tree names; feeds the regeneration graph. */
 export type ExpressionDependencies = (expression: Expression) => ReadonlySet<string>
 export declare const expressionDependencies: ExpressionDependencies
 
@@ -152,11 +153,11 @@ export declare const expressionDependencies: ExpressionDependencies
 // 4. CAPABILITIES
 // =====================================================================
 // The common denominator is not one interface with forty methods — it
-// is a set of named capabilities that the kernel advertises.
+// is a set of named capabilities the kernel advertises.
 //
-// Each feature declares what it requires. A missing capability fails
-// AT STARTUP, by name, instead of halfway through a user's model. That
-// is what makes "OCCT today, Parasolid tomorrow" honest.
+// Each feature declares what it requires. A missing capability fails AT
+// STARTUP, by name, rather than halfway through a user's model. That is
+// what makes "OCCT today, Parasolid tomorrow" an honest claim.
 
 export type CapabilityId =
   | "sketch.region" | "sketch.offset-2d"
@@ -189,31 +190,32 @@ export interface KernelAdapter {
   readonly name: string // "occt", "parasolid"
   readonly version: string
   readonly capabilities: ReadonlySet<CapabilityId>
-  /** One session per user session: isolates live bodies and allows
-   *  discarding everything at once. */
+  /** One session per user session: isolates live bodies and lets us
+   *  discard all of them at once when it expires. */
   openSession(): Promise<KernelSession>
 }
 
 /**
- * A native session owning the live bodies on the native side.
+ * A native session owning the live bodies.
  *
  * OCCT is not thread-safe across operations on the same shape, so one
- * session means one mutex: operations within a session serialize,
- * while separate sessions run in parallel.
+ * session means one mutex: operations within a session serialize, while
+ * separate sessions run in parallel on the thread pool.
  */
 export interface KernelSession {
   invoke<T>(capability: CapabilityId, input: unknown): Promise<KernelResult<T>>
   /** A single binary buffer, handed straight to the socket and the GPU. */
   tessellate(body: BodyId, tolerance: number): Promise<KernelResult<ArrayBuffer>>
   /** EXPLICIT release. Never rely on the garbage collector for native
-   *  memory: it is not deterministic and OCCT holds a great deal of it. */
+   *  memory: it is not deterministic, and OCCT holds a great deal of it. */
   release(entities: readonly EntityId[]): Promise<void>
   dispose(): Promise<void>
 }
 
 // --- errors as values --------------------------------------------------
-// A C++ exception (Standard_Failure) must never escape through N-API:
-// it would tear down the process. The native side converts it here.
+// A C++ exception (Standard_Failure) must never escape through N-API: it
+// would tear down the process, killing every other session on the
+// server. The native side converts it into this.
 
 export type KernelResult<T> =
   | { readonly ok: true; readonly value: T }
@@ -235,13 +237,13 @@ export interface KernelError {
 // 6. TOPOLOGICAL IDENTITY
 // =====================================================================
 // The Achilles heel of every parametric CAD system, and the thing
-// CadQuery did not solve: there, equality is OCCT pointer identity and
-// every boolean regenerates all shapes, so a selector such as `>Z[-2]`
-// can silently pick a different face once a parameter changes. The
+// CadQuery did not solve. There, equality is OCCT pointer identity, and
+// every boolean regenerates all shapes — so a selector like `>Z[-2]`
+// can silently pick a different face after a parameter changes. The
 // resulting solid is valid and wrong, with no error anywhere.
 //
-// RULE: identifiers do not come from the kernel. We derive a stable
-// name from feature identifier, semantic role, and deterministic index.
+// RULE: identifiers never come from the kernel. We derive a stable name
+// from feature identifier, semantic role, and deterministic index.
 
 export interface TopologicalName {
   readonly feature: string // "f7"
@@ -258,7 +260,7 @@ export declare const parseTopologicalName: ParseTopologicalName
 export interface TopologicalMap {
   resolve(name: TopologicalName): EntityId | null
   nameOf(entity: EntityId): TopologicalName | null
-  /** Proximity fallback for when the topology has changed. */
+  /** Proximity fallback for when the topology genuinely changed. */
   rematch(name: TopologicalName, candidates: readonly EntityId[]): EntityId | null
 }
 
@@ -266,7 +268,7 @@ export interface TopologicalMap {
 // 7. MESH
 // =====================================================================
 // Packed little-endian binary layout. ONE format, THREE consumers:
-// native code, the socket, and the GPU buffer, with no
+// native code, the socket, and the GPU buffer — with no
 // re-serialization anywhere along the way.
 //
 //   header:     u32 vertexCount, u32 triangleCount, u32 faceGroupCount
