@@ -4,6 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@9.15.0",
   "scripts": {
+    "predev": "node scripts/free-ports.mjs",
     "dev": "pnpm --parallel --filter @linen/web --filter @linen/kernel dev",
     "build": "pnpm --recursive build",
     "typecheck": "pnpm --recursive typecheck"
