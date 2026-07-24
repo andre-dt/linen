@@ -1,19 +1,19 @@
 {
   "targets": [
     {
-      "target_name": "linen-driver",
+      "target_name": "linen-occt",
 
       "sources": [
-        "driver/session.cpp",
-        "driver/errors.cpp",
-        "driver/sketch.cpp",
-        "driver/extrude.cpp",
-        "driver/boolean.cpp",
-        "driver/tessellate.cpp"
+        "occt/session.cpp",
+        "occt/errors.cpp",
+        "occt/sketch.cpp",
+        "occt/extrude.cpp",
+        "occt/boolean.cpp",
+        "occt/tessellate.cpp"
       ],
 
       "include_dirs": [
-        "driver",
+        "occt",
         "<!(echo ${OCCT_ROOT}/include/opencascade)"
       ],
 
