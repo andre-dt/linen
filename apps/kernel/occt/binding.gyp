@@ -4,16 +4,16 @@
       "target_name": "linen-occt",
 
       "sources": [
-        "occt/session.cpp",
-        "occt/errors.cpp",
-        "occt/sketch.cpp",
-        "occt/extrude.cpp",
-        "occt/boolean.cpp",
-        "occt/tessellate.cpp"
+        "session.cpp",
+        "errors.cpp",
+        "sketch.cpp",
+        "extrude.cpp",
+        "boolean.cpp",
+        "tessellate.cpp"
       ],
 
       "include_dirs": [
-        "occt",
+        ".",
         "<!(echo ${OCCT_ROOT}/include/opencascade)"
       ],
 

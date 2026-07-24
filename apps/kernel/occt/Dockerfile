@@ -30,18 +30,14 @@ RUN conan profile detect --force \
 FROM occt-deps AS build
 
 WORKDIR /src
-COPY Cargo.toml Cargo.lock build.rs ./
-COPY native ./native
+COPY binding.gyp ./
+COPY *.cpp *.h *.hpp ./
 
 # Cargo dependency layer, cached separately from OCCT.
-RUN mkdir -p src && echo "fn main() {}" > src/main.rs \
- && cargo build --release 2>/dev/null || true
-
-COPY src ./src
 ENV OCCT_ROOT=/opt/occt
-RUN cargo build --release
+RUN npx node-gyp rebuild
 
 # ---------------------------------------------------------------------
 # Runtime carries the .node and nothing else: OCCT is inside it.
 FROM node:22-bookworm-slim AS runtime
-COPY --from=build /src/target/release/libkernel_occt.so /app/kernel-occt.node
+COPY --from=build /src/build/Release/linen-occt.node /app/linen-occt.node

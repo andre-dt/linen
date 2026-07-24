@@ -7,7 +7,7 @@
     "dev": "node --watch --experimental-strip-types main.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "build:native": "conan install . --output-folder=build --build=never && node-gyp rebuild"
+    "build:native": "cd occt && conan install . --output-folder=build --build=never && node-gyp rebuild"
   },
   "dependencies": {
     "@linen/cad": "workspace:*",
