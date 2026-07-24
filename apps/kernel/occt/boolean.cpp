@@ -1,5 +1,5 @@
 // =====================================================================
-// packages/kernel-occt/native/src/boolean.cpp
+// apps/kernel/occt/boolean.cpp
 //
 // Booleans are the operation most likely to fail on real geometry, and
 // the one that invalidates every existing face reference: OCCT
@@ -8,8 +8,8 @@
 // and role instead of trusting the kernel's ordering.
 // =====================================================================
 
-#include "linen.h"
-#include "session.hpp"
+#include "../linen.h"
+#include "../session.hpp"
 
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Cut.hxx>

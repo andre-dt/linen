@@ -1,5 +1,5 @@
 // =====================================================================
-// packages/kernel-occt/native/src/tessellate.cpp
+// apps/kernel/occt/tessellate.cpp
 //
 // Produces the largest payload in the system, in the single packed
 // layout documented in src/common/kernel.ts:
@@ -18,8 +18,8 @@
 // triangle back to the FaceId a selector can name.
 // =====================================================================
 
-#include "linen.h"
-#include "session.hpp"
+#include "../linen.h"
+#include "../session.hpp"
 
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRep_Tool.hxx>

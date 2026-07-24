@@ -13,6 +13,7 @@
       ],
 
       "include_dirs": [
+        "..",
         ".",
         "<!(echo ${OCCT_ROOT}/include/opencascade)"
       ],

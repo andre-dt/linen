@@ -1,5 +1,5 @@
 // =====================================================================
-// packages/kernel-occt/native/src/errors.cpp
+// apps/kernel/occt/errors.cpp
 //
 // OCCT signals failure by throwing Standard_Failure, and occasionally
 // by crashing outright. A C++ exception reaching N-API tears down the
@@ -9,8 +9,8 @@
 // not a bug that shows up as a stack trace, it is a dead server.
 // =====================================================================
 
-#include "linen.h"
-#include "session.hpp"
+#include "../linen.h"
+#include "../session.hpp"
 
 #include <Standard_Failure.hxx>
 #include <string>

@@ -1,22 +1,31 @@
 // =====================================================================
-// packages/kernel-occt/native/include/linen.h
+// apps/kernel/linen.h
 //
-// The C boundary between Rust and OCCT.
+// The C boundary between the server and whichever geometry kernel is
+// linked in.
 //
-// C++ OWNS NO STATE. There is no session here, no registry, no mutex:
-// the shape registry, the per-session lock and every buffer live in
-// Rust, where ownership is checked by the compiler rather than by
-// review.
+// THIS FILE IS THE CONTRACT, WHICH IS WHY IT SITS ABOVE occt/.
+// A parasolid/ directory would implement these same functions verbatim.
+// What differs per kernel is only the bodies:
 //
-// That split is the whole point. OCCT itself is twenty-five-year-old,
-// heavily exercised code — its remaining memory bugs are not the ones
-// we will hit. The bugs that matter live in the code written this
-// week: the registry, the lifetime bookkeeping, the lock discipline.
-// Keeping that in Rust makes a forgotten check a compile error, rather
-// than an invalid TopoDS_Shape reaching OCCT — which segfaults and
-// takes every other session on the server down with it.
+//   here, shared      linen.h, session.hpp
+//   occt/ only        the .cpp files, plus conan and the build, since
+//                     Parasolid is licensed rather than packaged
 //
-// What remains here is a pure function library: shapes in, shapes out.
+// THIS LAYER OWNS NO STATE. There is no session here, no registry, no
+// mutex: the shape registry, the per-session lock and every buffer live
+// above, in the addon layer.
+//
+// The reason is where the risk actually sits. OCCT is twenty-five years
+// old and heavily exercised; its remaining memory bugs are not the ones
+// we will hit. The bugs that matter live in the code written this week
+// — the registry, the lifetime bookkeeping, the lock discipline. An
+// invalid shape reaching OCCT does not raise: it segfaults, taking
+// every other session on the server with it.
+//
+// So this file stays a pure function library — shapes in, shapes out —
+// and the bookkeeping lives in one place where it can be reviewed as a
+// unit rather than scattered across every entry point.
 //
 // Narrow in SURFACE, thick in PAYLOAD. Every crossing costs, so we
 // pass whole arrays rather than looping on the Rust side:
@@ -43,8 +52,8 @@ extern "C" {
 // outside this header.
 //
 // Every shape returned below is owned by the CALLER and released with
-// linen_shape_free. Rust's Drop does that automatically — exactly the
-// guarantee a C++ registry could not give us.
+// linen_shape_free. Because ownership is explicit at the boundary, the
+// caller can wrap it in whatever lifetime discipline it prefers.
 
 typedef void* linen_shape;
 
@@ -68,10 +77,10 @@ int linen_shape_contains(linen_shape body, linen_shape entity);
 // process. Every entry point wraps its body in LINEN_GUARD, which
 // converts Standard_Failure into this struct.
 //
-// The message is a heap buffer owned by the CALLER. Rust copies it
-// into a String and calls linen_string_free — no "valid until the next
-// call" contract, because that is precisely the sort of contract that
-// turns into a use-after-free.
+// The message is a heap buffer owned by the CALLER, released with
+// linen_string_free. Deliberately not a pointer into kernel-owned
+// storage valid "until the next call": that kind of contract is exactly
+// how use-after-free happens.
 
 typedef enum {
   LINEN_OK = 0,
@@ -185,8 +194,8 @@ linen_error linen_boolean(
 // format, three consumers.
 //
 // `faces` and `face_ids` let the CALLER supply the identifier mapping,
-// rather than C++ inventing identifiers it has no way to keep stable
-// across regenerations.
+// rather than this layer inventing identifiers it has no way to keep
+// stable across regenerations.
 //
 // The buffer is allocated here and released with linen_mesh_free.
 

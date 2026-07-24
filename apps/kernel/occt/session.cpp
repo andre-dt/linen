@@ -1,12 +1,12 @@
 // =====================================================================
-// packages/kernel-occt/native/src/session.cpp
+// apps/kernel/occt/session.cpp
 //
 // The shape registry. OCCT objects live here and nowhere else; the
 // TypeScript side only ever holds integers.
 // =====================================================================
 
-#include "linen.h"
-#include "session.hpp"
+#include "../linen.h"
+#include "../session.hpp"
 
 #include <Standard_Failure.hxx>
 #include <TopoDS_Shape.hxx>

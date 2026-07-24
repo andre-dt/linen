@@ -1,5 +1,5 @@
 // =====================================================================
-// packages/kernel-occt/native/src/sketch.cpp
+// apps/kernel/occt/sketch.cpp
 //
 // Turns two-dimensional curves into a planar face an extrusion can
 // sweep.
@@ -17,8 +17,8 @@
 //   kind 4 spline   count x1 y1 ... closed
 // =====================================================================
 
-#include "linen.h"
-#include "session.hpp"
+#include "../linen.h"
+#include "../session.hpp"
 
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>

@@ -1,12 +1,12 @@
 // =====================================================================
-// packages/kernel-occt/native/src/extrude.cpp
+// apps/kernel/occt/extrude.cpp
 //
 // The one operation the MVP has to get exactly right, because face
 // ordering here is what every stored selector depends on.
 // =====================================================================
 
-#include "linen.h"
-#include "session.hpp"
+#include "../linen.h"
+#include "../session.hpp"
 
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepOffsetAPI_MakeDraft.hxx>

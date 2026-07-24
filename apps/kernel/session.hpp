@@ -1,5 +1,5 @@
 // =====================================================================
-// packages/kernel-occt/native/include/session.hpp
+// apps/kernel/session.hpp
 //
 // Shared internals. Not part of the C boundary.
 // =====================================================================
