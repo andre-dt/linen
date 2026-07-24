@@ -59,7 +59,6 @@ export type CreateBackend = (
   canvas: HTMLCanvasElement,
   preference?: BackendKind,
 ) => Promise<Backend>
-export declare const createBackend: CreateBackend
 
 // =====================================================================
 // 2. WASM MODULE
@@ -93,7 +92,6 @@ export interface BoundingVolumeHierarchy {
 }
 
 export type LoadMeshCodec = () => Promise<MeshCodec>
-export declare const loadMeshCodec: LoadMeshCodec
 
 // =====================================================================
 // 3. SCENE
@@ -205,8 +203,7 @@ export type PickRegion = (
   accepts: readonly PickKind[],
 ) => readonly PickResult[]
 
-export declare const pick: Pick
-export declare const pickRegion: PickRegion
+
 
 // =====================================================================
 // 6. HIGHLIGHTING
@@ -263,3 +260,19 @@ export interface HandleDrag {
   readonly value: number // millimeters or radians
   readonly committed: boolean // false while dragging, true on release
 }
+
+// =====================================================================
+// IMPLEMENTATIONS
+// =====================================================================
+// Everything above is contract. These are the modules that satisfy it.
+//
+// The WASM codec is not here yet: decoding runs in TypeScript for now,
+// which is fast enough for the mesh sizes the MVP produces. It moves to
+// WASM when picking against a large model needs the hierarchy.
+
+export { createBackend } from "./backend"
+export type { WebGpuBackend, WebGl2Backend } from "./backend"
+export { createScene } from "./scene"
+export { createCamera } from "./camera"
+export { decodeMesh, readMeshHeader, faceOfTriangle, syntheticBox } from "./mesh"
+export type { DecodedMesh as DecodedMeshView } from "./mesh"

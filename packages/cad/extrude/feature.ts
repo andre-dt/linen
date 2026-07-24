@@ -15,6 +15,7 @@ import type {
   CommandDefinition, CommandStep, FeatureApi, FeatureContext, Migrations,
 } from "../common/feature"
 import { EXTRUDE_CAPABILITIES, EXTRUDE_ROLES } from "./kernel"
+import { passthrough } from "../common/validate"
 import type { ExtrudeInput, ExtrudeExtent, ExtrudeStepExtent, ExtrudeApi } from "./api"
 
 // =====================================================================
@@ -206,7 +207,8 @@ type MakeExtrudeBuilder = (
 declare const resolveExtent: ResolveExtent
 declare const applyCombine: ApplyCombine
 declare const makeExtrudeBuilder: MakeExtrudeBuilder
-declare const schema: Validator<ExtrudeInput>
+
+const schema: Validator<ExtrudeInput> = passthrough()
 
 async function execute(input: ExtrudeInput, context: FeatureContext): Promise<BodyId> {
   const { body } = await context.capability("solid.extrude").invoke<{ body: BodyId }>({

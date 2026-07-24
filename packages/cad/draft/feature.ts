@@ -20,6 +20,7 @@ import type {
   CommandDefinition, CommandStep, FeatureApi, FeatureContext, Migrations,
 } from "../common/feature"
 import { DRAFT_CAPABILITIES, DRAFT_ROLES } from "./kernel"
+import { passthrough } from "../common/validate"
 import type { DraftInput, DraftStepCurves, DraftApi } from "./api"
 
 // =====================================================================
@@ -216,7 +217,8 @@ type MakeDraftBuilder = (context: FeatureContext, plane: PlaneReference) => Draf
 
 declare const resolveCurves: ResolveCurves
 declare const makeDraftBuilder: MakeDraftBuilder
-declare const schema: Validator<DraftInput>
+
+const schema: Validator<DraftInput> = passthrough()
 
 async function execute(input: DraftInput, context: FeatureContext): Promise<SketchId> {
   // The solver lands later; with `solve: false` the coordinates are

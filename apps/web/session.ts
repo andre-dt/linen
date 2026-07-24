@@ -18,12 +18,13 @@
 // node ever reads.
 // =====================================================================
 
-import { createSignal, createResource, onCleanup } from "solid-js"
+import { createSignal, onCleanup } from "solid-js"
 import type {
   Client, ConnectionState, FeatureSummary, Diagnostic, SessionInfo,
 } from "@linen/protocol"
 import type { CommandDefinition, PanelState } from "@linen/cad"
 import type { Scene } from "@linen/viewer"
+import { standardPreset } from "@linen/cad/features"
 
 export interface Session {
   // --- connection -----------------------------------------------------
@@ -58,7 +59,12 @@ export function useSession(): Session {
   const [diagnostics, setDiagnostics] = createSignal<readonly Diagnostic[]>([])
   const [elapsed, setElapsed] = createSignal<number | null>(null)
   const [panel, setPanel] = createSignal<PanelState | null>(null)
-  const [definitions, setDefinitions] = createSignal<readonly CommandDefinition<never, never>[]>([])
+  // Every command from every registered feature. Derived from the
+  // preset rather than listed by hand: adding a feature must not
+  // require touching the UI.
+  const [definitions] = createSignal<readonly CommandDefinition<never, never>[]>(
+    standardPreset.flatMap((feature) => feature.commands),
+  )
 
   const session: Session = {
     info,

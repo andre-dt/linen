@@ -13,7 +13,7 @@
 // =====================================================================
 
 import { onMount, onCleanup, createSignal, Show } from "solid-js"
-import { createBackend, loadMeshCodec } from "@linen/viewer"
+import { createBackend, createScene, syntheticBox } from "@linen/viewer"
 import type { Backend, Scene, PickKind } from "@linen/viewer"
 import type { Session } from "./session"
 
@@ -38,13 +38,15 @@ export function Viewport(props: ViewportProps) {
       return
     }
 
-    // The codec is WASM: mesh decode, picking and hierarchy building.
-    // It is not a second kernel — no geometry is evaluated here.
-    await loadMeshCodec()
-
     // Kept off the reactive graph on purpose.
     const scene = createScene(device)
     props.session.scene = scene
+
+    // Until the kernel is wired up, draw a box in the real wire format.
+    // It exercises the actual path — decode, upload, shade, resize — so
+    // what works here keeps working once meshes arrive from the server.
+    const drawable = scene.upload(1 as never, syntheticBox())
+    scene.camera.fit(drawable.bounds)
 
     // --- render loop ---------------------------------------------------
     // Driven by the browser, never by a signal.
@@ -79,22 +81,52 @@ export function Viewport(props: ViewportProps) {
   // accepts, so an "up to face" step cannot select an edge by accident.
   // That rule lives in metadata, not in this file.
 
-  const onPointerMove = (event: PointerEvent) => {
-    const scene = props.session.scene
-    if (!scene) return
-    const accepts = acceptedKinds(props.session)
-    if (!accepts) return
-    // Hover highlighting is imperative: it changes every mouse move and
-    // has no business scheduling DOM work.
-    scene.highlight.hovered = null
-  }
+  // Camera control is imperative and deliberately outside the reactive
+  // graph: it fires on every mouse move, and routing that through
+  // signals would schedule DOM work sixty times a second for state no
+  // DOM node reads.
+  let dragging: "orbit" | "pan" | null = null
+  let lastX = 0
+  let lastY = 0
 
   const onPointerDown = (event: PointerEvent) => {
     const scene = props.session.scene
     if (!scene) return
-    const accepts = acceptedKinds(props.session)
-    if (!accepts) return
-    // TODO: pick() and hand the result to the panel session.
+
+    // Middle button or shift-drag pans; left button orbits. Matches
+    // what every CAD tool does, so the muscle memory carries over.
+    dragging = event.button === 1 || event.shiftKey ? "pan" : "orbit"
+    lastX = event.clientX
+    lastY = event.clientY
+    event.currentTarget instanceof HTMLElement &&
+      event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const onPointerMove = (event: PointerEvent) => {
+    const scene = props.session.scene
+    if (!scene || !dragging) return
+
+    const deltaX = event.clientX - lastX
+    const deltaY = event.clientY - lastY
+    lastX = event.clientX
+    lastY = event.clientY
+
+    if (dragging === "orbit") {
+      scene.camera.orbit(-deltaX * 0.008, deltaY * 0.008)
+    } else {
+      scene.camera.pan(deltaX, deltaY)
+    }
+  }
+
+  const onPointerUp = (event: PointerEvent) => {
+    dragging = null
+    event.currentTarget instanceof HTMLElement &&
+      event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+
+  const onWheel = (event: WheelEvent) => {
+    event.preventDefault()
+    props.session.scene?.camera.dolly(event.deltaY)
   }
 
   return (
@@ -113,8 +145,11 @@ export function Viewport(props: ViewportProps) {
         ref={canvas}
         class="viewport"
         data-backend={backend()}
-        onPointerMove={onPointerMove}
         onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onWheel={onWheel}
       />
     </Show>
   )
@@ -128,4 +163,3 @@ function acceptedKinds(session: Session): readonly PickKind[] | null {
   return null
 }
 
-declare function createScene(backend: Backend): Scene
