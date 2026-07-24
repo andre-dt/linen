@@ -1,0 +1,38 @@
+# =====================================================================
+# packages/kernel-occt/conanfile.txt
+#
+# Pre-compiled OCCT, linked statically. We never build OCCT from
+# source: it takes tens of minutes and would make both `npm install`
+# and CI unusable.
+#
+# Conan restores per-platform binaries from the remote and resolves
+# OCCT's transitive dependencies (TBB, FreeType, FreeImage), which are
+# the tedious part of static linking.
+# =====================================================================
+
+[requires]
+opencascade/7.8.1
+
+[generators]
+CMakeDeps
+CMakeToolchain
+
+[options]
+# Static: one .node artifact with no OCCT shared objects to ship
+# alongside it or resolve at load time.
+opencascade/*:shared=False
+
+# Modules we do not use. OCCT is large and every one of these drags in
+# more transitive dependencies for no benefit.
+opencascade/*:with_ffmpeg=False
+opencascade/*:with_freeimage=False
+opencascade/*:with_openvr=False
+opencascade/*:with_rapidjson=False
+opencascade/*:with_draco=False
+opencascade/*:with_tk=False
+# No visualization: the kernel tessellates and hands back a buffer.
+# All rendering happens in the browser.
+opencascade/*:with_opengl=False
+
+[layout]
+cmake_layout

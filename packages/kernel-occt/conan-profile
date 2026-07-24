@@ -1,0 +1,11 @@
+# Pinned so every machine and every CI runner resolves the same
+# binaries. Without this, Conan detects the local toolchain and two
+# developers can end up with different ABI packages.
+[settings]
+os=Linux
+arch=x86_64
+compiler=gcc
+compiler.version=12
+compiler.cppstd=17
+compiler.libcxx=libstdc++11
+build_type=Release
