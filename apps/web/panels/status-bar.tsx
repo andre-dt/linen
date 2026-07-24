@@ -10,7 +10,7 @@
 // =====================================================================
 
 import { Show, createMemo } from "solid-js"
-import * as Icons from "lucide-solid"
+import { AlertTriangle, CircleAlert, Cloud, CloudOff } from "../icons"
 import type { Session } from "../session"
 
 interface StatusBarProps {
@@ -32,22 +32,22 @@ export function StatusBar(props: StatusBarProps) {
       <span class="status-connection" data-state={connection().kind}>
         <Show
           when={connection().kind === "open"}
-          fallback={<Icons.CloudOff size={12} />}
+          fallback={<CloudOff size={12} />}
         >
-          <Icons.Cloud size={12} />
+          <Cloud size={12} />
         </Show>
         {connection().kind}
       </span>
 
       <Show when={errors().length > 0}>
         <span class="status-errors">
-          <Icons.CircleAlert size={12} /> {errors().length}
+          <CircleAlert size={12} /> {errors().length}
         </span>
       </Show>
 
       <Show when={warnings().length > 0}>
         <span class="status-warnings">
-          <Icons.AlertTriangle size={12} /> {warnings().length}
+          <AlertTriangle size={12} /> {warnings().length}
         </span>
       </Show>
 

@@ -3,7 +3,7 @@
 // =====================================================================
 
 import { Checkbox as Ark } from "@ark-ui/solid/checkbox"
-import { Check } from "lucide-solid"
+import { Check } from "../icons"
 import { Show } from "solid-js"
 import type { BooleanField } from "@linen/cad/features"
 

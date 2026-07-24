@@ -13,7 +13,7 @@
 // =====================================================================
 
 import { For, Show } from "solid-js"
-import * as Icons from "lucide-solid"
+import { Plus, Variable } from "../icons"
 import type { Session } from "../session"
 
 interface VariablesProps {
@@ -35,10 +35,10 @@ export function Variables(props: VariablesProps) {
   return (
     <section class="variables">
       <header class="sidebar-header">
-        <Icons.Variable size={14} />
+        <Variable size={14} />
         <span>Variables</span>
         <button class="sidebar-action" aria-label="Add variable">
-          <Icons.Plus size={12} />
+          <Plus size={12} />
         </button>
       </header>
 

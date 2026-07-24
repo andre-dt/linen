@@ -3,7 +3,7 @@
 // =====================================================================
 
 import { Select } from "@ark-ui/solid/select"
-import { ChevronDown } from "lucide-solid"
+import { ChevronDown } from "../icons"
 import { For, createMemo } from "solid-js"
 import type { ChoiceField } from "@linen/cad/features"
 

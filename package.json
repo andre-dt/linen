@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@9.15.0",
   "scripts": {
-    "dev": "pnpm --parallel --filter \"./apps/*\" dev",
+    "dev": "pnpm --parallel --filter @linen/web --filter @linen/kernel dev",
     "build": "pnpm --recursive build",
     "typecheck": "pnpm --recursive typecheck"
   },

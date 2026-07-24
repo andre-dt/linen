@@ -18,7 +18,7 @@
 // =====================================================================
 
 import { For, Show, Switch, Match, createMemo } from "solid-js"
-import * as Icons from "lucide-solid"
+import { X } from "../icons"
 import type {
   CommandStep, FieldDefinition, StepTransition, PanelState,
 } from "@linen/cad/features"
@@ -58,7 +58,7 @@ export function CommandPanel(props: CommandPanelProps) {
             onClick={() => props.session.cancelCommand()}
             aria-label="Cancel"
           >
-            <Icons.X size={14} />
+            <X size={14} />
           </button>
         </header>
 

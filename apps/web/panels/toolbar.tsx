@@ -11,7 +11,7 @@
 // =====================================================================
 
 import { For, createMemo } from "solid-js"
-import * as Icons from "lucide-solid"
+import { commandIcon } from "../icons"
 import { Tooltip } from "@ark-ui/solid/tooltip"
 import type { CommandDefinition, ToolbarGroup } from "@linen/cad/features"
 import type { Session } from "../session"
@@ -92,7 +92,7 @@ function ToolbarButton(props: ToolbarButtonProps) {
         onClick={props.onActivate}
         aria-label={props.definition.label}
       >
-        <CommandIcon name={props.definition.icon} />
+        {commandIcon(props.definition.icon)({ size: 18 })}
       </Tooltip.Trigger>
       <Tooltip.Positioner>
         <Tooltip.Content class="tooltip">{label()}</Tooltip.Content>
@@ -101,26 +101,3 @@ function ToolbarButton(props: ToolbarButtonProps) {
   )
 }
 
-/**
- * Maps an icon name from metadata to a Lucide component.
- *
- * Kept in one place so a feature never imports an icon itself: the
- * metadata names an icon, and the UI decides how to draw it.
- */
-function CommandIcon(props: { readonly name: string }) {
-  const map: Record<string, typeof Icons.Square> = {
-    draft: Icons.PenLine,
-    extrude: Icons.Box,
-    revolve: Icons.RotateCw,
-    loft: Icons.Layers,
-    sweep: Icons.Spline,
-    fillet: Icons.CircleDot,
-    chamfer: Icons.Triangle,
-    shell: Icons.Package,
-    hole: Icons.Circle,
-    pattern: Icons.Grid3x3,
-    mirror: Icons.FlipHorizontal,
-  }
-  const Component = map[props.name] ?? Icons.Square
-  return <Component size={18} />
-}

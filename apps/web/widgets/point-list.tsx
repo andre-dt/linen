@@ -7,7 +7,7 @@
 // =====================================================================
 
 import { For, Show, createSignal } from "solid-js"
-import { X } from "lucide-solid"
+import { X } from "../icons"
 import type { PointListField } from "@linen/cad/features"
 
 interface Props {

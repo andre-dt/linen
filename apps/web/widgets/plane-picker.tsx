@@ -7,7 +7,7 @@
 // =====================================================================
 
 import { Show } from "solid-js"
-import { MousePointerClick, MoveVertical } from "lucide-solid"
+import { MousePointerClick, MoveVertical } from "../icons"
 import type { PlaneField } from "@linen/cad/features"
 
 interface Props {

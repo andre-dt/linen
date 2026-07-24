@@ -7,7 +7,7 @@
 // =====================================================================
 
 import { createSignal, Show } from "solid-js"
-import { ArrowLeftRight, MousePointerClick } from "lucide-solid"
+import { ArrowLeftRight, MousePointerClick } from "../icons"
 import type { DirectionField } from "@linen/cad/features"
 
 interface Props {

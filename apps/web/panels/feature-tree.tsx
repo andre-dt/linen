@@ -11,7 +11,7 @@
 // =====================================================================
 
 import { For, Show } from "solid-js"
-import * as Icons from "lucide-solid"
+import { AlertTriangle, Circle, CircleAlert, Eye, EyeOff, ListTree } from "../icons"
 import type { FeatureSummary } from "@linen/protocol"
 import type { Session } from "../session"
 
@@ -23,7 +23,7 @@ export function FeatureTree(props: FeatureTreeProps) {
   return (
     <section class="feature-tree">
       <header class="sidebar-header">
-        <Icons.ListTree size={14} />
+        <ListTree size={14} />
         <span>Features</span>
       </header>
 
@@ -51,8 +51,8 @@ function FeatureRow(props: { readonly feature: FeatureSummary }) {
       <StatusIcon status={props.feature.status} />
       <span class="feature-row-label">{props.feature.label}</span>
       <button class="feature-row-suppress" aria-label="Suppress">
-        <Show when={props.feature.suppressed} fallback={<Icons.Eye size={12} />}>
-          <Icons.EyeOff size={12} />
+        <Show when={props.feature.suppressed} fallback={<Eye size={12} />}>
+          <EyeOff size={12} />
         </Show>
       </button>
     </li>
@@ -61,12 +61,12 @@ function FeatureRow(props: { readonly feature: FeatureSummary }) {
 
 function StatusIcon(props: { readonly status: FeatureSummary["status"] }) {
   return (
-    <Show when={props.status !== "ok"} fallback={<Icons.Circle size={10} />}>
+    <Show when={props.status !== "ok"} fallback={<Circle size={10} />}>
       <Show
         when={props.status === "error"}
-        fallback={<Icons.AlertTriangle size={12} class="status-warning" />}
+        fallback={<AlertTriangle size={12} class="status-warning" />}
       >
-        <Icons.CircleAlert size={12} class="status-error" />
+        <CircleAlert size={12} class="status-error" />
       </Show>
     </Show>
   )

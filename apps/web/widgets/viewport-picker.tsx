@@ -15,7 +15,7 @@
 // =====================================================================
 
 import { createSignal, Show, For } from "solid-js"
-import * as Icons from "lucide-solid"
+import { MousePointerClick, X } from "../icons"
 import type { SelectorField } from "@linen/cad/features"
 
 interface Props {
@@ -42,7 +42,7 @@ export function ViewportPicker(props: Props) {
         onClick={() => setActive((current) => !current)}
         aria-pressed={active()}
       >
-        <Icons.MousePointerClick size={14} />
+        <MousePointerClick size={14} />
         <Show when={picked().length > 0} fallback={<span class="picker-prompt">{prompt()}</span>}>
           <span class="picker-count">
             {picked().length} selected
@@ -61,7 +61,7 @@ export function ViewportPicker(props: Props) {
                   onClick={() => setPicked((current) => current.filter((e) => e !== entity))}
                   aria-label="Remove"
                 >
-                  <Icons.X size={12} />
+                  <X size={12} />
                 </button>
               </li>
             )}

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --watch --experimental-strip-types main.ts",
+    "dev": "PORT=5174 tsx watch main.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "build:native": "cd occt && conan install . --output-folder=build --build=never && node-gyp rebuild"
@@ -18,6 +18,7 @@
   "devDependencies": {
     "typescript": "catalog:",
     "@types/node": "catalog:",
-    "@types/ws": "catalog:"
+    "@types/ws": "catalog:",
+    "tsx": "^4.19.2"
   }
 }

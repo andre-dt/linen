@@ -7,7 +7,7 @@
 // =====================================================================
 
 import { For, createSignal } from "solid-js"
-import { Plus, X } from "lucide-solid"
+import { Plus, X } from "../icons"
 import type { TableField } from "@linen/cad/features"
 
 interface Props {
