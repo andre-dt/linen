@@ -1,0 +1,23 @@
+{
+  "name": "@linen/hud",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@linen/cad": "workspace:*",
+    "@linen/protocol": "workspace:*",
+    "@linen/viewer": "workspace:*",
+    "@ark-ui/solid": "catalog:",
+    "lucide-solid": "catalog:",
+    "solid-js": "catalog:"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  }
+}

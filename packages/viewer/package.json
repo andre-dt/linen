@@ -1,0 +1,19 @@
+{
+  "name": "@linen/viewer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@linen/cad": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "@webgpu/types": "^0.1.52"
+  }
+}

@@ -26,7 +26,7 @@
 
 import type {
   BodyId, EntityId, Vector2, Vector3, Matrix4, BoundingBox, FaceGroup,
-} from "../common/kernel"
+} from "@linen/cad/kernel"
 
 // =====================================================================
 // 1. BACKEND

@@ -1,0 +1,27 @@
+{
+  "name": "@linen/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@linen/cad": "workspace:*",
+    "@linen/protocol": "workspace:*",
+    "@linen/viewer": "workspace:*",
+    "@linen/hud": "workspace:*",
+    "@ark-ui/solid": "catalog:",
+    "lucide-solid": "catalog:",
+    "solid-js": "catalog:"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plugin-solid": "catalog:",
+    "@webgpu/types": "^0.1.52"
+  }
+}

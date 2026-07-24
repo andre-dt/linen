@@ -1,0 +1,22 @@
+{
+  "name": "@linen/cad",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./api.ts",
+    "./kernel": "./kernel.ts",
+    "./features": "./features.ts",
+    "./container": "./container/api.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@linen/protocol": "workspace:*",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  }
+}

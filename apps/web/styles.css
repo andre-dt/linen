@@ -1,0 +1,62 @@
+/* =====================================================================
+   apps/web/src/styles.css
+
+   Ark UI ships behaviour without styling, so every visual decision is
+   ours. Tokens live here; components reference them and never hardcode
+   a colour.
+   ===================================================================== */
+
+:root {
+  color-scheme: dark;
+
+  --surface: #16181d;
+  --surface-raised: #1e2128;
+  --surface-overlay: #24272f;
+  --border: #2e323b;
+  --border-strong: #3d424d;
+
+  --text: #e6e8ec;
+  --text-muted: #9aa0ab;
+  --text-faint: #6b7280;
+
+  --accent: #4f8ef7;
+  --accent-muted: #2c4a7c;
+  --danger: #f2555a;
+  --warning: #e3a008;
+  --success: #3fb950;
+
+  /* Viewport highlight layers. They answer different questions, so they
+     must stay visually distinct: what is under the cursor, what is
+     chosen, and what the panel will accept. */
+  --hover: #6fb3ff;
+  --selected: #4f8ef7;
+  --candidate: #3d5a80;
+
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", monospace;
+
+  --radius: 4px;
+  --toolbar-height: 44px;
+  --sidebar-width: 260px;
+  --status-height: 24px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden; /* the canvas owns the viewport; nothing scrolls it */
+}
+
+body {
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}

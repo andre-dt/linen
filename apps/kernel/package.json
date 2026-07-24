@@ -1,0 +1,23 @@
+{
+  "name": "@linen/kernel",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch --experimental-strip-types main.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "build:native": "conan install . --output-folder=build --build=never && node-gyp rebuild"
+  },
+  "dependencies": {
+    "@linen/cad": "workspace:*",
+    "@linen/protocol": "workspace:*",
+    "ws": "catalog:",
+    "isomorphic-git": "catalog:"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "@types/node": "catalog:",
+    "@types/ws": "catalog:"
+  }
+}

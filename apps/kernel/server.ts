@@ -18,12 +18,12 @@
 // concurrent sessions per instance.
 // =====================================================================
 
-import type { BodyId, KernelAdapter, KernelSession } from "../common/kernel"
-import type { Command } from "../common/api"
-import type { Container } from "../container/api"
+import type { BodyId, KernelAdapter, KernelSession } from "@linen/cad/kernel"
+import type { Command } from "@linen/cad"
+import type { Container } from "@linen/cad/container"
 import type {
   SessionId, SessionInfo, TreeDelta, CommandFailure, Diagnostic,
-} from "../protocol/api"
+} from "@linen/protocol"
 
 // =====================================================================
 // 1. SESSIONS

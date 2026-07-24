@@ -1,0 +1,29 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# One version per dependency, declared once. Every package references
+# `catalog:` instead of a range, so a bump happens in exactly one place
+# and two packages can never drift onto different versions of Solid.
+catalog:
+  # --- solid ----------------------------------------------------------
+  solid-js: ^1.9.3
+  vite-plugin-solid: ^2.11.0
+
+  # --- ui -------------------------------------------------------------
+  # Ark UI is headless: behaviour, accessibility and state, with no
+  # styling of its own. That matters for a CAD panel, which has to look
+  # like the product rather than like a component library.
+  "@ark-ui/solid": ^4.9.0
+  "lucide-solid": ^0.469.0
+
+  # --- build ----------------------------------------------------------
+  vite: ^6.0.7
+  typescript: ^5.7.2
+  "@types/node": ^22.10.5
+
+  # --- server ---------------------------------------------------------
+  ws: ^8.18.0
+  "@types/ws": ^8.5.13
+  isomorphic-git: ^1.27.2
+  zod: ^3.24.1

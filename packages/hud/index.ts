@@ -17,13 +17,13 @@
 // picking request, a preview — and the viewer acts on it.
 // =====================================================================
 
-import type { EntityId } from "../common/kernel"
+import type { EntityId } from "@linen/cad/kernel"
 import type {
   CommandDefinition, CommandStep, FieldDefinition, StepTransition,
   PanelState, ToolbarGroup, WidgetKind,
-} from "../common/feature"
-import type { PickKind, PickResult, HandleDrag, Scene } from "../viewer/api"
-import type { Client, FeatureSummary, Diagnostic } from "../protocol/api"
+} from "@linen/cad/features"
+import type { PickKind, PickResult, HandleDrag, Scene } from "@linen/viewer"
+import type { Client, FeatureSummary, Diagnostic } from "@linen/protocol"
 
 // =====================================================================
 // 1. PANEL SESSION
