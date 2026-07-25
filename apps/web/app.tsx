@@ -1,68 +1,63 @@
 // =====================================================================
-// apps/web/src/app.tsx — the shell.
+// apps/web/src/app.tsx — the shell, the auth gate, and the routes.
 //
-// Layout only. Every panel below is generic: none of them knows what an
-// extrude is, and adding a feature touches none of this file.
+// The app opens on the LOGIN screen by default. Only once there is a live
+// session — which a returning user with a valid cookie has without
+// signing in again — does it mount the router and its routes:
 //
-//   +--------------------------------------------------+
-//   | toolbar                                          |
-//   +----------+---------------------------------------+
-//   | feature  |                                       |
-//   | tree     |            canvas (3D)                |
-//   |          |                                       |
-//   | vars     |          +-----------------+          |
-//   |          |          | command panel   |          |
-//   |          |          | (floating)      |          |
-//   +----------+----------+-----------------+----------+
-//   | status                                           |
-//   +--------------------------------------------------+
+//   loading    -> a brief splash while /auth/me resolves
+//   signed-out -> Login
+//   signed-in  -> <Router>: "/" = Dashboard, "/project/:id" = Project
 //
-// THE REACTIVE BOUNDARY
-// ---------------------
-// Solid signals own panel state: which step, which values, which field
-// has focus. They never own GPU state.
-//
-// The canvas is imperative and lives outside the reactive graph — a
-// signal driving buffer uploads would re-run on every unrelated change
-// and destroy the frame budget. The panel publishes intent; the viewer
-// acts on it.
+// The auth gate lives OUTSIDE the router: there is no point routing a
+// signed-out user. Once signed in, real URLs take over — /project/<uuid>
+// is a deep link that survives a refresh.
 // =====================================================================
 
-import { Show } from "solid-js"
-import { Viewport } from "./viewport"
-import { Toolbar } from "./panels/toolbar"
-import { FeatureTree } from "./panels/feature-tree"
-import { Variables } from "./panels/variables"
-import { CommandPanel } from "./panels/command-panel"
-import { StatusBar } from "./panels/status-bar"
-import { useSession } from "./session"
+import { Match, Switch, onMount } from "solid-js"
+import { Router, Route } from "@solidjs/router"
+import { createAuth, type Auth } from "./auth"
+import { Login } from "./screens/login"
+import { Dashboard } from "./screens/dashboard"
+import { Project } from "./screens/project"
 
 export function App() {
-  const session = useSession()
+  const auth = createAuth()
+
+  // Ask the server who we are before painting anything but the splash.
+  onMount(() => auth.refresh())
 
   return (
-    <div class="app">
-      <Toolbar session={session} />
+    <Switch fallback={<Splash />}>
+      <Match when={auth.status() === "loading"}>
+        <Splash />
+      </Match>
 
-      <div class="app-body">
-        <aside class="sidebar">
-          <FeatureTree session={session} />
-          <Variables session={session} />
-        </aside>
+      <Match when={auth.status() === "signed-out"}>
+        <Login auth={auth} />
+      </Match>
 
-        <main class="viewport-host">
-          <Viewport session={session} />
+      <Match when={auth.status() === "signed-in"}>
+        <Router>
+          <Route path="/" component={() => <Dashboard auth={auth} />} />
+          {/* Both the project and its feature sub-route render the same
+              screen; the presence of :uuid opens that feature's HUD. */}
+          <Route path="/project/:id" component={() => <Project auth={auth} />} />
+          <Route path="/project/:id/features/:uuid" component={() => <Project auth={auth} />} />
+          {/* Anything else falls back to the dashboard. */}
+          <Route path="*" component={() => <Dashboard auth={auth} />} />
+        </Router>
+      </Match>
+    </Switch>
+  )
+}
 
-          {/* Floats over the canvas rather than displacing it: resizing
-              the panel must never resize the canvas, which would force
-              a re-render for no reason. */}
-          <Show when={session.panel()}>
-            {(panel) => <CommandPanel panel={panel()} session={session} />}
-          </Show>
-        </main>
-      </div>
+export type { Auth }
 
-      <StatusBar session={session} />
+function Splash() {
+  return (
+    <div class="splash-scene">
+      <div class="splash-mark">◆</div>
     </div>
   )
 }

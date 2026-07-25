@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "PORT=5174 tsx watch main.ts",
+    "dev": "PORT=5174 tsx watch --env-file-if-exists=.env.local main.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "build:native": "cd occt && conan install . --output-folder=build --build=never && node-gyp rebuild"
@@ -12,6 +12,8 @@
   "dependencies": {
     "@linen/cad": "workspace:*",
     "@linen/protocol": "workspace:*",
+    "@linen/store": "workspace:*",
+    "@linen/auth": "workspace:*",
     "ws": "catalog:",
     "isomorphic-git": "catalog:"
   },

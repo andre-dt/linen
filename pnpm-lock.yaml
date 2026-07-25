@@ -9,6 +9,9 @@ catalogs:
     '@ark-ui/solid':
       specifier: ^4.9.0
       version: 4.10.2
+    '@solidjs/router':
+      specifier: ^0.15.3
+      version: 0.15.4
     '@types/node':
       specifier: ^22.10.5
       version: 22.20.1
@@ -53,12 +56,18 @@ importers:
 
   apps/kernel:
     dependencies:
+      '@linen/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
       '@linen/cad':
         specifier: workspace:*
         version: link:../../packages/cad
       '@linen/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@linen/store':
+        specifier: workspace:*
+        version: link:../../packages/store
       isomorphic-git:
         specifier: 'catalog:'
         version: 1.40.0
@@ -96,6 +105,9 @@ importers:
       '@linen/viewer':
         specifier: workspace:*
         version: link:../../packages/viewer
+      '@solidjs/router':
+        specifier: 'catalog:'
+        version: 0.15.4(solid-js@1.9.14)
       lucide-solid:
         specifier: 'catalog:'
         version: 0.469.0(solid-js@1.9.14)
@@ -115,6 +127,15 @@ importers:
       vite-plugin-solid:
         specifier: 'catalog:'
         version: 2.11.13(solid-js@1.9.14)(vite@6.4.3(@types/node@22.20.1)(tsx@4.23.1))
+
+  packages/auth:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.1
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
 
   packages/cad:
     dependencies:
@@ -156,6 +177,22 @@ importers:
 
   packages/protocol:
     devDependencies:
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
+  packages/store:
+    dependencies:
+      '@linen/auth':
+        specifier: workspace:*
+        version: link:../auth
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
@@ -728,6 +765,11 @@ packages:
     resolution: {integrity: sha512-BfzEnDJOt9T8M989/lA37EcJgat01wLRnoi5dQf3QzOH7jzpqTAzdDbVfRljVr5r+jzKqpbHeyOfAaXxAd0PAA==}
     cpu: [x64]
     os: [win32]
+
+  '@solidjs/router@0.15.4':
+    resolution: {integrity: sha512-WOpgg9a9T638cR+5FGbFi/IV4l2FpmBs1GpIMSPa0Ce9vyJN7Wts+X2PqMf9IYn0zUj2MlSJtm1gp7/HI/n5TQ==}
+    peerDependencies:
+      solid-js: ^1.8.6
 
   '@swc/helpers@0.5.23':
     resolution: {integrity: sha512-5lSsMOTXURePglDfvuAQUqkGek9Hg2kksOYay2m0+XR++b2NWYL/4sWyuvVBIs8oKnJaxkdi9whaL/sqN13afw==}
@@ -1881,6 +1923,10 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.62.2':
     optional: true
+
+  '@solidjs/router@0.15.4(solid-js@1.9.14)':
+    dependencies:
+      solid-js: 1.9.14
 
   '@swc/helpers@0.5.23':
     dependencies:

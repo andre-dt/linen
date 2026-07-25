@@ -54,31 +54,7 @@ export {
   EyeOff, AlertTriangle, CircleAlert, Variable, Cloud, CloudOff,
 }
 
-// =====================================================================
-// COMMAND ICONS
-// =====================================================================
-// Metadata names an icon as a string; the UI decides how to draw it.
-// Keeping the map here means a feature never imports an icon itself, and
-// an unknown name falls back to a neutral square rather than crashing.
-
-import type { Component } from "solid-js"
-
-export type IconComponent = Component<{ size?: number; class?: string }>
-
-const COMMAND_ICONS: Record<string, IconComponent> = {
-  draft: PenLine,
-  extrude: Box,
-  revolve: RotateCw,
-  loft: Layers,
-  sweep: Spline,
-  fillet: CircleDot,
-  chamfer: Triangle,
-  shell: Package,
-  hole: Circle,
-  pattern: Grid3x3,
-  mirror: FlipHorizontal,
-}
-
-export function commandIcon(name: string): IconComponent {
-  return COMMAND_ICONS[name] ?? Square
-}
+// Command icons are NOT mapped here: a feature's metadata names a lucide
+// icon directly (e.g. "box", "pen-line") and widgets/lucide-icon.tsx
+// loads it dynamically. That keeps the web app dumb — adding a feature
+// never touches this file.

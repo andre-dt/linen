@@ -11,7 +11,7 @@
 // =====================================================================
 
 import { For, createMemo } from "solid-js"
-import { commandIcon } from "../icons"
+import { LucideIcon } from "../widgets/lucide-icon"
 import { Tooltip } from "@ark-ui/solid/tooltip"
 import type { CommandDefinition, ToolbarGroup } from "@linen/cad/features"
 import type { Session } from "../session"
@@ -92,7 +92,7 @@ function ToolbarButton(props: ToolbarButtonProps) {
         onClick={props.onActivate}
         aria-label={props.definition.label}
       >
-        {commandIcon(props.definition.icon)({ size: 18 })}
+        <LucideIcon name={props.definition.icon} size={18} />
       </Tooltip.Trigger>
       <Tooltip.Positioner>
         <Tooltip.Content class="tooltip">{label()}</Tooltip.Content>

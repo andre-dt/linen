@@ -250,8 +250,9 @@ async function validate(
 
 export const draftCommand: CommandDefinition<DraftInput, SketchId> = {
   id: "draft",
+  uuid: "0f5b2a1e-1c3d-4e5f-8a90-1b2c3d4e5f60",
   label: "Draft",
-  icon: "draft",
+  icon: "pen-line",
   group: "sketch",
   shortcut: "d",
   help: "Draws two-dimensional geometry on a plane.",

@@ -105,11 +105,22 @@ export type WidgetKind =
 // versionable, inspectable. No closures, no live references.
 
 export interface CommandDefinition<Input = unknown, Output = BodyId> {
-  /** Unique within the feature. Becomes the key in git and the registry. */
+  /** The canonical unique NAME: a literal kebab-case identifier, using "."
+   *  as the separator when it needs qualifying (e.g. "extrude",
+   *  "solid.extrude", "up-to-face"). Human-readable and stable; the key in
+   *  git and the registry. Distinct from `uuid` (opaque identity) and
+   *  `label` (display). */
   readonly id: string
+  /** A stable, hardcoded UUID: the feature's permanent identity across the
+   *  whole system, independent of its `id` or label. The URL /features/<uuid>
+   *  and any cross-reference use this, so renaming the command never breaks a
+   *  link. Assigned once, never changed. */
+  readonly uuid: string
   readonly label: string
   readonly icon: IconId
   readonly group: ToolbarGroup
+  /** The keystroke the feature suggests for activation (e.g. "e"), or null
+   *  if it proposes none. A suggestion: the app may remap it. */
   readonly shortcut: string | null
   readonly help: string | null
 

@@ -243,8 +243,9 @@ async function validate(
 
 export const extrudeCommand: CommandDefinition<ExtrudeInput, BodyId> = {
   id: "extrude",
+  uuid: "1a2b3c4d-5e6f-4708-9a0b-1c2d3e4f5a6b",
   label: "Extrude",
-  icon: "extrude",
+  icon: "box",
   group: "create",
   shortcut: "e",
   help: "Creates a solid by sweeping a profile along a direction.",

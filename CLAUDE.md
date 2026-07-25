@@ -204,7 +204,7 @@ Seletor é resolvido pelo motor de seleção e devolve handles; query é resolvi
 | versão selada pelo usuário | tag anotada, **imutável** |
 | workspace | branch |
 
-O usuário decide quando selar. Referência entre projects é **sempre** a uma versão selada, nunca a um branch vivo — impede que a peça de um colega mude debaixo de você.
+O usuário decide quando selar. Referência entre projects é **sempre** a uma versão selada, nunca a um branch vivo — impede que a peça de um colega mude debaixo de você. O concreto disso (accounts, projetos, partes, onde o git vive) está em **MVP: fatia vertical do server**.
 
 Diff e merge em nível de **feature**, não de texto: é o ganho de usar árvore de features como formato.
 
@@ -326,11 +326,126 @@ OCCT sinaliza por exceção C++ (`Standard_Failure`) e às vezes por *crash*. Na
 
 ## Git como banco
 
-- Um repositório por documento.
-- `document.json` (feature tree) + `meshes/` (cache opcional) + `refs/` .
+- Um repositório por **projeto** (contendo suas partes e módulos); em `../linen-data` no dev. Veja **MVP: fatia vertical do server** para o layout.
+- `parts/<partId>.json` (feature tree) + `modules/` + `meshes/` (cache opcional) + `refs/`.
 - Commit por comando (squash opcional na UI).
 - Branch = versão/variante. Merge = merge de feature tree (conflitos em nível de feature, não de texto).
 - Dev: disco local. Prod: bare repo em S3 (via `isomorphic-git` + backend de objetos custom).
+
+## MVP: fatia vertical do server
+
+O foco agora é uma **fatia vertical completa**: login → dashboard → criar projeto → criar parte → desenhar um draft → salvar → versionar. O bastante para provar todo o eixo de persistência e autoria antes de fatiar em mais features geométricas.
+
+### Modelo de domínio
+
+```
+Account   (1 conta = 1 conta Google)
+  └── Project*     (uma conta tem vários projetos)
+        ├── Part*      (uma parte = history de operações paramétricas)
+        └── Module*    (Feature Studio; mesmo caminho de persistência)
+```
+
+- **Account** — identidade. Uma conta é **sempre** uma conta Google; não há cadastro local nem senha. A chave da conta é o `sub` (subject) estável do token Google, nunca o e-mail (o e-mail muda; o `sub` não).
+- **Project** — unidade de propriedade e de compartilhamento. Pertence a uma account. Tem várias partes e módulos.
+- **Part** — o coração: um **history de operações paramétricas** (chamadas de API — draft, extrude, …). É a feature tree persistida. Suporta rewind, reapply, overwrite. Versionamento (tag), branching e merge acontecem no nível da parte.
+- **Module** — definição de feature pelo usuário; sem privilégio sobre partes, mesmo pipeline.
+
+### Autenticação — Google
+
+Autenticação é um **package top-level `@linen/auth`**, não parte do store — o store depende dele para o tipo de identidade, nunca o contrário. O contrato é `AuthProvider`: uma implementação entre várias, plug-and-play.
+
+- **Login integrado com Google** via `GoogleAuthProvider` — a primeira implementação de `AuthProvider`. OAuth 2.0 / OpenID Connect, sem senha, sem tabela de usuários própria. Trocar por um `DevAuthProvider` ou outro IdP é trocar a implementação atrás da mesma interface; nada acima do store muda.
+- `GoogleAuthProvider` valida o `id_token` Google de ponta a ponta — assinatura **RS256** contra a JWKS publicada do Google, mais `iss`, `aud` e `exp` — usando só o `crypto` nativo do Node e `fetch` global, sem SDK. Extrai `{ sub, email, name, picture }`. **Nunca lança** para credencial inválida: devolve `{ ok: false, reason }` para o chamador ramificar em dado.
+- O store resolve a identidade para uma `Account`; primeiro login com um `subject` (`sub`) novo **cria** a account. A chave é `provider:subject` — jamais o e-mail —, então dois providers nunca colidem no mesmo subject.
+- Sessão do app (cookie/JWT curto) carrega o `accountId`. Toda chamada de API autoriza contra ele: um projeto só é legível/gravável por sua account dona (compartilhamento fica para depois do MVP).
+- A identidade Google também é a **autoria do commit git**: `author = name <email>`, `committer = linen <sistema>`. Assim `git log` da parte mostra quem fez cada operação.
+
+### Armazenamento — git em `../linen-data`
+
+O banco é um **git repository fora do código-fonte**, em `../linen-data` (relativo à raiz do repo; configurável por `LINEN_DATA_DIR`). Este é o **backend local** (dev/self-host); o mesmo conteúdo git, sob o mesmo contrato, vai para o backend git-sobre-S3 em prod — veja **Um contrato de storage, dois backends**.
+
+Layout: **um repositório git por projeto**. As accounts são um índice no topo; as partes e módulos são arquivos dentro do repo do projeto.
+
+```
+../linen-data/
+  accounts/
+    <googleSub>.json          { accountId, email, name, picture, createdAt }
+  projects/
+    <projectId>/              ← um git repo por projeto
+      .git/
+      project.json            { projectId, ownerAccountId, name, createdAt }
+      parts/
+        <partId>.json         a feature tree da parte (o history paramétrico)
+      modules/
+        <moduleId>.json       definições de módulo
+      meshes/                 cache de mesh opcional (gitignored ou LFS-like)
+```
+
+- **Commit por operação de API.** Cada `cad.draft(...)`, `cad.extrude(...)`, edição de parâmetro ou reorder vira um commit no repo do projeto. A mensagem descreve a operação; o autor é a conta Google.
+- **Tag = versão selada.** Quando o usuário sela, cria-se uma **tag anotada imutável** na parte. Referência cross-project é sempre a uma tag, nunca a um branch vivo.
+- **Branch = workspace/variante.** Criar branch e mergear são operações de primeira classe. Merge é em nível de **feature**, não de texto.
+- **Diff e conflitos via git.** `git diff` entre commits/branches alimenta o diff de features; a resolução de conflitos é exposta na API em nível de feature (qual feature diverge), não como merge textual de linhas.
+
+Tudo isso — accounts, projetos, partes, módulos, versões, branches — está **registrado no git via commits**. Não há estado de banco fora do git: o git *é* o banco.
+
+### Um contrato de storage, dois backends
+
+A API de database é **uma só**: a camada acima (autoria, versionamento, ownership) fala com uma interface de storage e nunca sabe onde os objetos git moram. O backend é escolhido por configuração, não por código de chamada.
+
+| Backend | Quando | Como |
+|---|---|---|
+| **Git local** | dev / self-host | um bare repo por projeto sob `../linen-data`, dirigido pelo **binário `git` real** via `child_process`. |
+| **Git-sobre-S3** (futuro) | produção | bare repo cujos objetos vivem no S3; libgit + camada serverless. **A construir.** |
+
+**Por que o binário `git`, não `isomorphic-git` nem libgit via N-API:** é o git canônico — o mesmo executável testado pelo mundo, com semântica 100% correta de merge/diff/tag/branch — e não exige build nativo fora do kernel. O padrão de acesso já é grosso (um commit por operação de API), então o custo de `spawn` é irrelevante; libgit2/N-API só compensaria num hot-path de milhares de ops/s, que não é o caso, e traria a mesma dor de build nativo que queremos evitar. Commits são construídos por **plumbing** (`hash-object`, `write-tree`/`update-index`, `commit-tree`, `update-ref`) em repos **bare**, sem working tree: nada em disco desincroniza do object database e toda escrita é atômica. Merge de branches usa `merge-tree --write-tree` (sem checkout), reportando os paths conflitantes para resolução em nível de feature.
+
+- **O contrato é o denominador comum** — as mesmas operações git (commit, tag, branch, merge, diff, ref read/write) expressas de forma que os dois backends implementam. Nada de vazar semântica de sistema de arquivos para a API, nem de `AWS`/`S3` para o contrato. Espelha a mesma disciplina do kernel plugável (OCCT hoje, Parasolid depois).
+- **Local não é um mock do S3.** É um backend legítimo e permanente (dev, self-host). O S3 é o segundo, para produção — não um substituto do primeiro.
+- **Serverless no S3**: sem servidor git de longa duração. As operações git rodam por invocação (function), lendo/gravando objetos e refs no S3 como object store. Consistência de refs (o ponto delicado do git em object storage) é responsabilidade desse backend, invisível para a API.
+- Regra: código acima de storage **nunca** importa `isomorphic-git`, `libgit` nem SDK de S3 diretamente — só o contrato. Assim trocar o backend é configuração, e a fatia de dev continua idêntica à de prod na superfície.
+
+### API de persistência (parte da API pública)
+
+Além da API geométrica (`cad.draft`, `cad.extrude`, …), o server expõe a API de autoria/versionamento. Tudo tipado, seguindo as convenções (tipo nomeado + const), operando sobre o git de `../linen-data`:
+
+```ts
+// Contas e projetos
+auth.signInWithGoogle(idToken)            // -> Account (cria no primeiro sub novo)
+account.projects()                        // lista projetos da conta
+account.createProject(name)               // -> Project (git init do repo)
+
+// Partes
+project.parts()
+project.createPart(name)                  // -> Part (history vazio)
+part.history()                            // as operações paramétricas (commits)
+
+// History paramétrico
+part.apply(command)                       // aplica operação -> commit
+part.rewindTo(commit)                     // volta o history (rollback)
+part.reapply()                            // reaplica a partir do ponto atual
+part.overwrite(commit, command)           // sobrescreve uma operação
+
+// Versionamento
+part.seal(name, description)              // tag anotada imutável
+part.versions()                           // tags
+part.branch(name, fromCommit)             // cria branch
+part.merge(sourceBranch)                  // merge de feature tree
+part.diff(first, second)                  // diff em nível de feature
+part.conflicts(merge)                     // conflitos por feature, não por texto
+```
+
+Regra de ownership: toda operação valida que a `Account` da sessão é dona do `Project` antes de tocar o git.
+
+### Dashboard (UX)
+
+O cliente (SolidJS) ganha uma **dashboard** antes do editor 3D:
+
+1. **Login** — botão "Sign in with Google". Sem sessão, é a única tela.
+2. **Lista de projetos** — os projetos da conta, com botão **criar novo projeto**.
+3. **Dentro de um projeto** — lista de partes e módulos, com botão **criar nova parte**.
+4. **Abrir uma parte** — entra no editor: HUD + viewport, replay do history, e os controles de versão (selar, branch, history/rewind, diff).
+
+Cada tela é derivada da API acima; nada de estado de UI que não venha de um commit git.
 
 ## Cliente
 

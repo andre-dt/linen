@@ -637,3 +637,560 @@ body {
 .status-timing[data-slow="true"] { color: var(--warning); }
 
 .status-spacer { flex: 1; }
+
+/* =====================================================================
+   GLASS — the Apple "liquid glass" language, shared by the login screen,
+   the dashboard and the floating editor chrome. A frosted, translucent
+   surface: a blurred backdrop, a hairline top highlight, a soft shadow.
+   ===================================================================== */
+
+:root {
+  /* Glass is built from translucency, so it needs its own tokens on top
+     of the opaque surface palette. */
+  --glass-fill: rgba(30, 33, 40, 0.55);
+  --glass-stroke: rgba(255, 255, 255, 0.10);
+  --glass-highlight: rgba(255, 255, 255, 0.18);
+  --glass-shadow: rgba(0, 0, 0, 0.45);
+  --glass-blur: 22px;
+
+  /* The gradient every full-screen scene floats on. */
+  --scene-gradient:
+    radial-gradient(1200px 700px at 15% -10%, #2a3d6b 0%, transparent 55%),
+    radial-gradient(1000px 800px at 110% 20%, #3a2a5e 0%, transparent 50%),
+    linear-gradient(160deg, #0e1016 0%, #14171f 60%, #0d0f14 100%);
+}
+
+.glass {
+  position: relative;
+  background: var(--glass-fill);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  border: 1px solid var(--glass-stroke);
+  border-radius: 16px;
+  box-shadow:
+    0 1px 0 0 var(--glass-highlight) inset,
+    0 20px 50px -20px var(--glass-shadow);
+}
+
+.glass-button {
+  appearance: none;
+  border: 1px solid var(--glass-stroke);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+}
+.glass-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: var(--glass-highlight);
+}
+.glass-button:active:not(:disabled) { transform: translateY(1px); }
+.glass-button:disabled { opacity: 0.5; cursor: default; }
+.glass-button.subtle {
+  background: transparent;
+  color: var(--text-muted);
+  padding: 6px 10px;
+}
+.glass-button.subtle:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
+
+/* =====================================================================
+   SPLASH — the brief moment while /auth/me resolves.
+   ===================================================================== */
+
+.splash-scene {
+  display: grid;
+  place-content: center;
+  height: 100%;
+  background: #ffffff;
+}
+.splash-mark {
+  font-size: 44px;
+  color: var(--accent);
+  opacity: 0.85;
+  animation: splash-pulse 1.4s ease-in-out infinite;
+}
+@keyframes splash-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.96); }
+  50% { opacity: 0.9; transform: scale(1.02); }
+}
+
+/* =====================================================================
+   LOGIN — deliberately nothing: a plain white field with the Google
+   button centred in it. The whole screen is the single action.
+   ===================================================================== */
+
+.login-scene {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  height: 100%;
+  background: #ffffff;
+}
+.login-google { display: flex; justify-content: center; min-height: 44px; }
+.login-note { margin: 0; color: #6b7280; font-size: 13px; }
+.login-error { margin: 0; color: #d23b3b; font-size: 12px; }
+
+/* =====================================================================
+   HUD — a canvas with panels floating over it, the same language the
+   editor uses. Inspired by the dxp command-center: a frosted navy panel
+   pinned to the viewport edges, so the dashboard reads as a continuation
+   of the workspace rather than a separate page.
+
+   The panels rest translucent over the canvas; they never displace it.
+   ===================================================================== */
+
+:root {
+  /* The page is plain white; the HUD panels sit on it as a SOLID deep
+     navy — no blur, no frosting. Their contents are light. */
+  --hud-text: #eef1f6;
+  --hud-text-muted: #aab2c2;
+  --hud-text-faint: #7c8598;
+  --hud-panel: #101c34;
+  --hud-stroke: rgba(255, 255, 255, 0.1);
+  --hud-sheen: rgba(255, 255, 255, 0.16);
+  --hud-active: rgba(79, 142, 247, 0.28);
+  --hud-active-stroke: rgba(79, 142, 247, 0.6);
+  --hud-radius: 22px;
+  --hud-gap: 20px;
+}
+
+.hud-scene {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.hud-canvas {
+  position: absolute;
+  inset: 0;
+  background: #ffffff;
+}
+
+/* The panel material: SOLID deep navy, squircle-cornered (iOS-style
+   rounded corners, not a plain circular radius). No blur, no frosting. */
+.hud-panel {
+  position: relative;
+  background: var(--hud-panel);
+  border: none;
+  border-radius: var(--hud-radius);
+  corner-shape: squircle;
+  box-shadow: none;
+  color: var(--hud-text);
+}
+
+/* Slots pin panels to viewport edges. Absolute, so panels float over the
+   canvas without any of them affecting another's box. */
+.hud-slot { position: absolute; z-index: 2; }
+.hud-top-left { top: var(--hud-gap); left: var(--hud-gap); }
+.hud-top-right { top: var(--hud-gap); right: var(--hud-gap); }
+.hud-workspace {
+  top: var(--hud-gap);
+  left: var(--hud-gap);
+  bottom: var(--hud-gap);
+  display: flex;
+  gap: var(--hud-gap);
+  align-items: flex-start;
+  max-height: calc(100% - var(--hud-gap) * 2);
+}
+.hud-bottom { bottom: var(--hud-gap); left: 50%; transform: translateX(-50%); }
+
+/* Buttons on the HUD: light, squircle-cornered. */
+.hud-button {
+  appearance: none;
+  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--hud-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: 12px;
+  corner-shape: squircle;
+  cursor: pointer;
+  transition: background 120ms ease, transform 80ms ease;
+}
+.hud-button:hover { background: rgba(255, 255, 255, 0.14); }
+.hud-button:active { transform: translateY(1px); }
+.hud-button.subtle { background: transparent; color: var(--hud-text-muted); }
+.hud-button.subtle:hover { color: var(--hud-text); background: rgba(255, 255, 255, 0.08); }
+
+/* Top-right profile chip — sits at the same top as the projects panel. */
+.hud-profile { display: flex; align-items: center; gap: 10px; padding: 7px 8px 7px 12px; }
+.hud-profile-name { font-size: 13px; color: var(--hud-text-muted); }
+.hud-avatar,
+.hud-avatar-image {
+  width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+}
+.hud-avatar {
+  display: grid; place-items: center;
+  background: var(--accent); color: #fff;
+  font-size: 12px; font-weight: 600;
+}
+.hud-avatar-image { object-fit: cover; }
+
+/* The list panels (projects, parts). */
+.hud-list-panel {
+  width: 300px;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  gap: 12px;
+}
+.hud-list-head {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.hud-list-head h2 {
+  margin: 0; font-size: 14px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hud-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 4px;
+  overflow-y: auto;
+}
+.hud-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 10px;
+  border-radius: 12px;
+  corner-shape: squircle;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+.hud-item:hover { background: rgba(255, 255, 255, 0.07); }
+/* Selected: just the panel colour lifted a touch — a translucent white
+   overlay, no accent hue, no border. */
+.hud-item.active { background: rgba(255, 255, 255, 0.12); border-color: transparent; }
+.hud-item-badge {
+  display: grid; place-items: center;
+  width: 26px; height: 26px; border-radius: 8px; corner-shape: squircle; flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.1);
+  font-size: 12px; font-weight: 600; color: var(--hud-text-muted);
+}
+.hud-item.active .hud-item-badge { background: rgba(255, 255, 255, 0.18); color: var(--hud-text); }
+.hud-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hud-item-open { font-size: 12px; color: var(--hud-text-faint); opacity: 0; transition: opacity 100ms ease; }
+.hud-item:hover .hud-item-open { opacity: 1; }
+
+/* "…" options button, revealed on hover (or while its menu is open). */
+.hud-item-menu { position: relative; flex-shrink: 0; }
+.hud-item-more {
+  appearance: none; border: none; background: transparent;
+  color: var(--hud-text-muted); font-size: 16px; line-height: 1;
+  padding: 2px 6px; border-radius: 8px; corner-shape: squircle;
+  cursor: pointer; opacity: 0; transition: opacity 100ms ease, background 100ms ease;
+}
+.hud-item:hover .hud-item-more,
+.hud-item-menu:has(.hud-menu) .hud-item-more { opacity: 1; }
+.hud-item-more:hover { background: rgba(255, 255, 255, 0.1); color: var(--hud-text); }
+
+/* The dropdown itself: a small solid panel below the button. */
+.hud-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 5;
+  min-width: 140px;
+  padding: 4px;
+  background: var(--hud-panel);
+  border-radius: 12px;
+  corner-shape: squircle;
+  /* Contrast against the white page and the panel it may overlap: a
+     hairline plus a deep, soft drop shadow so it reads as a raised menu. */
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 2px 8px -2px rgba(0, 0, 0, 0.3),
+    0 18px 40px -12px rgba(0, 0, 0, 0.55);
+}
+.hud-menu-item {
+  display: block; width: 100%; text-align: left;
+  appearance: none; border: none; background: transparent;
+  color: var(--hud-text); font: inherit; font-size: 13px;
+  padding: 8px 10px; border-radius: 8px; corner-shape: squircle;
+  cursor: pointer; transition: background 100ms ease;
+}
+.hud-menu-item:hover { background: rgba(255, 255, 255, 0.09); }
+.hud-empty { color: var(--hud-text-faint); font-size: 12px; padding: 10px; }
+
+/* Error toast, centred at the bottom. */
+.hud-toast { padding: 9px 16px; color: var(--danger); font-size: 12px; }
+
+/* Editor: the return-to-dashboard control at the top of the sidebar. */
+.editor-back { margin: 8px; width: calc(100% - 16px); text-align: left; }
+
+/* =====================================================================
+   DRAWER — a full-height panel flush against the right edge. No backdrop,
+   no rounded corners: it reads as a fixed side surface, not a floating
+   card. Input the HUD would otherwise ask with a prompt.
+   ===================================================================== */
+
+.drawer-backdrop {
+  /* An invisible layer that still catches an outside click to cancel —
+     no dimming, no blur. */
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  background: transparent;
+}
+
+/* Same material as the HUD panels (.hud-panel), only reshaped: full
+   height, flush to the right edge, square corners, and a single hairline
+   on the left where it meets the canvas. Everything else — the frosted
+   navy fill, the sheen, the blur — is inherited unchanged. */
+.drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 11;
+  width: 340px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+  gap: 14px;
+  border-radius: 0;
+  corner-shape: normal;
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+  animation: drawer-slide 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes drawer-slide {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.drawer-head {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.drawer-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+
+.drawer-body { display: flex; flex-direction: column; gap: 16px; flex: 1; }
+
+.drawer-field { display: flex; flex-direction: column; gap: 6px; }
+.drawer-label { font-size: 12px; color: var(--hud-text-muted); }
+.drawer-input {
+  appearance: none;
+  border: 1px solid var(--hud-stroke);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--hud-text);
+  font: inherit;
+  font-size: 14px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  corner-shape: squircle;
+  outline: none;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.drawer-input::placeholder { color: var(--hud-text-faint); }
+.drawer-input:focus {
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.drawer-actions {
+  display: flex; justify-content: flex-end; gap: 8px;
+  margin-top: auto;
+}
+.hud-button.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+}
+.hud-button.primary:hover:not(:disabled) { background: #3f7be0; border-color: transparent; }
+.hud-button.primary:disabled { opacity: 0.5; cursor: default; }
+
+/* =====================================================================
+   PROJECT SCREEN — the workspace layout: canvas with HUD panels pinned
+   around the edges, plus a top toolbar and a bottom status bar.
+   ===================================================================== */
+
+.project-canvas {
+  display: grid;
+  place-content: center;
+}
+.project-canvas-hint {
+  color: var(--hud-text-faint);
+  font-size: 13px;
+  opacity: 0.5;
+}
+
+/* --- extra slot positions specific to the project screen ------------ */
+.hud-top-center {
+  top: var(--hud-gap);
+  left: 50%;
+  transform: translateX(-50%);
+}
+.hud-left-column {
+  top: calc(var(--hud-gap) + 52px);
+  left: var(--hud-gap);
+  bottom: calc(var(--hud-gap) + 52px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--hud-gap);
+  width: 260px;
+}
+.hud-right-tools {
+  top: calc(var(--hud-gap) + 52px);
+  right: var(--hud-gap);
+}
+.hud-right-info {
+  top: calc(var(--hud-gap) + 120px);
+  right: var(--hud-gap);
+  width: 220px;
+}
+.hud-statusbar {
+  left: var(--hud-gap);
+  right: var(--hud-gap);
+  bottom: var(--hud-gap);
+}
+
+/* --- breadcrumb ----------------------------------------------------- */
+.hud-breadcrumb {
+  display: flex; align-items: center; gap: 6px;
+  padding: 9px 14px;
+  font-size: 13px;
+}
+.hud-crumb-link {
+  appearance: none; border: none; background: transparent;
+  color: var(--hud-text-muted); font: inherit; cursor: pointer;
+  padding: 2px 4px; border-radius: 8px; corner-shape: squircle;
+}
+.hud-crumb-link:hover { color: var(--hud-text); background: rgba(255,255,255,0.08); }
+.hud-crumb-sep { color: var(--hud-text-faint); }
+.hud-crumb-current { font-weight: 600; }
+
+/* --- feature toolbar: one flat row of icons, no categories ---------- */
+.hud-toolbar { display: flex; align-items: center; gap: 2px; padding: 5px; }
+.hud-tool {
+  appearance: none; border: none; background: transparent;
+  color: var(--hud-text-muted); font-size: 15px;
+  width: 30px; height: 30px; border-radius: 9px; corner-shape: squircle;
+  cursor: pointer; transition: background 100ms ease, color 100ms ease;
+}
+.hud-tool:hover:not(:disabled) { background: rgba(255,255,255,0.1); color: var(--hud-text); }
+.hud-tool:disabled { opacity: 0.35; cursor: default; }
+
+/* --- outline / info / view panels ----------------------------------- */
+.hud-outline-panel {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+  padding: 16px; gap: 10px;
+}
+.hud-view-options, .hud-info {
+  display: flex; align-items: center; gap: 4px;
+  padding: 8px 10px;
+}
+.hud-info { flex-direction: column; align-items: flex-start; gap: 6px; }
+.hud-tool-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--hud-text-faint); margin-right: 4px;
+}
+
+/* --- status bar ----------------------------------------------------- */
+.hud-status {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 14px;
+  font-size: 12px; color: var(--hud-text-muted);
+}
+.hud-status-sep { color: var(--hud-text-faint); }
+.hud-status-spacer { flex: 1; }
+.hud-status-muted { color: var(--hud-text-faint); }
+
+/* =====================================================================
+   SPLIT BUTTON — a default action joined to a chevron that opens a menu.
+   ===================================================================== */
+
+.split-button { position: relative; display: inline-flex; gap: 1px; }
+/* The two halves read as one control: square the seam, round the ends. */
+.split-primary {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  padding-right: 10px;
+}
+.split-toggle {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  padding: 6px 7px;
+  display: grid;
+  place-items: center;
+}
+/* A full-viewport invisible layer that closes the menu on outside click.
+   Fixed so it is never clipped by an ancestor's bounds. */
+.split-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: transparent;
+}
+.split-menu {
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 150px;
+  z-index: 41; /* above its own backdrop */
+}
+
+/* =====================================================================
+   VIEW CUBE — a single button that unfolds into a 3×3 matrix of views on
+   hover, laid out like an opened cardboard box.
+   ===================================================================== */
+
+.view-cube { position: relative; }
+.view-cube-button {
+  /* the collapsed state: a plain icon button on its own panel */
+  background: var(--hud-panel);
+  width: 36px; height: 36px;
+  border-radius: 12px; corner-shape: squircle;
+}
+
+/* The grid hangs below the button. Hidden until the whole .view-cube is
+   hovered; a small gap is bridged by the grid's own top padding so the
+   pointer never crosses empty space and collapses it. */
+.view-cube-grid {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(3, 40px);
+  grid-template-rows: repeat(3, 40px);
+  gap: 4px;
+  padding: 8px;
+  opacity: 0;
+  transform: scale(0.94) translateY(-4px);
+  transform-origin: top right;
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+  box-shadow:
+    0 2px 8px -2px rgba(0, 0, 0, 0.3),
+    0 20px 44px -14px rgba(0, 0, 0, 0.55);
+}
+.view-cube:hover .view-cube-grid,
+.view-cube:focus-within .view-cube-grid {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+  pointer-events: auto;
+}
+
+.view-cube-cell {
+  appearance: none; border: none;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--hud-text-muted);
+  font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+  border-radius: 9px; corner-shape: squircle;
+  cursor: pointer; transition: background 100ms ease, color 100ms ease;
+}
+.view-cube-cell:hover { background: rgba(255, 255, 255, 0.16); color: var(--hud-text); }
+/* the four corners are isometric views — dimmer, they are the "flaps" */
+.view-cube-cell[data-view^="iso-"] { color: var(--hud-text-faint); font-size: 15px; }
+.view-cube-cell[data-view^="iso-"]:hover { color: var(--hud-text); }

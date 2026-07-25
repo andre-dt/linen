@@ -15,6 +15,7 @@
     "@linen/viewer": "workspace:*",
     "@linen/hud": "workspace:*",
     "@ark-ui/solid": "catalog:",
+    "@solidjs/router": "catalog:",
     "lucide-solid": "catalog:",
     "solid-js": "catalog:"
   },

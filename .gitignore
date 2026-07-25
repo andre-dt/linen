@@ -3,3 +3,9 @@ dist/
 build/
 .vite/
 *.node
+
+# Local environment: OAuth client ids and any future secrets. Never
+# commit these — the client id is public but secrets must not leak.
+.env
+.env.local
+.env.*.local
