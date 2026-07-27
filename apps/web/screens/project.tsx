@@ -24,16 +24,27 @@
 
 import { createSignal, createMemo, For, Show, onMount } from "solid-js"
 import { useNavigate, useParams } from "@solidjs/router"
+import { standardPreset, type CommandDefinition } from "@linen/cad/features"
 import type { Auth } from "../auth"
 import {
   getProject, listParts, createPart,
   type ProjectView, type PartView,
 } from "../projects"
+import { appendElement, elementsOf, removeElement, updateElement } from "../elements"
 import { Drawer } from "../widgets/drawer"
 import { SplitButton } from "../widgets/split-button"
 import { FeatureToolbar } from "../widgets/feature-toolbar"
 import { ViewCube } from "../widgets/view-cube"
 import { CollapsiblePanel } from "../widgets/collapsible-panel"
+import { LucideIcon } from "../widgets/lucide-icon"
+import { CommandPanel } from "../panels/command-panel"
+import { X } from "../icons"
+
+/** Every command from every registered feature, flattened once. The
+ *  outline resolves an element's definition through this — never through
+ *  a per-feature lookup, which is what keeps a new feature UI-free. */
+const DEFINITIONS: readonly CommandDefinition<never, never>[] =
+  standardPreset.flatMap((feature) => feature.commands)
 
 export function Project(props: { auth: Auth }) {
   // The URL carries the selection: :kind (part|module) + :artifactId, and
@@ -51,6 +62,46 @@ export function Project(props: { auth: Auth }) {
     if (params.kind !== "part" || !params.artifactId) return null
     return parts().find((part) => part.id === params.artifactId) ?? null
   })
+
+  // ---------------------------------------------------------------
+  // The part's outline: its elements, and which one is being designed.
+  // ---------------------------------------------------------------
+
+  const elements = createMemo(() => {
+    const part = selectedPart()
+    return part ? elementsOf(part.id) : []
+  })
+
+  // Which element the designer is open on. A signal rather than a route
+  // param: an element is not addressable until it is committed to git,
+  // and a URL that outlives its target is worse than no URL. The
+  // /feature/:uuid route stays as-is for the command being started.
+  const [designing, setDesigning] = createSignal<string | null>(null)
+
+  const designed = createMemo(() => elements().find((element) => element.id === designing()) ?? null)
+
+  const definitionOf = (command: string): CommandDefinition<never, never> | undefined =>
+    DEFINITIONS.find((definition) => definition.id === command)
+
+  /**
+   * Clicking a feature in the toolbar ADDS an element to the part and
+   * opens its designer. The element exists from that first click — it is
+   * an entry in the history being authored, not a modal that either
+   * commits or vanishes.
+   */
+  const activateCommand = (command: CommandDefinition<never, never>): void => {
+    const part = selectedPart()
+    if (!part) return
+    const element = appendElement(part.id, command)
+    setDesigning(element.id)
+  }
+
+  const discardElement = (elementId: string): void => {
+    const part = selectedPart()
+    if (!part) return
+    removeElement(part.id, elementId)
+    if (designing() === elementId) setDesigning(null)
+  }
 
   // The artifact-creation drawer: which kind, the name, and whether a
   // save is in flight. "module" is accepted here but not yet backed by
@@ -116,9 +167,14 @@ export function Project(props: { auth: Auth }) {
 
   return (
     <div class="hud-scene project-scene">
-      {/* the 3D canvas will own this; a plain field until the viewer lands */}
+      {/* The 3D viewport. It owns the canvas outright: no signal reads
+          anything it writes, and it publishes picks back as intent. */}
       <div class="hud-canvas project-canvas">
-        <span class="project-canvas-hint">3D viewport — pending kernel</span>
+        <Viewport
+          pickingPlane={planeField() !== null}
+          selectedPlane={selectedPlaneId()}
+          onPickPlane={acceptPlanePick}
+        />
       </div>
 
       {/* TOP-LEFT: breadcrumb back to the dashboard */}
@@ -153,11 +209,7 @@ export function Project(props: { auth: Auth }) {
           the artifact. */}
       <Show when={selectedPart()}>
         <div class="hud-slot hud-top-center">
-          <FeatureToolbar
-            onActivate={(command) =>
-              navigate(`/project/${params.id}/part/${selectedPart()!.id}/feature/${command.uuid}`)
-            }
-          />
+          <FeatureToolbar onActivate={activateCommand} />
         </div>
       </Show>
 
@@ -234,7 +286,47 @@ export function Project(props: { auth: Auth }) {
               icon="list-tree"
               class="hud-outline-panel"
             >
-              <p class="hud-empty">Parametric history — pending kernel.</p>
+              {/* The part's elements, in the order they were created —
+                  the parametric history. Clicking one opens its designer.
+                  The icon is the command's own metadata, so a new feature
+                  appears here without a line of UI. */}
+              <ul class="hud-list hud-outline-list">
+                <For
+                  each={elements()}
+                  fallback={
+                    <li class="hud-empty">
+                      No elements yet — pick a feature above to begin.
+                    </li>
+                  }
+                >
+                  {(element) => (
+                    <li
+                      class="hud-item hud-outline-item"
+                      classList={{ active: designing() === element.id }}
+                      data-status={element.status}
+                      onClick={() => setDesigning(element.id)}
+                    >
+                      <LucideIcon name={element.icon} size={14} />
+                      <span class="hud-item-name">{element.label}</span>
+                      <Show when={element.status === "editing"}>
+                        <span class="hud-item-badge">editing</span>
+                      </Show>
+                      <button
+                        class="hud-icon-button"
+                        aria-label={`Remove ${element.label}`}
+                        onClick={(event) => {
+                          // The row itself selects; the button must not
+                          // select the thing it is about to remove.
+                          event.stopPropagation()
+                          discardElement(element.id)
+                        }}
+                      >
+                        <X size={12} />
+                      </button>
+                    </li>
+                  )}
+                </For>
+              </ul>
             </CollapsiblePanel>
           )}
         </Show>
@@ -245,6 +337,36 @@ export function Project(props: { auth: Auth }) {
           whether a part is selected. It rides above the HUD, so it is never
           covered by a panel. */}
       <ViewCube onSelect={(view) => setError(`View "${view}" — viewer pending.`)} />
+
+      {/* THE DESIGNER: the selected element's input HUD. Entirely
+          derived from the command's metadata — the plane picker, the
+          curve tools and the point lists below all come from
+          draft/feature.ts, not from anything written here. */}
+      <Show when={designed()}>
+        {(element) => (
+          <Show when={definitionOf(element().command)}>
+            {(definition) => (
+              <div class="hud-slot hud-designer">
+                <CommandPanel
+                  panel={element().panel}
+                  definition={definition()}
+                  onChange={(panel) =>
+                    updateElement(selectedPart()!.id, element().id, (current) => ({
+                      ...current,
+                      panel,
+                      // "built" the moment the machine says the input is
+                      // complete, and back to "editing" if a later edit
+                      // reopens a gap. Derived, never set by a click.
+                      status: panel.canBuild ? "built" : "editing",
+                    }))
+                  }
+                  onClose={() => setDesigning(null)}
+                />
+              </div>
+            )}
+          </Show>
+        )}
+      </Show>
 
       {/* The info panel and status bar are about the selected artifact —
           hidden until one is chosen. */}

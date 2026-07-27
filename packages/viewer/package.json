@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./index.ts"
+    ".": "./index.ts",
+    "./math": "./math.ts",
+    "./planes": "./planes.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

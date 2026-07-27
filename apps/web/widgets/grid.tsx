@@ -14,6 +14,7 @@ interface Props {
   readonly field: TableField
   readonly value: unknown
   readonly error: string | null
+  readonly onChange?: (value: unknown) => void
 }
 
 export function Grid(props: Props) {

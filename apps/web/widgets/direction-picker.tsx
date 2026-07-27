@@ -14,6 +14,7 @@ interface Props {
   readonly field: DirectionField
   readonly value: unknown
   readonly error: string | null
+  readonly onChange?: (value: unknown) => void
 }
 
 const AXES = [

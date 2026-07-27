@@ -22,9 +22,9 @@ import { createSignal, onCleanup } from "solid-js"
 import type {
   Client, ConnectionState, FeatureSummary, Diagnostic, SessionInfo,
 } from "@linen/protocol"
-import type { CommandDefinition, PanelState } from "@linen/cad"
+import type { CommandDefinition, PanelState } from "@linen/cad/features"
 import type { Scene } from "@linen/viewer"
-import { standardPreset } from "@linen/cad/features"
+import { standardPreset, beginCommand } from "@linen/cad/features"
 
 export interface Session {
   // --- connection -----------------------------------------------------
@@ -78,15 +78,9 @@ export function useSession(): Session {
     client: null,
 
     beginCommand(definition) {
-      // TODO: openPanel from @linen/hud once the panel machine lands.
-      setPanel({
-        command: definition.id,
-        currentStep: definition.steps[0]?.id ?? "",
-        path: [],
-        values: new Map(),
-        canBuild: false,
-        errors: [],
-      })
+      // The machine lives in @linen/cad, so opening a command here and
+      // opening one from the outline mean exactly the same thing.
+      setPanel(beginCommand(definition))
     },
 
     cancelCommand() {

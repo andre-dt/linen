@@ -402,6 +402,21 @@ export interface PanelState {
   readonly values: ReadonlyMap<string, unknown>
   readonly canBuild: boolean
   readonly errors: readonly PanelFieldError[]
+  /**
+   * Completed passes through a HUB — a step a transition returns to.
+   *
+   * A linear command (extrude) never fills this: it walks each step once
+   * and its input is the flat `values`. A hub-shaped one (draft) walks
+   * `tools -> draw.circle -> tools -> draw.line -> ...`, and each return
+   * to the hub CLOSES one pass. Without this the second circle would
+   * overwrite the first, because a flat map has one slot per field name
+   * and a draft holds a LIST of curves.
+   *
+   * Keyed by the hub's step id, so a command with two hubs keeps them
+   * apart. Each entry is the values gathered while away from the hub,
+   * plus the `kind` of the transition that left it.
+   */
+  readonly passes: ReadonlyMap<string, readonly ReadonlyMap<string, unknown>[]>
 }
 
 export interface PanelFieldError {
@@ -409,22 +424,41 @@ export interface PanelFieldError {
   readonly message: string
 }
 
-export type BeginCommand = (command: CommandDefinition<never, never>) => PanelState
-export type SetField = (state: PanelState, field: string, value: unknown) => PanelState
-export type ApplyTransition = (state: PanelState, transition: string) => PanelState
-/** Undo per STEP rather than per field. */
-export type StepBack = (state: PanelState) => PanelState
-/** Only valid when `canBuild`. Produces the serializable input. */
-export type FinishCommand = <Input>(
-  state: PanelState,
-  command: CommandDefinition<Input, never>,
-) => Input
+// Every transition carries the command it walks: the machine is data,
+// so the state alone cannot say which graph it belongs to.
 
-export declare const beginCommand: BeginCommand
-export declare const setField: SetField
-export declare const applyTransition: ApplyTransition
-export declare const stepBack: StepBack
-export declare const finishCommand: FinishCommand
+export type BeginCommand = (command: CommandDefinition<never, never>) => PanelState
+export type SetField = (
+  state: PanelState,
+  field: string,
+  value: unknown,
+  command: CommandDefinition<never, never>,
+) => PanelState
+export type ApplyTransition = (
+  state: PanelState,
+  transition: string,
+  command: CommandDefinition<never, never>,
+) => PanelState
+/** Undo per STEP rather than per field. */
+export type StepBack = (
+  state: PanelState,
+  command: CommandDefinition<never, never>,
+) => PanelState
+/** Jumps to a step already walked — clicking a breadcrumb. */
+export type StepTo = (
+  state: PanelState,
+  stepId: string,
+  command: CommandDefinition<never, never>,
+) => PanelState
+/** Only valid when `canBuild`. Produces the serializable input. */
+export type FinishCommand = <Input>(state: PanelState) => Input
+
+// Implemented in ./panel.ts — a real value, not a declaration: a
+// `declare const` compiles and then evaporates, leaving `undefined`
+// where the UI expects a function.
+export {
+  beginCommand, setField, applyTransition, stepBack, stepTo, finishCommand,
+} from "./panel"
 
 // =====================================================================
 // 9. WHAT THE UI IMPLEMENTS

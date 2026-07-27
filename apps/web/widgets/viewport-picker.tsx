@@ -22,6 +22,7 @@ interface Props {
   readonly field: SelectorField
   readonly value: unknown
   readonly error: string | null
+  readonly onChange?: (value: unknown) => void
 }
 
 export function ViewportPicker(props: Props) {

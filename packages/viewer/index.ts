@@ -27,6 +27,7 @@
 import type {
   BodyId, EntityId, Vector2, Vector3, Matrix4, BoundingBox, FaceGroup,
 } from "@linen/cad/kernel"
+import type { DatumPlaneId, PlaneHit } from "./planes"
 
 // =====================================================================
 // 1. BACKEND
@@ -112,10 +113,37 @@ export interface Scene {
   readonly highlight: HighlightState
   readonly drawables: ReadonlyMap<BodyId, Drawable>
 
+  /**
+   * The datum planes: shown while a step is asking for one, hidden
+   * otherwise. A draft has to start on a plane, and before any body
+   * exists these are the only things there are to click.
+   */
+  readonly planes: PlaneLayer
+
   /** Draws one frame. Called from requestAnimationFrame. */
   render(): void
   resize(width: number, height: number, devicePixelRatio: number): void
   dispose(): void
+}
+
+/**
+ * The datum-plane layer. Visibility is driven by the PANEL: a plane
+ * field asks for one, so the planes appear; no field is asking, so they
+ * stay out of the way. That rule lives in metadata, not here.
+ */
+export interface PlaneLayer {
+  visible: boolean
+  /** Highlighted under the cursor. Set from a ray cast, per frame. */
+  hovered: DatumPlaneId | null
+  /** The chosen one, kept lit so the user can see what they picked. */
+  selected: DatumPlaneId | null
+
+  /**
+   * Casts a ray from a cursor position and returns what it hits, or null.
+   * The caller decides what to do with the hit — the scene never mutates
+   * panel state.
+   */
+  pick(x: number, y: number): PlaneHit | null
 }
 
 export interface Drawable {
@@ -276,3 +304,8 @@ export { createScene } from "./scene"
 export { createCamera } from "./camera"
 export { decodeMesh, readMeshHeader, faceOfTriangle, syntheticBox } from "./mesh"
 export type { DecodedMesh as DecodedMeshView } from "./mesh"
+export {
+  DATUM_PLANES, PLANE_EXTENT, datumPlane, pickPlane, rayThrough,
+  planeQuad, planeOutline,
+} from "./planes"
+export type { DatumPlane, DatumPlaneId, PlaneHit, Ray } from "./planes"

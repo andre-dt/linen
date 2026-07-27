@@ -11,6 +11,7 @@ interface Props {
   readonly field: ChoiceField
   readonly value: unknown
   readonly error: string | null
+  readonly onChange?: (value: unknown) => void
 }
 
 export function Dropdown(props: Props) {

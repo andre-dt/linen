@@ -18,6 +18,7 @@ interface Props {
   readonly field: ExpressionField
   readonly value: unknown
   readonly error: string | null
+  readonly onChange?: (value: unknown) => void
 }
 
 const UNIT: Record<string, string> = {
@@ -28,8 +29,14 @@ const UNIT: Record<string, string> = {
 }
 
 export function NumberWithUnit(props: Props) {
-  const [text, setText] = createSignal("")
-  const [evaluated, setEvaluated] = createSignal<number | null>(null)
+  // The panel owns the text. Storing it here too would let the two
+  // disagree the moment a step is revisited — and the stored form is
+  // exactly what must survive, since it is the user's formula.
+  const text = createMemo(() => (props.value === undefined ? "" : String(props.value)))
+
+  // Evaluation belongs to the expression engine, which lands with the
+  // kernel. Until then a formula shows no result rather than a guess.
+  const evaluated = (): number | null => null
 
   const unit = createMemo(() => UNIT[props.field.dimension] ?? "")
 
@@ -46,7 +53,7 @@ export function NumberWithUnit(props: Props) {
           class="widget-input"
           value={text()}
           placeholder={props.field.optional ? "auto" : ""}
-          onInput={(event) => setText(event.currentTarget.value)}
+          onInput={(event) => props.onChange?.(event.currentTarget.value)}
           inputmode="text"
           spellcheck={false}
         />

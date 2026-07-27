@@ -14,6 +14,7 @@ interface Props {
   readonly field: ChoiceField
   readonly value: unknown
   readonly error: string | null
+  readonly onChange?: (value: unknown) => void
 }
 
 export function ButtonGroup(props: Props) {
@@ -28,6 +29,7 @@ export function ButtonGroup(props: Props) {
               role="radio"
               aria-checked={props.value === option.value}
               data-selected={props.value === option.value}
+              onClick={() => props.onChange?.(option.value)}
             >
               {option.label}
             </button>

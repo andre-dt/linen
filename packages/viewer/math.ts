@@ -115,3 +115,60 @@ export function normalize(a: Vector): Vector {
   // producing NaN that then propagates silently through the matrix.
   return magnitude < 1e-12 ? a : scale(a, 1 / magnitude)
 }
+
+/**
+ * Full 4x4 inverse, by cofactor expansion.
+ *
+ * Needed for ray casting: the view-projection maps world to clip, so
+ * unprojecting a cursor position requires going the other way. A general
+ * inverse rather than the cheaper "transpose the rotation, negate the
+ * translation" shortcut, because a PROJECTION matrix is not rigid — that
+ * shortcut is only valid for view matrices and would be silently wrong
+ * here.
+ *
+ * Returns null for a singular matrix instead of dividing by zero and
+ * filling the result with Infinity, which would poison every coordinate
+ * derived from it.
+ */
+export function invert(m: Matrix): Matrix | null {
+  const s0 = m[0]! * m[5]! - m[4]! * m[1]!
+  const s1 = m[0]! * m[6]! - m[4]! * m[2]!
+  const s2 = m[0]! * m[7]! - m[4]! * m[3]!
+  const s3 = m[1]! * m[6]! - m[5]! * m[2]!
+  const s4 = m[1]! * m[7]! - m[5]! * m[3]!
+  const s5 = m[2]! * m[7]! - m[6]! * m[3]!
+
+  const c5 = m[10]! * m[15]! - m[14]! * m[11]!
+  const c4 = m[9]! * m[15]! - m[13]! * m[11]!
+  const c3 = m[9]! * m[14]! - m[13]! * m[10]!
+  const c2 = m[8]! * m[15]! - m[12]! * m[11]!
+  const c1 = m[8]! * m[14]! - m[12]! * m[10]!
+  const c0 = m[8]! * m[13]! - m[12]! * m[9]!
+
+  const determinant =
+    s0 * c5 - s1 * c4 + s2 * c3 + s3 * c2 - s4 * c1 + s5 * c0
+  if (Math.abs(determinant) < 1e-20) return null
+  const d = 1 / determinant
+
+  return new Float32Array([
+    (m[5]! * c5 - m[6]! * c4 + m[7]! * c3) * d,
+    (-m[1]! * c5 + m[2]! * c4 - m[3]! * c3) * d,
+    (m[13]! * s5 - m[14]! * s4 + m[15]! * s3) * d,
+    (-m[9]! * s5 + m[10]! * s4 - m[11]! * s3) * d,
+
+    (-m[4]! * c5 + m[6]! * c2 - m[7]! * c1) * d,
+    (m[0]! * c5 - m[2]! * c2 + m[3]! * c1) * d,
+    (-m[12]! * s5 + m[14]! * s2 - m[15]! * s1) * d,
+    (m[8]! * s5 - m[10]! * s2 + m[11]! * s1) * d,
+
+    (m[4]! * c4 - m[5]! * c2 + m[7]! * c0) * d,
+    (-m[0]! * c4 + m[1]! * c2 - m[3]! * c0) * d,
+    (m[12]! * s4 - m[13]! * s2 + m[15]! * s0) * d,
+    (-m[8]! * s4 + m[9]! * s2 - m[11]! * s0) * d,
+
+    (-m[4]! * c3 + m[5]! * c1 - m[6]! * c0) * d,
+    (m[0]! * c3 - m[1]! * c1 + m[2]! * c0) * d,
+    (-m[12]! * s3 + m[13]! * s1 - m[14]! * s0) * d,
+    (m[8]! * s3 - m[9]! * s1 + m[10]! * s0) * d,
+  ])
+}

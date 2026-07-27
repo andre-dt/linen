@@ -14,6 +14,7 @@ interface Props {
   readonly field: ReferenceField
   readonly value: unknown
   readonly error: string | null
+  readonly onChange?: (value: unknown) => void
 }
 
 export function FeatureList(props: Props) {

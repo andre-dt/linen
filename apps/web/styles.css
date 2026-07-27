@@ -386,10 +386,35 @@ body {
   cursor: pointer;
 }
 
-.transition-button:hover {
+.transition-button:hover:not(:disabled) {
   border-color: var(--accent);
   background: var(--accent-muted);
 }
+
+/* Blocked because the step is incomplete. The machine would refuse the
+   transition anyway; this says so before the click. */
+.transition-button:disabled { opacity: 0.4; cursor: default; }
+
+/* The transition that ENDS the command reads as the primary action —
+   "Finish" is not one more curve tool. */
+.transition-button[data-terminal="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Breadcrumbs are clickable: each returns to a step already walked,
+   keeping everything entered — undo per step. */
+.command-panel-crumb {
+  appearance: none; border: none; background: transparent;
+  color: var(--text-faint); font: inherit; font-size: 11px;
+  padding: 0 2px; cursor: pointer;
+}
+.command-panel-crumb:hover { color: var(--text); text-decoration: underline; }
+.command-panel-crumb + .command-panel-crumb::before {
+  content: "›"; margin-right: 4px; color: var(--text-faint);
+}
+.command-panel-crumb.current { color: var(--text); cursor: default; }
 
 /* =====================================================================
    WIDGETS
@@ -479,10 +504,32 @@ body {
   cursor: pointer;
 }
 
-.button-group-item[data-selected="true"] {
+.button-group-item[data-selected="true"],
+.plane-standard[data-selected="true"],
+.plane-offset[data-selected="true"] {
   border-color: var(--accent);
   background: var(--accent-muted);
   color: var(--text);
+}
+
+/* A picker whose target does not exist yet — a face pick with no
+   viewport to pick in. Shown and disabled rather than hidden: the step
+   is real, only its input source is pending. */
+.plane-pick:disabled,
+.plane-offset:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.plane-offset-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.widget-sublabel {
+  font-size: 11px;
+  color: var(--text-faint);
 }
 
 .picker-target {
@@ -553,7 +600,7 @@ body {
 }
 
 .grid,
-.point-list table {
+table.point-list {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
@@ -568,7 +615,8 @@ body {
   text-transform: uppercase;
 }
 
-.grid-add {
+.grid-add,
+.point-list-add {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -580,6 +628,31 @@ body {
   font-size: 11px;
   cursor: pointer;
 }
+
+.point-list-empty {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.point-list-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.point-input {
+  width: 100%;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.point-input:focus { border-color: var(--accent); outline: none; }
 
 .checkbox-control {
   display: grid;
@@ -950,6 +1023,25 @@ body {
 }
 .hud-item.active .hud-item-badge { background: rgba(255, 255, 255, 0.18); color: var(--hud-text); }
 .hud-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* --- outline rows ---------------------------------------------------- */
+/* An element of the part's history: its command icon, its name, and a
+   remove button that only appears on hover — history entries are not
+   meant to be one stray click from deletion. */
+.hud-outline-list { display: flex; flex-direction: column; gap: 2px; }
+.hud-outline-item { display: flex; align-items: center; gap: 8px; }
+/* An element still being authored reads dimmer than a complete one, so
+   an unfinished draft is visible at a glance in a long history. */
+.hud-outline-item[data-status="editing"] .hud-item-name { color: var(--hud-text-muted); }
+.hud-outline-item .hud-icon-button { opacity: 0; transition: opacity 100ms ease; }
+.hud-outline-item:hover .hud-icon-button,
+.hud-outline-item.active .hud-icon-button { opacity: 1; }
+/* A text tag, not the 26px square .hud-item-badge avatar. */
+.hud-outline-item .hud-item-badge {
+  width: auto; height: auto; padding: 1px 6px; border-radius: 6px;
+  font-size: 10px; font-weight: 500; text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 .hud-item-open { font-size: 12px; color: var(--hud-text-faint); opacity: 0; transition: opacity 100ms ease; }
 .hud-item:hover .hud-item-open { opacity: 1; }
 
@@ -1146,6 +1238,30 @@ body {
   justify-content: flex-end;
   align-items: flex-start;
 }
+/* The designer: the selected element's input HUD. It takes the UPPER
+   right band, above the info panel, mirroring the left column's start so
+   the two side columns line up. It stops short of the vertical midpoint,
+   where .hud-right-info begins, and scrolls internally rather than
+   growing — a draft with many curve steps must not push itself off the
+   screen. */
+.hud-designer {
+  top: calc(var(--hud-gap) * 2 + var(--hud-top-row));
+  right: var(--hud-gap);
+  width: var(--hud-panel-width);
+  max-height: calc(50% - var(--hud-gap) * 3 - var(--hud-top-row));
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-start;
+}
+/* Inside a slot the panel is positioned BY the slot: the standalone
+   absolute placement .command-panel carries would fight it. */
+.hud-designer .command-panel {
+  position: static;
+  width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+}
+
 .hud-statusbar {
   left: var(--hud-gap);
   right: var(--hud-gap);

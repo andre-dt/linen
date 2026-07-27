@@ -15,9 +15,14 @@ import type {
   Projection, StandardView,
 } from "./index"
 import type { WebGl2Backend } from "./backend"
+import type { PlaneLayer } from "./index"
 import { decodeMesh } from "./mesh"
 import { createCamera } from "./camera"
-import { matrixMultiply, type Matrix } from "./math"
+import { matrixMultiply, invert, type Matrix } from "./math"
+import {
+  DATUM_PLANES, planeQuad, planeOutline, pickPlane, rayThrough,
+  type DatumPlane, type DatumPlaneId,
+} from "./planes"
 
 const DEFAULT_APPEARANCE: Appearance = {
   color: [0.62, 0.66, 0.72],
@@ -68,10 +73,95 @@ export function createScene(backend: Backend): Scene {
   gl.cullFace(gl.BACK)
   gl.clearColor(0.086, 0.094, 0.114, 1) // matches --surface
 
+  // --- the datum planes -------------------------------------------------
+  // Uploaded once at construction: six squares is a trivial amount of
+  // geometry and it never changes, so there is nothing to stream.
+  const planeProgram = buildPlaneProgram(gl)
+  const planeUniforms = {
+    viewProjection: gl.getUniformLocation(planeProgram, "uViewProjection"),
+    color: gl.getUniformLocation(planeProgram, "uColor"),
+    opacity: gl.getUniformLocation(planeProgram, "uOpacity"),
+  }
+  const planeMeshes = DATUM_PLANES.map((plane) => ({
+    plane,
+    fill: createPlaneBuffer(gl, planeProgram, planeQuad(plane)),
+    outline: createPlaneBuffer(gl, planeProgram, planeOutline(plane)),
+  }))
+
+  const planes: PlaneLayer = {
+    visible: false,
+    hovered: null,
+    selected: null,
+
+    pick(x, y) {
+      const inverse = invert(camera.viewProjection(width / height))
+      // A singular view-projection means the camera is degenerate; no
+      // ray can be built from it, so nothing is hit.
+      if (!inverse) return null
+      return pickPlane(rayThrough(x, y, width, height, inverse))
+    },
+  }
+
+  /**
+   * Draws the datum planes: a translucent fill plus a solid border.
+   *
+   * Depth WRITING is off while they draw. A plane is a hint, not
+   * material — writing depth would let the near half of a plane occlude
+   * the far half of another, and the six of them all cross at the origin.
+   * Depth TESTING stays on, so a plane behind a solid is still hidden by
+   * it, which is what makes the two read as sharing one space.
+   *
+   * Culling is off too: a plane is a surface with no thickness, and the
+   * user orbits freely. One-sidedness belongs to PICKING (which of a
+   * pair you can click), not to whether the quad is visible at all.
+   */
+  const drawPlanes = (viewProjection: Matrix): void => {
+    if (!planes.visible) return
+
+    gl.useProgram(planeProgram)
+    gl.uniformMatrix4fv(planeUniforms.viewProjection, false, viewProjection)
+    gl.enable(gl.BLEND)
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+    gl.depthMask(false)
+    gl.disable(gl.CULL_FACE)
+
+    for (const { plane, fill, outline } of planeMeshes) {
+      const state =
+        planes.selected === plane.id ? "selected"
+        : planes.hovered === plane.id ? "hovered"
+        : "idle"
+
+      const color =
+        state === "idle" ? plane.color : PLANE_ACTIVE_COLOR
+      // Faint at rest so six overlapping planes do not read as fog;
+      // clearly lit under the cursor and once chosen.
+      const fillOpacity =
+        state === "selected" ? 0.3 : state === "hovered" ? 0.22 : 0.08
+
+      gl.uniform3f(planeUniforms.color, color[0], color[1], color[2])
+
+      gl.uniform1f(planeUniforms.opacity, fillOpacity)
+      gl.bindVertexArray(fill)
+      gl.drawArrays(gl.TRIANGLES, 0, 6)
+
+      // The border carries the plane's identity — the fill is too faint
+      // to read as a shape on its own.
+      gl.uniform1f(planeUniforms.opacity, state === "idle" ? 0.45 : 0.95)
+      gl.bindVertexArray(outline)
+      gl.drawArrays(gl.LINES, 0, 8)
+    }
+
+    gl.bindVertexArray(null)
+    gl.depthMask(true)
+    gl.enable(gl.CULL_FACE)
+    gl.disable(gl.BLEND)
+  }
+
   return {
     camera,
     highlight,
     drawables,
+    planes,
 
     upload(body, buffer) {
       // Replacing a body: release the old buffers first, or every
@@ -112,10 +202,18 @@ export function createScene(backend: Backend): Scene {
       gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight)
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-      if (drawables.size === 0) return
+      const frameViewProjection = camera.viewProjection(width / height)
+
+      if (drawables.size === 0) {
+        // No body yet — but the planes may still be on, and on an empty
+        // model they are the ONLY thing to draw. Returning early here is
+        // what would leave a draft with nothing to click.
+        drawPlanes(frameViewProjection)
+        return
+      }
 
       gl.useProgram(program)
-      const viewProjection = camera.viewProjection(width / height)
+      const viewProjection = frameViewProjection
       gl.uniformMatrix4fv(uniforms.viewProjection, false, viewProjection)
       gl.uniform3f(uniforms.lightDirection, 0.4, 0.6, 0.7)
 
@@ -139,6 +237,10 @@ export function createScene(backend: Backend): Scene {
         gl.drawElements(gl.TRIANGLES, mesh.indexCount, gl.UNSIGNED_INT, 0)
       }
       gl.bindVertexArray(null)
+
+      // After the solids: translucent geometry has to blend against
+      // what is already there.
+      drawPlanes(viewProjection)
     },
 
     resize(nextWidth, nextHeight, devicePixelRatio) {
@@ -154,6 +256,11 @@ export function createScene(backend: Backend): Scene {
       for (const mesh of meshes.values()) releaseMesh(gl, mesh)
       meshes.clear()
       drawables.clear()
+      for (const { fill, outline } of planeMeshes) {
+        gl.deleteVertexArray(fill)
+        gl.deleteVertexArray(outline)
+      }
+      gl.deleteProgram(planeProgram)
       gl.deleteProgram(program)
     },
   }
@@ -165,6 +272,80 @@ const IDENTITY = new Float32Array([
 
 const HOVER_COLOR: readonly [number, number, number] = [0.44, 0.7, 1]
 const SELECTED_COLOR: readonly [number, number, number] = [0.31, 0.56, 0.97]
+
+/** Hovered or selected planes drop their axis tint for one shared accent:
+ *  "this is the one" has to be unmistakable, and three different tints
+ *  lighting up would not read as the same state. */
+const PLANE_ACTIVE_COLOR: readonly [number, number, number] = [0.44, 0.7, 1]
+
+// =====================================================================
+// DATUM PLANES
+// =====================================================================
+
+/** A position-only vertex array. Planes carry no normals: they are shaded
+ *  flat by design, so uploading a normal per vertex would be dead data. */
+function createPlaneBuffer(
+  gl: WebGL2RenderingContext,
+  program: WebGLProgram,
+  positions: Float32Array,
+): WebGLVertexArrayObject {
+  const vertexArray = gl.createVertexArray()
+  if (!vertexArray) throw new Error("could not create a vertex array")
+  gl.bindVertexArray(vertexArray)
+
+  const buffer = gl.createBuffer()
+  if (!buffer) throw new Error("could not create a buffer")
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer)
+  gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW)
+
+  const location = gl.getAttribLocation(program, "aPosition")
+  gl.enableVertexAttribArray(location)
+  gl.vertexAttribPointer(location, 3, gl.FLOAT, false, 0, 0)
+
+  gl.bindVertexArray(null)
+  return vertexArray
+}
+
+const PLANE_VERTEX_SHADER = `#version 300 es
+in vec3 aPosition;
+uniform mat4 uViewProjection;
+
+void main() {
+  gl_Position = uViewProjection * vec4(aPosition, 1.0);
+}
+`
+
+const PLANE_FRAGMENT_SHADER = `#version 300 es
+precision highp float;
+
+uniform vec3 uColor;
+uniform float uOpacity;
+
+out vec4 fragColor;
+
+void main() {
+  fragColor = vec4(uColor, uOpacity);
+}
+`
+
+function buildPlaneProgram(gl: WebGL2RenderingContext): WebGLProgram {
+  const vertex = compile(gl, gl.VERTEX_SHADER, PLANE_VERTEX_SHADER)
+  const fragment = compile(gl, gl.FRAGMENT_SHADER, PLANE_FRAGMENT_SHADER)
+
+  const program = gl.createProgram()
+  if (!program) throw new Error("could not create a program")
+  gl.attachShader(program, vertex)
+  gl.attachShader(program, fragment)
+  gl.linkProgram(program)
+
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    throw new Error(`plane shader link failed: ${gl.getProgramInfoLog(program)}`)
+  }
+
+  gl.deleteShader(vertex)
+  gl.deleteShader(fragment)
+  return program
+}
 
 // =====================================================================
 // GPU RESOURCES
