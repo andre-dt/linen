@@ -40,10 +40,18 @@ export function App() {
       <Match when={auth.status() === "signed-in"}>
         <Router>
           <Route path="/" component={() => <Dashboard auth={auth} />} />
-          {/* Both the project and its feature sub-route render the same
-              screen; the presence of :uuid opens that feature's HUD. */}
+          {/* The project screen renders for the project and, more deeply,
+              for a selected artifact and an active feature on it. The URL
+              IS the selection state:
+                /project/:id
+                /project/:id/:kind/:artifactId              (kind = part|module)
+                /project/:id/:kind/:artifactId/feature/:featureUuid */}
           <Route path="/project/:id" component={() => <Project auth={auth} />} />
-          <Route path="/project/:id/features/:uuid" component={() => <Project auth={auth} />} />
+          <Route path="/project/:id/:kind/:artifactId" component={() => <Project auth={auth} />} />
+          <Route
+            path="/project/:id/:kind/:artifactId/feature/:featureUuid"
+            component={() => <Project auth={auth} />}
+          />
           {/* Anything else falls back to the dashboard. */}
           <Route path="*" component={() => <Dashboard auth={auth} />} />
         </Router>

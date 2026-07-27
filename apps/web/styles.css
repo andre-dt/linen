@@ -39,6 +39,23 @@
   --toolbar-height: 44px;
   --sidebar-width: 260px;
   --status-height: 24px;
+
+  /* Stacking planes, low to high. Every floating layer picks its z-index
+     from here so the order is declared in one place, not scattered:
+       canvas < hud < drawers < dialogs < tooltips < toasts
+     Tooltips sit above the HUD (a tooltip anchored to a panel must never
+     be clipped behind another panel) and above dialogs; toasts win over
+     everything, being the most urgent, momentary layer. */
+  --z-canvas: 0;
+  --z-hud: 2;
+  /* A floating control that rides ABOVE the HUD panels (the draggable view
+     cube), so a panel never covers it — but still below drawers/tooltips. */
+  --z-floating: 5;
+  --z-drawer-backdrop: 10;
+  --z-drawer: 11;
+  --z-dialog: 20;
+  --z-tooltip: 40;
+  --z-toast: 50;
 }
 
 * {
@@ -169,6 +186,14 @@ body {
   background: var(--surface-overlay);
   color: var(--text);
   font-size: 12px;
+}
+
+/* Ark UI portals the tooltip positioner to <body>, so its stacking is set
+   on the positioner itself — not on .tooltip, which sits inside it. Pin it
+   to the tooltip plane so a tooltip anchored to one HUD panel is never
+   clipped behind another. */
+[data-scope="tooltip"][data-part="positioner"] {
+  z-index: var(--z-tooltip);
 }
 
 /* =====================================================================
@@ -759,6 +784,14 @@ body {
   --hud-active-stroke: rgba(79, 142, 247, 0.6);
   --hud-radius: 22px;
   --hud-gap: 20px;
+  /* One fixed width for every side HUD panel (artifacts, outline, info),
+     so the left and right columns line up and never reflow with content.
+     Collapsed panels are the exception: they shrink to the icon button. */
+  --hud-panel-width: 260px;
+  /* A shared height for the top row (breadcrumb, toolbar, profile), so the
+     side columns can start exactly --hud-gap below it — the same gap that
+     separates every other pair of panels. */
+  --hud-top-row: 40px;
 }
 
 .hud-scene {
@@ -788,19 +821,58 @@ body {
 
 /* Slots pin panels to viewport edges. Absolute, so panels float over the
    canvas without any of them affecting another's box. */
-.hud-slot { position: absolute; z-index: 2; }
+.hud-slot { position: absolute; z-index: var(--z-hud); }
+/* The toast slot rides the toast plane — above tooltips, dialogs, HUD. */
+.hud-slot.hud-bottom { z-index: var(--z-toast); }
 .hud-top-left { top: var(--hud-gap); left: var(--hud-gap); }
 .hud-top-right { top: var(--hud-gap); right: var(--hud-gap); }
-.hud-workspace {
-  top: var(--hud-gap);
-  left: var(--hud-gap);
-  bottom: var(--hud-gap);
-  display: flex;
-  gap: var(--hud-gap);
-  align-items: flex-start;
-  max-height: calc(100% - var(--hud-gap) * 2);
-}
 .hud-bottom { bottom: var(--hud-gap); left: 50%; transform: translateX(-50%); }
+
+/* =====================================================================
+   BASE BUTTON — the one button every HUD control is built from. Squircle
+   corners, shared hover/active. Variants only change fill/text; the shape
+   is defined once, here.
+   ===================================================================== */
+.ui-button {
+  appearance: none;
+  border: none;
+  display: inline-grid;
+  place-items: center;
+  font: inherit;
+  color: var(--hud-text);
+  border-radius: 12px;
+  corner-shape: squircle;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, transform 80ms ease;
+}
+.ui-button:active { transform: translateY(1px); }
+.ui-button:disabled { opacity: 0.35; cursor: default; transform: none; }
+
+/* Square icon button on the navy panel material — the view cube, its cells,
+   and any HUD icon tool. Width/height come from the `size` prop. */
+.ui-button-hud-icon {
+  background: var(--hud-panel);
+  color: var(--hud-text-muted);
+  font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+}
+.ui-button-hud-icon:hover { background: rgba(255, 255, 255, 0.16); color: var(--hud-text); }
+
+/* Text button on the HUD. */
+.ui-button-hud {
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 12px; font-weight: 500;
+  padding: 6px 12px;
+}
+.ui-button-hud:hover { background: rgba(255, 255, 255, 0.14); }
+
+/* Subtle/ghost text button. */
+.ui-button-hud-subtle {
+  background: transparent;
+  color: var(--hud-text-muted);
+  font-size: 12px; font-weight: 500;
+  padding: 6px 12px;
+}
+.ui-button-hud-subtle:hover { color: var(--hud-text); background: rgba(255, 255, 255, 0.08); }
 
 /* Buttons on the HUD: light, squircle-cornered. */
 .hud-button {
@@ -823,7 +895,7 @@ body {
 .hud-button.subtle:hover { color: var(--hud-text); background: rgba(255, 255, 255, 0.08); }
 
 /* Top-right profile chip — sits at the same top as the projects panel. */
-.hud-profile { display: flex; align-items: center; gap: 10px; padding: 7px 8px 7px 12px; }
+.hud-profile { display: flex; align-items: center; gap: 10px; min-height: var(--hud-top-row); padding: 0 8px 0 12px; }
 .hud-profile-name { font-size: 13px; color: var(--hud-text-muted); }
 .hud-avatar,
 .hud-avatar-image {
@@ -838,7 +910,7 @@ body {
 
 /* The list panels (projects, parts). */
 .hud-list-panel {
-  width: 300px;
+  width: 100%;
   max-height: 100%;
   display: flex;
   flex-direction: column;
@@ -938,7 +1010,7 @@ body {
      no dimming, no blur. */
   position: absolute;
   inset: 0;
-  z-index: 10;
+  z-index: var(--z-drawer-backdrop);
   background: transparent;
 }
 
@@ -951,7 +1023,7 @@ body {
   top: 0;
   right: 0;
   bottom: 0;
-  z-index: 11;
+  z-index: var(--z-drawer);
   width: 340px;
   max-width: 100%;
   display: flex;
@@ -1032,22 +1104,47 @@ body {
   transform: translateX(-50%);
 }
 .hud-left-column {
-  top: calc(var(--hud-gap) + 52px);
+  /* --hud-gap (top inset) + top-row height + --hud-gap (the consistent gap
+     below the top row) — so the drop to the side column matches every
+     other vertical gap on the HUD. */
+  top: calc(var(--hud-gap) * 2 + var(--hud-top-row));
   left: var(--hud-gap);
-  bottom: calc(var(--hud-gap) + 52px);
+  /* Symmetric at the bottom: clear the status bar (a top-row-height panel)
+     plus the same consistent gap. */
+  bottom: calc(var(--hud-gap) * 2 + var(--hud-top-row));
   display: flex;
   flex-direction: column;
+  /* A consistent vertical gap between stacked HUD panels, matching the
+     gap that pins them to the viewport edges. */
   gap: var(--hud-gap);
-  width: 260px;
+  width: var(--hud-panel-width);
+  /* Collapsed children shrink to their button; keep the column from
+     stretching them back to full width. */
+  align-items: flex-start;
 }
-.hud-right-tools {
-  top: calc(var(--hud-gap) + 52px);
-  right: var(--hud-gap);
+/* Dashboard variant: no top-left breadcrumb to clear, so the column aligns
+   at the very top — level with the top-right logout chip — and runs to the
+   bottom inset. */
+.hud-left-column-top {
+  top: var(--hud-gap);
+  bottom: var(--hud-gap);
 }
+/* The info panel: its own right column, occupying the LOWER HALF of the
+   screen — it starts at the vertical midpoint and runs down to just above
+   the status bar. Keeping the upper right clear leaves that area to the
+   floating view cube and the session chip. */
 .hud-right-info {
-  top: calc(var(--hud-gap) + 120px);
+  top: 50%;
+  bottom: calc(var(--hud-gap) * 2 + var(--hud-top-row));
   right: var(--hud-gap);
-  width: 220px;
+  width: var(--hud-panel-width);
+  /* A right-edge row: expanded, the panel fills the width; collapsed, its
+     icon button hugs the right edge instead of drifting to the left.
+     align-items keeps the collapsed button at the TOP of the band rather
+     than stretching down its whole height. */
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-start;
 }
 .hud-statusbar {
   left: var(--hud-gap);
@@ -1058,7 +1155,8 @@ body {
 /* --- breadcrumb ----------------------------------------------------- */
 .hud-breadcrumb {
   display: flex; align-items: center; gap: 6px;
-  padding: 9px 14px;
+  min-height: var(--hud-top-row);
+  padding: 0 14px;
   font-size: 13px;
 }
 .hud-crumb-link {
@@ -1071,7 +1169,7 @@ body {
 .hud-crumb-current { font-weight: 600; }
 
 /* --- feature toolbar: one flat row of icons, no categories ---------- */
-.hud-toolbar { display: flex; align-items: center; gap: 2px; padding: 5px; }
+.hud-toolbar { display: flex; align-items: center; gap: 2px; min-height: var(--hud-top-row); padding: 0 5px; }
 .hud-tool {
   appearance: none; border: none; background: transparent;
   color: var(--hud-text-muted); font-size: 15px;
@@ -1083,15 +1181,20 @@ body {
 
 /* --- outline / info / view panels ----------------------------------- */
 .hud-outline-panel {
+  width: 100%;
   flex: 1; min-height: 0;
   display: flex; flex-direction: column;
   padding: 16px; gap: 10px;
 }
-.hud-view-options, .hud-info {
+/* Info & view panels are fixed-size: they hold at-a-glance readouts, so
+   they must not grow or reflow with their content. */
+.hud-view-options {
   display: flex; align-items: center; gap: 4px;
   padding: 8px 10px;
 }
-.hud-info { flex-direction: column; align-items: flex-start; gap: 6px; }
+.hud-info {
+  width: 100%;
+}
 .hud-tool-title {
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
   color: var(--hud-text-faint); margin-right: 4px;
@@ -1100,7 +1203,8 @@ body {
 /* --- status bar ----------------------------------------------------- */
 .hud-status {
   display: flex; align-items: center; gap: 8px;
-  padding: 7px 14px;
+  min-height: var(--hud-top-row);
+  padding: 0 14px;
   font-size: 12px; color: var(--hud-text-muted);
 }
 .hud-status-sep { color: var(--hud-text-faint); }
@@ -1145,52 +1249,222 @@ body {
    hover, laid out like an opened cardboard box.
    ===================================================================== */
 
-.view-cube { position: relative; }
-.view-cube-button {
-  /* the collapsed state: a plain icon button on its own panel */
-  background: var(--hud-panel);
-  width: 36px; height: 36px;
-  border-radius: 12px; corner-shape: squircle;
+/* The view cube is a standalone control, not a HUD panel. It occupies a
+   SQUARE — equal width and height — and the button sits centred in it with
+   the SAME surround on all four sides, so its centre is a true centre and
+   the flower blooms symmetrically to every side. */
+/* The view cube FLOATS: fixed to the viewport at a user-dragged position
+   (left/top set inline, persisted to localStorage). It sits on the HUD
+   plane, above the canvas but below tooltips/toasts. */
+.view-cube-slot {
+  position: fixed;
+  z-index: var(--z-floating);
+  display: grid;
+  place-items: center;
+  width: var(--hud-top-row);
+  height: var(--hud-top-row);
+  touch-action: none; /* we handle the drag ourselves */
+}
+.view-cube-slot.dragging { cursor: grabbing; }
+/* The wrapper is the size of the WHOLE FLOWER, centred on the button — not
+   the size of the button. It is the element that owns enter/leave, so if it
+   only covered the 40px button the pointer would "leave" the instant it set
+   off toward a cell and the flower would shut in the user's face. Sized to
+   the flower, the pointer stays inside for the entire trip.
+
+   It is centred with a negative offset rather than by growing the slot, so
+   the button's own position (and every drag/clamp calculation built on it)
+   is untouched. */
+.view-cube {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--flower-size);
+  height: var(--flower-size);
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  /* Always inert as a box. Nothing here depends on the wrapper receiving
+     the pointer any more — the flower closes on click-away, not on leave —
+     so this 192px square never has to swallow a click meant for the canvas
+     behind it. Only the real targets inside opt back in. */
+  pointer-events: none;
+}
+/* The button is hit-testable in both states: it is what opens the flower. */
+.view-cube .view-cube-button { pointer-events: auto; }
+
+/* The trigger and every flower cell are the shared base button
+   (.ui-button-hud-icon), the same one a collapsed HUD panel uses — so the
+   floating view control speaks the same button language as the panels
+   without being one. Only what is specific to *this* control lives here.
+
+   --view-cell MUST equal the base button's ICON_SIZE: the flower is centred
+   on the trigger, so FRONT only covers it exactly when the two match. */
+.view-cube {
+  --view-cell: 56px;
+  --view-cell-gap: 6px;
+  /* How far a cell travels when blooming: exactly one cell plus one gap, so
+     collapsed it sits dead-centre on FRONT. */
+  --bloom-step: calc(var(--view-cell) + var(--view-cell-gap));
+  /* The flower's full footprint: 3 cells + 2 gaps + the grid's padding on
+     both sides. Mirrors FLOWER_SIZE in view-cube.tsx — the wrapper and the
+     drag clamp must agree on how big this thing gets. */
+  --flower-size: calc(var(--view-cell) * 3 + var(--view-cell-gap) * 2 + 12px);
 }
 
-/* The grid hangs below the button. Hidden until the whole .view-cube is
-   hovered; a small gap is bridged by the grid's own top padding so the
-   pointer never crosses empty space and collapses it. */
+/* Hover is OPAQUE here, unlike the shared .ui-button-hud-icon hover. That
+   one is a translucent white wash, which works over the navy panel material
+   a collapsed HUD button sits on. The view cube floats over the white
+   canvas, where the same wash lands white-on-white and the button reads as
+   a blank blob. A solid lift off the panel colour keeps it legible on any
+   background — the control floats, so it cannot assume what is behind it. */
+.view-cube-button:hover,
+.view-cube-cell:hover {
+  background: #1d2c4d;
+  color: var(--hud-text);
+}
+
+/* The trigger doubles as the drag handle. */
+.view-cube-button { cursor: grab; }
+.view-cube-slot.dragging .view-cube-button { cursor: grabbing; }
+/* The trigger sits BENEATH the open flower: it stays in the auto stacking
+   layer while .view-cube-grid raises itself above. Giving the button its own
+   z-index here would lift it ABOVE the grid — it would then paint over FRONT
+   and, being on top, swallow the pointer over the centre cell. */
+
+/* The grid is centred ON the button — both axes — so its middle cell
+   (FRONT) sits exactly over the view button and the box unfolds evenly to
+   all sides from that centre. Hidden until the whole .view-cube is hovered;
+   the grid's own padding bridges the pointer gap so travelling from button
+   to grid never crosses empty space and collapses it. */
 .view-cube-grid {
   position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
+  /* Centred ON the button, both axes: the middle cell (FRONT) lands exactly
+     over the button and the box unfolds evenly to every side. Transparent —
+     no panel, no shadow — so only the cells show. */
+  top: 50%;
+  left: 50%;
+  /* NOT scaled. Scaling the grid would scale FRONT with it, and FRONT sits
+     exactly over the trigger — the one cell that must look welded in place.
+     Growing it a couple of px on open reads as a shift precisely where the
+     eye is already resting. The container holds still; the cells animate
+     individually below. */
+  transform: translate(-50%, -50%);
+  transform-origin: center center;
   z-index: 20;
   display: grid;
-  grid-template-columns: repeat(3, 40px);
-  grid-template-rows: repeat(3, 40px);
-  gap: 4px;
-  padding: 8px;
-  opacity: 0;
-  transform: scale(0.94) translateY(-4px);
-  transform-origin: top right;
+  /* Cells are exactly the size of the view button, so the middle cell
+     (FRONT) covers the trigger perfectly when the flower opens. */
+  grid-template-columns: repeat(3, var(--view-cell));
+  grid-template-rows: repeat(3, var(--view-cell));
+  gap: var(--view-cell-gap);
+  /* Padding widens the hover target so the pointer never crosses a dead
+     zone travelling from the button into the grid. */
+  padding: 6px;
+  background: transparent;
   pointer-events: none;
-  transition: opacity 120ms ease, transform 120ms ease;
-  box-shadow:
-    0 2px 8px -2px rgba(0, 0, 0, 0.3),
-    0 20px 44px -14px rgba(0, 0, 0, 0.55);
 }
-.view-cube:hover .view-cube-grid,
-.view-cube:focus-within .view-cube-grid {
-  opacity: 1;
-  transform: scale(1) translateY(0);
+/* The grid box itself NEVER takes the pointer — it spans the whole flower,
+   including the centre square where the trigger lives, so making the box
+   hit-testable would blanket the button. Only the cells become targets. */
+.view-cube.open .view-cube-cell,
+.view-cube:focus-within .view-cube-cell {
   pointer-events: auto;
 }
 
+
+/* The bloom. Each cell starts collapsed onto the centre — where FRONT, and
+   so the trigger, already is — and travels out to its grid slot. The box
+   unfolds from the button instead of the whole panel fading in on top of
+   it, which is what the control is meant to depict.
+
+   FRONT is the exception: it is already at the centre and already covering
+   the trigger, so it neither moves nor fades. That is the whole point — the
+   button appears to BECOME the flower rather than being replaced by it. */
 .view-cube-cell {
-  appearance: none; border: none;
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--hud-text-muted);
-  font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
-  border-radius: 9px; corner-shape: squircle;
-  cursor: pointer; transition: background 100ms ease, color 100ms ease;
+  opacity: 0;
+  transform: translate(var(--bloom-x, 0), var(--bloom-y, 0));
+  transition: opacity 120ms ease, transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-.view-cube-cell:hover { background: rgba(255, 255, 255, 0.16); color: var(--hud-text); }
+.view-cube.open .view-cube-cell,
+.view-cube:focus-within .view-cube-cell {
+  opacity: 1;
+  transform: translate(0, 0);
+}
+
+/* Collapsed, every cell is stacked on the centre one: one cell-plus-gap in
+   from its own row/column. */
+.view-cube-cell[data-view="iso-tl"] { --bloom-x: var(--bloom-step); --bloom-y: var(--bloom-step); }
+.view-cube-cell[data-view="top"] { --bloom-y: var(--bloom-step); }
+.view-cube-cell[data-view="iso-tr"] { --bloom-x: calc(-1 * var(--bloom-step)); --bloom-y: var(--bloom-step); }
+.view-cube-cell[data-view="left"] { --bloom-x: var(--bloom-step); }
+.view-cube-cell[data-view="right"] { --bloom-x: calc(-1 * var(--bloom-step)); }
+.view-cube-cell[data-view="iso-bl"] { --bloom-x: var(--bloom-step); --bloom-y: calc(-1 * var(--bloom-step)); }
+.view-cube-cell[data-view="bottom"] { --bloom-y: calc(-1 * var(--bloom-step)); }
+.view-cube-cell[data-view="iso-br"] { --bloom-x: calc(-1 * var(--bloom-step)); --bloom-y: calc(-1 * var(--bloom-step)); }
+
+/* FRONT does not bloom — it is already dead-centre, exactly over the
+   trigger, so it has nowhere to travel from. It still FADES, though: while
+   the flower is shut there is nothing behind it to blend into, and a
+   permanently-opaque FRONT would simply cover the trigger's icon.
+
+   It also never takes the pointer. Stacked exactly on the trigger, a
+   hit-testable FRONT swallows every press aimed at the button beneath —
+   including the one that starts a drag. It is a label for the trigger
+   already showing through, not a target: the centre belongs to the button.
+   The :hover selector below has to be matched here, or its higher
+   specificity would hand FRONT the pointer right back. */
+.view-cube-cell[data-view="front"],
+.view-cube.open .view-cube-cell[data-view="front"],
+.view-cube:focus-within .view-cube-cell[data-view="front"] {
+  transform: none;
+  pointer-events: none;
+}
+/* Dragging does NOT close the flower — the control keeps its shape while it
+   is being moved, so what the user grabbed is what they see land. Cells stop
+   taking the pointer for the duration, though: a press that turns into a
+   drag must never also select a view when it is released. */
+.view-cube-slot.dragging .view-cube-cell {
+  pointer-events: none !important;
+}
+
+/* The six faces spell their names out. At 40px a word like BOTTOM only fits
+   at a small size with the letter-spacing pulled in, and it must never wrap
+   — a two-line cell would break the grid's even rhythm. */
+.view-cube-cell {
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 /* the four corners are isometric views — dimmer, they are the "flaps" */
 .view-cube-cell[data-view^="iso-"] { color: var(--hud-text-faint); font-size: 15px; }
 .view-cube-cell[data-view^="iso-"]:hover { color: var(--hud-text); }
+
+/* =====================================================================
+   COLLAPSIBLE PANEL — expanded titled panel ↔ a single icon button.
+   ===================================================================== */
+
+/* Collapsed: the shared base button (.ui-button-hud-icon, size 40)
+   occupying the panel's spot — no rule needed here. */
+
+/* Expanded: the panel keeps its per-panel class (width/height); this just
+   ensures the flex column layout the headers/lists expect. */
+.hud-collapsible {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px;
+  gap: 12px;
+}
+
+/* Header actions cluster: panel-specific actions, then the minimize. */
+.hud-head-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.hud-icon-button {
+  display: grid; place-items: center;
+  width: 24px; height: 24px;
+  appearance: none; border: none; background: transparent;
+  color: var(--hud-text-faint);
+  border-radius: 8px; corner-shape: squircle;
+  cursor: pointer; transition: background 100ms ease, color 100ms ease;
+}
+.hud-icon-button:hover { background: rgba(255, 255, 255, 0.1); color: var(--hud-text); }

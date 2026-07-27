@@ -22,7 +22,7 @@
 // it later is filling a box — not rebuilding the layout.
 // =====================================================================
 
-import { createSignal, For, Show, onMount } from "solid-js"
+import { createSignal, createMemo, For, Show, onMount } from "solid-js"
 import { useNavigate, useParams } from "@solidjs/router"
 import type { Auth } from "../auth"
 import {
@@ -33,15 +33,24 @@ import { Drawer } from "../widgets/drawer"
 import { SplitButton } from "../widgets/split-button"
 import { FeatureToolbar } from "../widgets/feature-toolbar"
 import { ViewCube } from "../widgets/view-cube"
+import { CollapsiblePanel } from "../widgets/collapsible-panel"
 
 export function Project(props: { auth: Auth }) {
-  const params = useParams<{ id: string }>()
+  // The URL carries the selection: :kind (part|module) + :artifactId, and
+  // optionally :featureUuid. There is no selection signal — the route IS
+  // the state, so a refresh or a shared link lands on the same artifact.
+  const params = useParams<{ id: string; kind?: string; artifactId?: string; featureUuid?: string }>()
   const navigate = useNavigate()
 
   const [project, setProject] = createSignal<ProjectView | null>(null)
   const [parts, setParts] = createSignal<readonly PartView[]>([])
-  const [selectedPart, setSelectedPart] = createSignal<PartView | null>(null)
   const [error, setError] = createSignal<string | null>(null)
+
+  // The selected part, derived from the URL param against the loaded list.
+  const selectedPart = createMemo<PartView | null>(() => {
+    if (params.kind !== "part" || !params.artifactId) return null
+    return parts().find((part) => part.id === params.artifactId) ?? null
+  })
 
   // The artifact-creation drawer: which kind, the name, and whether a
   // save is in flight. "module" is accepted here but not yet backed by
@@ -94,12 +103,16 @@ export function Project(props: { auth: Auth }) {
       try {
         const part = await createPart(params.id, trimmed)
         setParts([...parts(), part])
-        setSelectedPart(part)
         closeDrawer()
+        selectArtifact("part", part.id)
       } finally {
         setSaving(false)
       }
     })
+
+  // Selecting an artifact is a navigation: the URL becomes the selection.
+  const selectArtifact = (kind: "part" | "module", artifactId: string): void =>
+    navigate(`/project/${params.id}/${kind}/${artifactId}`)
 
   return (
     <div class="hud-scene project-scene">
@@ -113,18 +126,40 @@ export function Project(props: { auth: Auth }) {
         <nav class="hud-panel hud-breadcrumb" aria-label="Breadcrumb">
           <button class="hud-crumb-link" onClick={() => navigate("/")}>Dashboard</button>
           <span class="hud-crumb-sep">›</span>
-          <span class="hud-crumb-current">{project()?.name ?? "…"}</span>
+          {/* With a part selected, the project name becomes a link back to
+              the project (deselect); otherwise it is the current crumb. */}
+          <Show
+            when={selectedPart()}
+            fallback={<span class="hud-crumb-current">{project()?.name ?? "…"}</span>}
+          >
+            {(part) => (
+              <>
+                <button class="hud-crumb-link" onClick={() => navigate(`/project/${params.id}`)}>
+                  {project()?.name ?? "…"}
+                </button>
+                <span class="hud-crumb-sep">›</span>
+                <span class="hud-crumb-current">{part().name}</span>
+              </>
+            )}
+          </Show>
         </nav>
       </div>
 
       {/* TOP CENTER: every feature, scanned from the registry as icons.
           Clicking one routes to /project/:id/features/:uuid, which opens
           its input HUD in front of the artifacts. */}
-      <div class="hud-slot hud-top-center">
-        <FeatureToolbar
-          onActivate={(command) => navigate(`/project/${params.id}/features/${command.uuid}`)}
-        />
-      </div>
+      {/* The feature toolbar only makes sense once a part is selected —
+          features act on the selected artifact, so its route nests under
+          the artifact. */}
+      <Show when={selectedPart()}>
+        <div class="hud-slot hud-top-center">
+          <FeatureToolbar
+            onActivate={(command) =>
+              navigate(`/project/${params.id}/part/${selectedPart()!.id}/feature/${command.uuid}`)
+            }
+          />
+        </div>
+      </Show>
 
       {/* TOP-RIGHT: account / sign out */}
       <div class="hud-slot hud-top-right">
@@ -160,9 +195,12 @@ export function Project(props: { auth: Auth }) {
 
       {/* LEFT COLUMN: artifacts (parts & modules), then the part outline */}
       <div class="hud-slot hud-left-column">
-        <section class="hud-panel hud-list-panel">
-          <header class="hud-list-head">
-            <h2>Artifacts</h2>
+        <CollapsiblePanel
+          id="artifacts"
+          title="Artifacts"
+          icon="package"
+          class="hud-list-panel"
+          actions={
             <SplitButton
               primary={{ label: "New part", onSelect: () => openDrawer("part") }}
               actions={[
@@ -170,60 +208,65 @@ export function Project(props: { auth: Auth }) {
                 { label: "New module", onSelect: () => openDrawer("module") },
               ]}
             />
-          </header>
+          }
+        >
           <ul class="hud-list">
             <For each={parts()} fallback={<li class="hud-empty">No parts yet.</li>}>
               {(part) => (
                 <li
                   class="hud-item"
                   classList={{ active: selectedPart()?.id === part.id }}
-                  onClick={() => setSelectedPart(part)}
+                  onClick={() => selectArtifact("part", part.id)}
                 >
                   <span class="hud-item-name">{part.name}</span>
                 </li>
               )}
             </For>
           </ul>
-        </section>
+        </CollapsiblePanel>
 
-        <section class="hud-panel hud-outline-panel">
-          <header class="hud-list-head">
-            <h2>{selectedPart() ? `${selectedPart()!.name} — outline` : "Outline"}</h2>
-          </header>
-          <Show
-            when={selectedPart()}
-            fallback={<p class="hud-empty">Select a part to see its history.</p>}
-          >
-            <p class="hud-empty">Parametric history — pending kernel.</p>
-          </Show>
-        </section>
+        {/* The outline is a property of a selected part — only then. */}
+        <Show when={selectedPart()}>
+          {(part) => (
+            <CollapsiblePanel
+              id="outline"
+              title={`${part().name} — outline`}
+              icon="list-tree"
+              class="hud-outline-panel"
+            >
+              <p class="hud-empty">Parametric history — pending kernel.</p>
+            </CollapsiblePanel>
+          )}
+        </Show>
       </div>
 
-      {/* RIGHT, below the profile: the view cube (unfolds on hover) */}
-      <div class="hud-slot hud-right-tools">
-        <ViewCube
-          onSelect={(view) => setError(`View "${view}" — viewer pending.`)}
-        />
-      </div>
+      {/* The view cube is ALWAYS visible — a floating, freely draggable
+          control (fixed position, user-dragged, persisted), independent of
+          whether a part is selected. It rides above the HUD, so it is never
+          covered by a panel. */}
+      <ViewCube onSelect={(view) => setError(`View "${view}" — viewer pending.`)} />
 
-      {/* RIGHT, lower: an info panel */}
-      <div class="hud-slot hud-right-info">
-        <div class="hud-panel hud-info">
-          <span class="hud-tool-title">Info</span>
-          <p class="hud-empty">Selection & measurements — pending.</p>
+      {/* The info panel and status bar are about the selected artifact —
+          hidden until one is chosen. */}
+      <Show when={selectedPart()}>
+        {/* RIGHT: the info panel — a real HUD panel in its own right column. */}
+        <div class="hud-slot hud-right-info">
+          <CollapsiblePanel id="info" title="Info" icon="info" class="hud-info" defaultCollapsed>
+            <p class="hud-empty">Selection & measurements — pending.</p>
+          </CollapsiblePanel>
         </div>
-      </div>
 
-      {/* BOTTOM: a status bar */}
-      <div class="hud-slot hud-statusbar">
-        <div class="hud-panel hud-status">
-          <span>{project()?.name ?? "…"}</span>
-          <span class="hud-status-sep">·</span>
-          <span>{parts().length} {parts().length === 1 ? "part" : "parts"}</span>
-          <span class="hud-status-spacer" />
-          <span class="hud-status-muted">ready</span>
+        {/* BOTTOM: a status bar */}
+        <div class="hud-slot hud-statusbar">
+          <div class="hud-panel hud-status">
+            <span>{project()?.name ?? "…"}</span>
+            <span class="hud-status-sep">·</span>
+            <span>{selectedPart()!.name}</span>
+            <span class="hud-status-spacer" />
+            <span class="hud-status-muted">ready</span>
+          </div>
         </div>
-      </div>
+      </Show>
 
       <Show when={error()}>
         {(message) => (

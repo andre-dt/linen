@@ -26,6 +26,7 @@ import {
   type ProjectView,
 } from "../projects"
 import { Drawer } from "../widgets/drawer"
+import { CollapsiblePanel } from "../widgets/collapsible-panel"
 
 export function Dashboard(props: { auth: Auth }) {
   const navigate = useNavigate()
@@ -136,13 +137,16 @@ export function Dashboard(props: { auth: Auth }) {
         </Show>
       </div>
 
-      {/* the projects panel, pinned below the top rail on the left */}
-      <div class="hud-slot hud-workspace">
-        <section class="hud-panel hud-list-panel">
-          <header class="hud-list-head">
-            <h2>Projects</h2>
-            <button class="hud-button" onClick={openDrawer}>New</button>
-          </header>
+      {/* the projects panel, in the same left column + collapsible-panel
+          scheme the editor's artifacts panel uses */}
+      <div class="hud-slot hud-left-column hud-left-column-top">
+        <CollapsiblePanel
+          id="projects"
+          title="Projects"
+          icon="folder"
+          class="hud-list-panel"
+          actions={<button class="hud-button" onClick={openDrawer}>New</button>}
+        >
           <ul class="hud-list">
             <For each={projects()} fallback={<li class="hud-empty">No projects yet.</li>}>
               {(project) => (
@@ -171,7 +175,7 @@ export function Dashboard(props: { auth: Auth }) {
               )}
             </For>
           </ul>
-        </section>
+        </CollapsiblePanel>
       </div>
 
       <Show when={error()}>
