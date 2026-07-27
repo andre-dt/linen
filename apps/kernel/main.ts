@@ -30,19 +30,26 @@ const PORT = Number(process.env.PORT ?? 5174)
 // in dev. This file is apps/kernel/main.ts, so the repo root is two
 // levels up and ../linen-data sits beside it.
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? null
+// No client id: fall back to the DEV auth provider rather than refusing
+// to start. Exiting here made the whole app unreachable on a machine
+// without an OAuth client — including for work that has nothing to do
+// with identity, such as the viewport.
 if (!GOOGLE_CLIENT_ID) {
-  console.error(
-    "GOOGLE_CLIENT_ID is not set. Sign-in is Google-only; create an OAuth client\n" +
-      "in the Google Cloud console and put it in apps/kernel/.env before starting.",
+  console.warn(
+    "GOOGLE_CLIENT_ID is not set — starting with the DEV auth provider.\n" +
+      "It trusts whatever the client sends and must NEVER run in production.\n" +
+      "For real sign-in, put an OAuth client id in apps/kernel/.env.local.",
   )
-  process.exit(1)
 }
 // A well-formed Web-application client id is "<digits>-<32 lowercase
 // alphanumerics>.apps.googleusercontent.com". Catching a malformed one
 // here turns a silent "sign-in always fails" into an obvious startup
 // error — the exact confusion of an id copied with a stray prefix.
-if (!/^\d+-[a-z0-9]{32}\.apps\.googleusercontent\.com$/.test(GOOGLE_CLIENT_ID)) {
+if (
+  GOOGLE_CLIENT_ID &&
+  !/^\d+-[a-z0-9]{32}\.apps\.googleusercontent\.com$/.test(GOOGLE_CLIENT_ID)
+) {
   console.error(
     `GOOGLE_CLIENT_ID does not look like a Google OAuth client id:\n  ${GOOGLE_CLIENT_ID}\n` +
       "Expected <digits>-<32 chars>.apps.googleusercontent.com — check for a stray\n" +
@@ -166,5 +173,5 @@ sockets.on("connection", (socket: WebSocket) => {
 http.listen(PORT, () => {
   console.log(`linen kernel listening on http://localhost:${PORT}`)
   console.log(`capabilities: ${CAPABILITIES.join(", ")}`)
-  console.log("auth: Google")
+  console.log(GOOGLE_CLIENT_ID ? "auth: Google" : "auth: DEV (no client id)")
 })

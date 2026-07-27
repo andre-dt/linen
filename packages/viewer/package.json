@@ -6,7 +6,9 @@
   "exports": {
     ".": "./index.ts",
     "./math": "./math.ts",
-    "./planes": "./planes.ts"
+    "./planes": "./planes.ts",
+    "./sketch": "./sketch.ts",
+    "./scene": "./scene.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

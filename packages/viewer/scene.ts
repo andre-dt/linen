@@ -15,14 +15,34 @@ import type {
   Projection, StandardView,
 } from "./index"
 import type { WebGl2Backend } from "./backend"
-import type { PlaneLayer } from "./index"
+import type { PlaneLayer, SketchLayer } from "./index"
+import {
+  sketchBuffer, rayToSketch, snap,
+  type SketchCurve,
+} from "./sketch"
+import { createTextTexture, type TextTexture } from "./text"
 import { decodeMesh } from "./mesh"
 import { createCamera } from "./camera"
 import { matrixMultiply, invert, type Matrix } from "./math"
 import {
-  DATUM_PLANES, planeQuad, planeOutline, pickPlane, rayThrough,
-  type DatumPlane, type DatumPlaneId,
+  DATUM_PLANES, planeQuad, planeOutline, planeLabelQuad,
+  originSphere, originSphereVertexCount, pickPlane, rayThrough,
+  type DatumPlaneId,
 } from "./planes"
+
+/** The three surfaces that actually carry geometry. Their opposites —
+ *  bottom, back, left — are the same squares seen from the other side. */
+const FRONT_FACES: ReadonlySet<DatumPlaneId> = new Set<DatumPlaneId>([
+  "top", "front", "right",
+])
+
+/** A plane and its opposite share one drawn square, so a hover on either
+ *  has to light the same geometry. */
+const OPPOSITE: Record<DatumPlaneId, DatumPlaneId> = {
+  top: "bottom", bottom: "top",
+  front: "back", back: "front",
+  right: "left", left: "right",
+}
 
 const DEFAULT_APPEARANCE: Appearance = {
   color: [0.62, 0.66, 0.72],
@@ -82,14 +102,54 @@ export function createScene(backend: Backend): Scene {
     color: gl.getUniformLocation(planeProgram, "uColor"),
     opacity: gl.getUniformLocation(planeProgram, "uOpacity"),
   }
-  const planeMeshes = DATUM_PLANES.map((plane) => ({
-    plane,
-    fill: createPlaneBuffer(gl, planeProgram, planeQuad(plane)),
-    outline: createPlaneBuffer(gl, planeProgram, planeOutline(plane)),
-  }))
+  // Only the THREE distinct surfaces get geometry. Top and Bottom are the
+  // same square seen from either side — uploading both would draw every
+  // plane twice, doubling the fill cost and darkening the blend.
+  // Picking still distinguishes all six; that is a ray test, not geometry.
+  // The name, baked to a texture and stamped INTO the plane. Built once:
+  // six fixed words that never change.
+  const labelProgram = buildLabelProgram(gl)
+  const labelUniforms = {
+    viewProjection: gl.getUniformLocation(labelProgram, "uViewProjection"),
+    color: gl.getUniformLocation(labelProgram, "uColor"),
+    opacity: gl.getUniformLocation(labelProgram, "uOpacity"),
+    text: gl.getUniformLocation(labelProgram, "uText"),
+  }
+
+  const planeMeshes = DATUM_PLANES.filter((plane) => FRONT_FACES.has(plane.id)).map(
+    (plane) => {
+      const text = createTextTexture(gl, plane.label.toUpperCase(), {
+        fontSize: 32,
+        letterSpacing: 1.5,
+      })
+      return {
+        plane,
+        fill: createPlaneBuffer(gl, planeProgram, planeQuad(plane)),
+        outline: createPlaneBuffer(gl, planeProgram, planeOutline(plane)),
+        text,
+        // Sized in MILLIMETRES, from the texture's aspect so the glyphs
+        // are never stretched. The label scales with the plane, as
+        // anything printed on a surface does.
+        label: text
+          ? createLabelBuffer(
+              gl,
+              labelProgram,
+              planeLabelQuad(plane, LABEL_HEIGHT_MM * text.aspect, LABEL_HEIGHT_MM),
+            )
+          : null,
+      }
+    },
+  )
+
+  // The origin, shared by all three planes rather than owned by any.
+  const originVertexArray = createPlaneBuffer(gl, planeProgram, originSphere())
+  const originVertexCount = originSphereVertexCount()
 
   const planes: PlaneLayer = {
-    visible: false,
+    // Visible by default: the origin planes ARE the empty scene, the
+    // same way Onshape shows them the moment a part opens. Hiding them
+    // until something asks would leave a new part staring at nothing.
+    visible: true,
     hovered: null,
     selected: null,
 
@@ -99,7 +159,7 @@ export function createScene(backend: Backend): Scene {
       // ray can be built from it, so nothing is hit.
       if (!inverse) return null
       return pickPlane(rayThrough(x, y, width, height, inverse))
-    },
+    }
   }
 
   /**
@@ -126,17 +186,21 @@ export function createScene(backend: Backend): Scene {
     gl.disable(gl.CULL_FACE)
 
     for (const { plane, fill, outline } of planeMeshes) {
+      // Either side of the pair lights the same square: the user hovered
+      // "bottom", but "top" is what carries the geometry.
+      const opposite = OPPOSITE[plane.id]
       const state =
-        planes.selected === plane.id ? "selected"
-        : planes.hovered === plane.id ? "hovered"
+        planes.selected === plane.id || planes.selected === opposite ? "selected"
+        : planes.hovered === plane.id || planes.hovered === opposite ? "hovered"
         : "idle"
 
-      const color =
-        state === "idle" ? plane.color : PLANE_ACTIVE_COLOR
-      // Faint at rest so six overlapping planes do not read as fog;
-      // clearly lit under the cursor and once chosen.
+      // ONE colour for all three, as Onshape does. Per-axis tints made
+      // the origin read as three unrelated objects; a single neutral
+      // makes them read as one coordinate system, and leaves the accent
+      // free to mean "this is the one you are about to pick".
+      const color = state === "idle" ? PLANE_COLOR : PLANE_ACTIVE_COLOR
       const fillOpacity =
-        state === "selected" ? 0.3 : state === "hovered" ? 0.22 : 0.08
+        state === "selected" ? 0.26 : state === "hovered" ? 0.2 : 0.09
 
       gl.uniform3f(planeUniforms.color, color[0], color[1], color[2])
 
@@ -144,16 +208,174 @@ export function createScene(backend: Backend): Scene {
       gl.bindVertexArray(fill)
       gl.drawArrays(gl.TRIANGLES, 0, 6)
 
-      // The border carries the plane's identity — the fill is too faint
-      // to read as a shape on its own.
-      gl.uniform1f(planeUniforms.opacity, state === "idle" ? 0.45 : 0.95)
+      // Just the border. No grid, no axis lines: a flat translucent
+      // panel with a clean edge is what a datum plane looks like in
+      // Onshape, and the ruled lines read as a wireframe texture rather
+      // than as a surface.
+      gl.uniform1f(planeUniforms.opacity, state === "idle" ? 0.32 : 0.85)
       gl.bindVertexArray(outline)
       gl.drawArrays(gl.LINES, 0, 8)
     }
 
+    // The names, stamped into their planes. Drawn with the fills still
+    // blended and depth still not written, so a label never occludes
+    // anything — it is printed ON the surface, not standing off it.
+    gl.useProgram(labelProgram)
+    gl.uniformMatrix4fv(labelUniforms.viewProjection, false, viewProjection)
+    gl.uniform1i(labelUniforms.text, 0)
+    gl.activeTexture(gl.TEXTURE0)
+
+    for (const { plane, text, label } of planeMeshes) {
+      if (!text || !label) continue
+      const opposite = OPPOSITE[plane.id]
+      const active =
+        planes.selected === plane.id || planes.selected === opposite ||
+        planes.hovered === plane.id || planes.hovered === opposite
+
+      const color = active ? PLANE_ACTIVE_COLOR : LABEL_COLOR
+      gl.uniform3f(labelUniforms.color, color[0], color[1], color[2])
+      gl.uniform1f(labelUniforms.opacity, active ? 1 : 0.55)
+      gl.bindTexture(gl.TEXTURE_2D, text.texture)
+      gl.bindVertexArray(label)
+      gl.drawArrays(gl.TRIANGLES, 0, 6)
+    }
+    gl.bindTexture(gl.TEXTURE_2D, null)
+    gl.useProgram(planeProgram)
+
+    // The origin last and OPAQUE: it is a solid landmark, not another
+    // translucent hint. Depth writing goes back on for it alone, so the
+    // sphere occludes properly instead of showing its own far side
+    // through its near side.
+    gl.depthMask(true)
+    gl.uniform3f(planeUniforms.color, ORIGIN_COLOR[0], ORIGIN_COLOR[1], ORIGIN_COLOR[2])
+    gl.uniform1f(planeUniforms.opacity, 1)
+    gl.bindVertexArray(originVertexArray)
+    gl.drawArrays(gl.TRIANGLES, 0, originVertexCount)
+
     gl.bindVertexArray(null)
     gl.depthMask(true)
     gl.enable(gl.CULL_FACE)
+    gl.disable(gl.BLEND)
+  }
+
+  // --- the sketch -------------------------------------------------------
+  // One DYNAMIC buffer, re-uploaded whenever the geometry changes. Unlike
+  // the planes this is not fixed: the rubber band changes every mouse
+  // move. Uploading is still cheap — a sketch is hundreds of vertices,
+  // not the hundreds of thousands a mesh carries.
+  const sketchProgram = planeProgram // same shader: flat colour lines
+  const sketchVertexArray = gl.createVertexArray()
+  const sketchBufferHandle = gl.createBuffer()
+  if (!sketchVertexArray || !sketchBufferHandle) {
+    throw new Error("could not create the sketch buffer")
+  }
+  gl.bindVertexArray(sketchVertexArray)
+  gl.bindBuffer(gl.ARRAY_BUFFER, sketchBufferHandle)
+  {
+    const location = gl.getAttribLocation(sketchProgram, "aPosition")
+    gl.enableVertexAttribArray(location)
+    gl.vertexAttribPointer(location, 3, gl.FLOAT, false, 0, 0)
+  }
+  gl.bindVertexArray(null)
+
+  const sketch: SketchLayer = {
+    frame: null,
+    curves: [],
+    pending: null,
+    cursor: null,
+    snappedTo: null,
+
+    locate(x, y) {
+      if (!sketch.frame) return null
+      const inverse = invert(camera.viewProjection(width / height))
+      if (!inverse) return null
+      const ray = rayThrough(x, y, width, height, inverse)
+      const raw = rayToSketch(sketch.frame, ray.origin, ray.direction)
+      if (!raw) return null
+      // Snap tolerance scales with the zoom: a fixed one would be
+      // unusably sticky zoomed out and useless zoomed in.
+      return snap(raw, sketch.curves, snapTolerance())
+    },
+  }
+
+  /** Roughly ten screen pixels, expressed in sketch millimetres. Derived
+   *  from how much world space one pixel covers at the current zoom. */
+  const snapTolerance = (): number => {
+    const spanPerPixel = worldPerPixel()
+    return spanPerPixel * 10
+  }
+
+  const worldPerPixel = (): number => {
+    const projection = camera.projection
+    const distance = Math.hypot(
+      camera.position[0] - camera.target[0],
+      camera.position[1] - camera.target[1],
+      camera.position[2] - camera.target[2],
+    )
+    if (projection.kind === "orthographic") return projection.height / Math.max(height, 1)
+    // Perspective: the visible height at the target's depth.
+    const visible = 2 * distance * Math.tan(projection.fieldOfView / 2)
+    return visible / Math.max(height, 1)
+  }
+
+  /**
+   * Draws the sketch: committed curves solid, the rubber band dimmer,
+   * and a crosshair at the snapped cursor.
+   *
+   * Depth testing is OFF here. A sketch sits exactly on its plane, and
+   * the plane is drawn too — at equal depth the two z-fight, and the
+   * curves flicker in and out as the camera moves. Drawing the sketch
+   * last with the test disabled puts it unambiguously on top, which is
+   * also what the user expects: you are drawing ON the plane, so your
+   * lines are never hidden by it.
+   */
+  const drawSketch = (viewProjection: Matrix): void => {
+    if (!sketch.frame) return
+
+    const committed = sketch.curves
+    const pending = sketch.pending
+    const cursor = sketch.cursor
+
+    if (committed.length === 0 && !pending && !cursor) return
+
+    gl.useProgram(sketchProgram)
+    gl.uniformMatrix4fv(planeUniforms.viewProjection, false, viewProjection)
+    gl.enable(gl.BLEND)
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+    gl.disable(gl.DEPTH_TEST)
+    gl.bindVertexArray(sketchVertexArray)
+    gl.bindBuffer(gl.ARRAY_BUFFER, sketchBufferHandle)
+
+    const drawBatch = (
+      curves: readonly SketchCurve[],
+      color: readonly [number, number, number],
+      opacity: number,
+    ): void => {
+      if (curves.length === 0) return
+      const data = sketchBuffer(sketch.frame!, curves)
+      if (data.length === 0) return
+      // DYNAMIC_DRAW: this is re-uploaded on every cursor move while a
+      // rubber band is live, which is exactly the access pattern the
+      // hint exists for.
+      gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW)
+      gl.uniform3f(planeUniforms.color, color[0], color[1], color[2])
+      gl.uniform1f(planeUniforms.opacity, opacity)
+      gl.drawArrays(gl.LINES, 0, data.length / 3)
+    }
+
+    drawBatch(committed, SKETCH_COLOR, 1)
+    // The rubber band is dimmer: it is a proposal, not yet geometry.
+    if (pending) drawBatch([pending], SKETCH_PENDING_COLOR, 0.85)
+    if (cursor) {
+      drawBatch(
+        [{ kind: "point", at: cursor }],
+        sketch.snappedTo ? SKETCH_SNAP_COLOR : SKETCH_CURSOR_COLOR,
+        1,
+      )
+    }
+
+    gl.bindVertexArray(null)
+    gl.enable(gl.DEPTH_TEST)
     gl.disable(gl.BLEND)
   }
 
@@ -162,6 +384,7 @@ export function createScene(backend: Backend): Scene {
     highlight,
     drawables,
     planes,
+    sketch,
 
     upload(body, buffer) {
       // Replacing a body: release the old buffers first, or every
@@ -209,6 +432,7 @@ export function createScene(backend: Backend): Scene {
         // model they are the ONLY thing to draw. Returning early here is
         // what would leave a draft with nothing to click.
         drawPlanes(frameViewProjection)
+        drawSketch(frameViewProjection)
         return
       }
 
@@ -239,8 +463,10 @@ export function createScene(backend: Backend): Scene {
       gl.bindVertexArray(null)
 
       // After the solids: translucent geometry has to blend against
-      // what is already there.
+      // what is already there. The sketch goes last of all — it draws on
+      // top of everything, including its own plane.
       drawPlanes(viewProjection)
+      drawSketch(viewProjection)
     },
 
     resize(nextWidth, nextHeight, devicePixelRatio) {
@@ -256,10 +482,16 @@ export function createScene(backend: Backend): Scene {
       for (const mesh of meshes.values()) releaseMesh(gl, mesh)
       meshes.clear()
       drawables.clear()
-      for (const { fill, outline } of planeMeshes) {
+      for (const { fill, outline, label, text } of planeMeshes) {
         gl.deleteVertexArray(fill)
         gl.deleteVertexArray(outline)
+        if (label) gl.deleteVertexArray(label)
+        if (text) gl.deleteTexture(text.texture)
       }
+      gl.deleteVertexArray(originVertexArray)
+      gl.deleteProgram(labelProgram)
+      gl.deleteVertexArray(sketchVertexArray)
+      gl.deleteBuffer(sketchBufferHandle)
       gl.deleteProgram(planeProgram)
       gl.deleteProgram(program)
     },
@@ -273,10 +505,37 @@ const IDENTITY = new Float32Array([
 const HOVER_COLOR: readonly [number, number, number] = [0.44, 0.7, 1]
 const SELECTED_COLOR: readonly [number, number, number] = [0.31, 0.56, 0.97]
 
-/** Hovered or selected planes drop their axis tint for one shared accent:
- *  "this is the one" has to be unmistakable, and three different tints
- *  lighting up would not read as the same state. */
+/** All three datum planes share ONE neutral colour, as in Onshape. Tinting
+ *  them per axis made the origin read as three unrelated objects instead
+ *  of one coordinate system — and it spent the accent colour, which is
+ *  needed to mean "this is the one you are about to pick". */
+const PLANE_COLOR: readonly [number, number, number] = [0.62, 0.70, 0.82]
+
+/** Hovered or selected. The single accent, unmistakable against the
+ *  neutral the other planes keep. */
 const PLANE_ACTIVE_COLOR: readonly [number, number, number] = [0.44, 0.7, 1]
+
+/** Brighter than the planes: the origin is a landmark, not scenery. */
+const ORIGIN_COLOR: readonly [number, number, number] = [0.85, 0.88, 0.94]
+
+/** Cap height of a plane's name, in millimetres. Roughly 7% of the
+ *  plane's 120mm width — large enough to read at the default framing,
+ *  small enough not to compete with the geometry. */
+const LABEL_HEIGHT_MM = 8
+
+/** The name at rest: readable, but clearly subordinate to the geometry. */
+const LABEL_COLOR: readonly [number, number, number] = [0.78, 0.83, 0.9]
+
+/** Drawn geometry is near-white: it is the subject, and everything else
+ *  in the viewport is scenery. */
+const SKETCH_COLOR: readonly [number, number, number] = [0.93, 0.95, 0.98]
+/** The rubber band, in the accent: visibly "not yet committed". */
+const SKETCH_PENDING_COLOR: readonly [number, number, number] = [0.44, 0.7, 1]
+const SKETCH_CURSOR_COLOR: readonly [number, number, number] = [0.7, 0.75, 0.82]
+/** A snapped cursor turns amber — the one signal that says "this click
+ *  will land exactly on something", which is what makes snapping
+ *  trustworthy rather than mysterious. */
+const SKETCH_SNAP_COLOR: readonly [number, number, number] = [1, 0.75, 0.28]
 
 // =====================================================================
 // DATUM PLANES
@@ -327,6 +586,83 @@ void main() {
   fragColor = vec4(uColor, uOpacity);
 }
 `
+
+const LABEL_VERTEX_SHADER = `#version 300 es
+in vec3 aPosition;
+in vec2 aTexCoord;
+uniform mat4 uViewProjection;
+out vec2 vTexCoord;
+
+void main() {
+  vTexCoord = aTexCoord;
+  gl_Position = uViewProjection * vec4(aPosition, 1.0);
+}
+`
+
+const LABEL_FRAGMENT_SHADER = `#version 300 es
+precision highp float;
+
+in vec2 vTexCoord;
+uniform sampler2D uText;
+uniform vec3 uColor;
+uniform float uOpacity;
+
+out vec4 fragColor;
+
+void main() {
+  // The bitmap is white-on-transparent, so ALPHA carries the glyph and
+  // the colour comes from the uniform. One texture serves every state.
+  float coverage = texture(uText, vTexCoord).a;
+  // Fully transparent texels are discarded rather than blended: at a
+  // grazing angle the quad's empty corners would otherwise darken the
+  // plane behind them into a visible rectangle.
+  if (coverage < 0.01) discard;
+  fragColor = vec4(uColor, coverage * uOpacity);
+}
+`
+
+function buildLabelProgram(gl: WebGL2RenderingContext): WebGLProgram {
+  const vertex = compile(gl, gl.VERTEX_SHADER, LABEL_VERTEX_SHADER)
+  const fragment = compile(gl, gl.FRAGMENT_SHADER, LABEL_FRAGMENT_SHADER)
+  const program = gl.createProgram()
+  if (!program) throw new Error("could not create a program")
+  gl.attachShader(program, vertex)
+  gl.attachShader(program, fragment)
+  gl.linkProgram(program)
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    throw new Error(`label shader link failed: ${gl.getProgramInfoLog(program)}`)
+  }
+  gl.deleteShader(vertex)
+  gl.deleteShader(fragment)
+  return program
+}
+
+/** Interleaved x,y,z,u,v — one buffer, two attributes. */
+function createLabelBuffer(
+  gl: WebGL2RenderingContext,
+  program: WebGLProgram,
+  data: Float32Array,
+): WebGLVertexArrayObject {
+  const vertexArray = gl.createVertexArray()
+  if (!vertexArray) throw new Error("could not create a vertex array")
+  gl.bindVertexArray(vertexArray)
+
+  const buffer = gl.createBuffer()
+  if (!buffer) throw new Error("could not create a buffer")
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer)
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW)
+
+  const stride = 5 * 4
+  const position = gl.getAttribLocation(program, "aPosition")
+  gl.enableVertexAttribArray(position)
+  gl.vertexAttribPointer(position, 3, gl.FLOAT, false, stride, 0)
+  const texCoord = gl.getAttribLocation(program, "aTexCoord")
+  gl.enableVertexAttribArray(texCoord)
+  gl.vertexAttribPointer(texCoord, 2, gl.FLOAT, false, stride, 3 * 4)
+
+  gl.bindVertexArray(null)
+  return vertexArray
+}
 
 function buildPlaneProgram(gl: WebGL2RenderingContext): WebGLProgram {
   const vertex = compile(gl, gl.VERTEX_SHADER, PLANE_VERTEX_SHADER)

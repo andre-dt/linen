@@ -17,6 +17,7 @@
 import { Match, Switch, onMount } from "solid-js"
 import { Router, Route } from "@solidjs/router"
 import { createAuth, type Auth } from "./auth"
+import { GestureProvider } from "./gestures"
 import { Login } from "./screens/login"
 import { Dashboard } from "./screens/dashboard"
 import { Project } from "./screens/project"
@@ -27,7 +28,11 @@ export function App() {
   // Ask the server who we are before painting anything but the splash.
   onMount(() => auth.refresh())
 
+  // The gesture binding is app-wide: which button orbits is a property
+  // of the application, not of one viewport. Mounted here so a future
+  // preference ("SolidWorks controls") is one value, changed once.
   return (
+    <GestureProvider>
     <Switch fallback={<Splash />}>
       <Match when={auth.status() === "loading"}>
         <Splash />
@@ -57,6 +62,7 @@ export function App() {
         </Router>
       </Match>
     </Switch>
+    </GestureProvider>
   )
 }
 

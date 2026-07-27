@@ -28,6 +28,7 @@ import type {
   BodyId, EntityId, Vector2, Vector3, Matrix4, BoundingBox, FaceGroup,
 } from "@linen/cad/kernel"
 import type { DatumPlaneId, PlaneHit } from "./planes"
+import type { SketchFrame, SketchCurve, Point2, SnapResult } from "./sketch"
 
 // =====================================================================
 // 1. BACKEND
@@ -120,6 +121,9 @@ export interface Scene {
    */
   readonly planes: PlaneLayer
 
+  /** The sketch being drawn: the curves, the rubber band, the cursor. */
+  readonly sketch: SketchLayer
+
   /** Draws one frame. Called from requestAnimationFrame. */
   render(): void
   resize(width: number, height: number, devicePixelRatio: number): void
@@ -144,6 +148,38 @@ export interface PlaneLayer {
    * panel state.
    */
   pick(x: number, y: number): PlaneHit | null
+
+}
+
+
+/**
+ * The sketch being drawn on. Set a frame and it becomes active: clicks
+ * resolve to points on that plane and the curves draw there.
+ *
+ * Split into COMMITTED and PENDING deliberately. Committed curves are
+ * what the user has actually drawn; the pending one is the rubber band
+ * following the cursor, replaced every mouse move and never persisted
+ * until a click promotes it. Keeping them apart is what lets the preview
+ * re-upload each frame without touching the real geometry's buffer.
+ */
+export interface SketchLayer {
+  /** The plane being drawn on. Null means no sketch is active. */
+  frame: SketchFrame | null
+  /** What the user has drawn so far. */
+  curves: readonly SketchCurve[]
+  /** The rubber band: the curve the cursor is currently defining. */
+  pending: SketchCurve | null
+  /** Where the (snapped) cursor is, drawn as a crosshair. */
+  cursor: Point2 | null
+  /** What the cursor snapped to, so the viewport can badge it. */
+  snappedTo: "endpoint" | "center" | "axis" | "grid" | null
+
+  /**
+   * Resolves a screen position to a point on the sketch plane, snapped
+   * to nearby geometry. Returns null when no sketch is active or the
+   * plane is edge-on.
+   */
+  locate(x: number, y: number): SnapResult | null
 }
 
 export interface Drawable {
@@ -177,8 +213,10 @@ export interface Camera {
   orbit(deltaAzimuth: number, deltaElevation: number): void
   pan(deltaX: number, deltaY: number): void
   dolly(delta: number): void
-  /** Frames the given bounds, or the whole scene when omitted. */
-  fit(bounds?: BoundingBox): void
+  /** Frames the given bounds, or the whole scene when omitted.
+   *  `coverage` is the fraction of the viewport HEIGHT the bounds should
+   *  occupy — 0.6 by default, leaving room for the floating HUD. */
+  fit(bounds?: BoundingBox, coverage?: number): void
   /** Standard views. Animates unless `immediate`. */
   viewFrom(direction: StandardView, immediate?: boolean): void
 }
@@ -188,7 +226,13 @@ export type Projection =
   | { readonly kind: "orthographic"; readonly height: number; readonly near: number; readonly far: number }
 
 export type StandardView =
-  | "front" | "back" | "left" | "right" | "top" | "bottom" | "isometric"
+  | "front" | "back" | "left" | "right" | "top" | "bottom"
+  /** The default three-quarter view: front-right, looking down. */
+  | "isometric"
+  /** The four isometric corners, so a view cube's corner cells are
+   *  distinct views rather than four names for the same one. */
+  | "isometric-front-right" | "isometric-front-left"
+  | "isometric-back-left" | "isometric-back-right"
 
 // =====================================================================
 // 5. PICKING
@@ -309,3 +353,7 @@ export {
   planeQuad, planeOutline,
 } from "./planes"
 export type { DatumPlane, DatumPlaneId, PlaneHit, Ray } from "./planes"
+export {
+  frameOfDatum, toWorld, toSketch, rayToSketch, tessellate, snap, sketchBuffer,
+} from "./sketch"
+export type { SketchFrame, SketchCurve, Point2 as SketchPoint, SnapResult } from "./sketch"

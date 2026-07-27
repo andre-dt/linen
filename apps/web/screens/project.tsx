@@ -24,7 +24,8 @@
 
 import { createSignal, createMemo, For, Show, onMount } from "solid-js"
 import { useNavigate, useParams } from "@solidjs/router"
-import { standardPreset, type CommandDefinition } from "@linen/cad/features"
+import { standardPreset, setField, type CommandDefinition } from "@linen/cad/features"
+import type { PlaneHit, Scene as SceneHandle, StandardView } from "@linen/viewer"
 import type { Auth } from "../auth"
 import {
   getProject, listParts, createPart,
@@ -34,10 +35,11 @@ import { appendElement, elementsOf, removeElement, updateElement } from "../elem
 import { Drawer } from "../widgets/drawer"
 import { SplitButton } from "../widgets/split-button"
 import { FeatureToolbar } from "../widgets/feature-toolbar"
-import { ViewCube } from "../widgets/view-cube"
+import { ViewCube, type ViewId } from "../widgets/view-cube"
 import { CollapsiblePanel } from "../widgets/collapsible-panel"
 import { LucideIcon } from "../widgets/lucide-icon"
 import { CommandPanel } from "../panels/command-panel"
+import { Viewport } from "../viewport"
 import { X } from "../icons"
 
 /** Every command from every registered feature, flattened once. The
@@ -45,6 +47,17 @@ import { X } from "../icons"
  *  a per-feature lookup, which is what keeps a new feature UI-free. */
 const DEFINITIONS: readonly CommandDefinition<never, never>[] =
   standardPreset.flatMap((feature) => feature.commands)
+
+/** The cube's cells, in the camera's vocabulary. The six faces map
+ *  straight across; the four corners become the four isometric views. */
+const VIEW_OF_CUBE: Record<ViewId, StandardView> = {
+  front: "front", back: "back", left: "left", right: "right",
+  top: "top", bottom: "bottom",
+  "iso-tl": "isometric-front-left",
+  "iso-tr": "isometric-front-right",
+  "iso-bl": "isometric-back-left",
+  "iso-br": "isometric-back-right",
+}
 
 export function Project(props: { auth: Auth }) {
   // The URL carries the selection: :kind (part|module) + :artifactId, and
@@ -94,6 +107,79 @@ export function Project(props: { auth: Auth }) {
     if (!part) return
     const element = appendElement(part.id, command)
     setDesigning(element.id)
+  }
+
+  // ---------------------------------------------------------------
+  // What the viewport is picking, derived from the METADATA.
+  //
+  // The step being designed declares its fields; if one of them is a
+  // plane field, the datum planes appear and become clickable. No
+  // feature-specific code: any command with a plane field gets this,
+  // including one a user defines later.
+  // ---------------------------------------------------------------
+
+  const planeField = createMemo(() => {
+    const element = designed()
+    if (!element) return null
+    const definition = definitionOf(element.command)
+    const step = definition?.steps.find((entry) => entry.id === element.panel.currentStep)
+    return step?.fields.find((field) => field.kind === "plane") ?? null
+  })
+
+  /** The chosen plane, so the viewport keeps it lit. */
+  const selectedPlaneId = createMemo<string | null>(() => {
+    const field = planeField()
+    const element = designed()
+    if (!field || !element) return null
+    const value = element.panel.values.get(field.name) as { plane?: string } | undefined
+    return value?.plane ?? null
+  })
+
+  /**
+   * A datum plane was clicked in the viewport. Writes the SAME value the
+   * picker's buttons write — the two paths must be indistinguishable
+   * downstream, or the persisted input would depend on how the user
+   * happened to choose.
+   */
+  const acceptPlanePick = (hit: PlaneHit): void => {
+    const field = planeField()
+    const element = designed()
+    const part = selectedPart()
+    if (!field || !element || !part) return
+
+    const definition = definitionOf(element.command)
+    if (!definition) return
+
+    updateElement(part.id, element.id, (current) => ({
+      ...current,
+      panel: setField(
+        current.panel,
+        field.name,
+        {
+          kind: "datum",
+          plane: hit.plane.id,
+          axes: hit.plane.axes,
+          offset: 0,
+        },
+        definition,
+      ),
+    }))
+  }
+
+  /**
+   * The view cube moves the camera.
+   *
+   * Held outside the reactive graph, like everything else that touches
+   * the scene: this is an imperative jump, not a piece of state the DOM
+   * renders. The cube's four corner cells map onto four distinct
+   * isometric views rather than collapsing to one.
+   */
+  let sceneRef: SceneHandle | null = null
+
+  const applyView = (view: ViewId): void => {
+    const camera = sceneRef?.camera
+    if (!camera) return
+    camera.viewFrom(VIEW_OF_CUBE[view])
   }
 
   const discardElement = (elementId: string): void => {
@@ -174,6 +260,7 @@ export function Project(props: { auth: Auth }) {
           pickingPlane={planeField() !== null}
           selectedPlane={selectedPlaneId()}
           onPickPlane={acceptPlanePick}
+          onScene={(scene) => { sceneRef = scene }}
         />
       </div>
 
@@ -336,7 +423,7 @@ export function Project(props: { auth: Auth }) {
           control (fixed position, user-dragged, persisted), independent of
           whether a part is selected. It rides above the HUD, so it is never
           covered by a panel. */}
-      <ViewCube onSelect={(view) => setError(`View "${view}" — viewer pending.`)} />
+      <ViewCube onSelect={applyView} />
 
       {/* THE DESIGNER: the selected element's input HUD. Entirely
           derived from the command's metadata — the plane picker, the

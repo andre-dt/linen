@@ -243,6 +243,63 @@ export const planeQuad = (
   return new Float32Array([...a, ...b, ...c, ...a, ...c, ...d])
 }
 
+/**
+ * A ruled grid across the plane, as line segments.
+ *
+ * This is most of what makes an empty viewport read as three-dimensional
+ * space rather than as a flat coloured shape: the lines converge under
+ * perspective, and that convergence is the depth cue. Onshape, Fusion and
+ * SolidWorks all draw one for the same reason.
+ *
+ * The two centre lines are omitted — they are the axes, drawn separately
+ * and more brightly, and doubling them up makes the origin muddy.
+ */
+export const planeGrid = (
+  plane: DatumPlane,
+  extent: number = PLANE_EXTENT,
+  step = 10,
+): Float32Array => {
+  const out: number[] = []
+  const at = (u: number, v: number): void => {
+    out.push(
+      plane.right[0] * u + plane.up[0] * v,
+      plane.right[1] * u + plane.up[1] * v,
+      plane.right[2] * u + plane.up[2] * v,
+    )
+  }
+
+  for (let offset = -extent; offset <= extent + 1e-9; offset += step) {
+    // Skip the centre: the axes cover it.
+    if (Math.abs(offset) < 1e-9) continue
+    at(offset, -extent)
+    at(offset, extent)
+    at(-extent, offset)
+    at(extent, offset)
+  }
+
+  return new Float32Array(out)
+}
+
+/**
+ * The two in-plane axes, full width. Brighter than the grid so the
+ * origin is unmistakable — it is the one point every coordinate is
+ * measured from.
+ */
+export const planeAxes = (
+  plane: DatumPlane,
+  extent: number = PLANE_EXTENT,
+): Float32Array => {
+  const at = (u: number, v: number): readonly number[] => [
+    plane.right[0] * u + plane.up[0] * v,
+    plane.right[1] * u + plane.up[1] * v,
+    plane.right[2] * u + plane.up[2] * v,
+  ]
+  return new Float32Array([
+    ...at(-extent, 0), ...at(extent, 0),
+    ...at(0, -extent), ...at(0, extent),
+  ])
+}
+
 /** The square's border, as a line loop: the plane reads as a framed
  *  surface rather than a floating translucent patch. */
 export const planeOutline = (
@@ -256,6 +313,104 @@ export const planeOutline = (
   const [a, b, c, d] = [at(0), at(1), at(2), at(5)]
   return new Float32Array([
     ...a, ...b, ...b, ...c, ...c, ...d, ...d, ...a,
+  ])
+}
+
+/**
+ * The origin marker: a small solid sphere at (0,0,0).
+ *
+ * Onshape draws a dot there, and it earns its place — it is the one point
+ * every coordinate in the model is measured from, and without it the eye
+ * has nothing to fix on where the planes intersect.
+ *
+ * A real 1mm-radius sphere in WORLD units, not a screen-space dot: it is
+ * a landmark IN the model, so it should zoom with the model. At the
+ * default framing that is roughly eight pixels across.
+ *
+ * A UV sphere rather than an icosphere: at this size the difference is
+ * invisible, and the parameterisation is four lines instead of a
+ * subdivision routine. Returned as a triangle list — no index buffer,
+ * since a couple of hundred vertices is not worth the second binding.
+ */
+export const originSphere = (
+  radius = ORIGIN_RADIUS,
+  segments = 16,
+  rings = 12,
+): Float32Array => {
+  const at = (ring: number, segment: number): readonly number[] => {
+    // Polar angle from +Z, azimuth around it.
+    const phi = (ring / rings) * Math.PI
+    const theta = (segment / segments) * Math.PI * 2
+    return [
+      radius * Math.sin(phi) * Math.cos(theta),
+      radius * Math.sin(phi) * Math.sin(theta),
+      radius * Math.cos(phi),
+    ]
+  }
+
+  const out: number[] = []
+  for (let ring = 0; ring < rings; ring++) {
+    for (let segment = 0; segment < segments; segment++) {
+      const a = at(ring, segment)
+      const b = at(ring + 1, segment)
+      const c = at(ring + 1, segment + 1)
+      const d = at(ring, segment + 1)
+      // Two triangles per quad. The poles degenerate to slivers, which
+      // cost nothing and save special-casing the first and last ring.
+      out.push(...a, ...b, ...c, ...a, ...c, ...d)
+    }
+  }
+  return new Float32Array(out)
+}
+
+/** Radius in millimetres, like every other length in the system. */
+export const ORIGIN_RADIUS = 1
+
+/** Vertex count for a sphere of the given tessellation — what the draw
+ *  call needs, kept here so the caller never recomputes it wrongly. */
+export const originSphereVertexCount = (segments = 16, rings = 12): number =>
+  segments * rings * 6
+
+/**
+ * A quad for a plane's name label, lying IN the plane at its top-left
+ * corner — the position Onshape uses.
+ *
+ * Returned interleaved as x,y,z,u,v so one buffer feeds both attributes:
+ * the label is drawn as a texture, and a second buffer for two floats
+ * per vertex would be pure overhead.
+ *
+ * The quad lives in the plane's own frame, so it SKEWS with the surface
+ * as the camera orbits. That is the whole point of stamping the name
+ * into the plane rather than floating it over the canvas: it reads as
+ * belonging to the geometry, the way a label printed on a drawing does.
+ */
+export const planeLabelQuad = (
+  plane: DatumPlane,
+  widthMillimetres: number,
+  heightMillimetres: number,
+  extent: number = PLANE_EXTENT,
+  inset = 2,
+): Float32Array => {
+  // Anchored at the top-left corner, running right and downward — the
+  // reading direction, in the plane's own axes.
+  const left = -extent + inset
+  const top = extent - inset
+
+  const at = (u: number, v: number): readonly number[] => [
+    plane.right[0] * u + plane.up[0] * v,
+    plane.right[1] * u + plane.up[1] * v,
+    plane.right[2] * u + plane.up[2] * v,
+  ]
+
+  const a = at(left, top)                                        // top-left
+  const b = at(left + widthMillimetres, top)                     // top-right
+  const c = at(left + widthMillimetres, top - heightMillimetres) // bottom-right
+  const d = at(left, top - heightMillimetres)                    // bottom-left
+
+  // Texture V runs downward, so the top of the quad samples v = 0.
+  return new Float32Array([
+    ...a, 0, 0, ...b, 1, 0, ...c, 1, 1,
+    ...a, 0, 0, ...c, 1, 1, ...d, 0, 1,
   ])
 }
 

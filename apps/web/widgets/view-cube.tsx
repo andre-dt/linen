@@ -144,9 +144,8 @@ export function ViewCube(props: { onSelect?: (view: ViewId) => void }) {
   onMount(() => window.addEventListener("resize", onResize))
   onCleanup(() => window.removeEventListener("resize", onResize))
 
-  // Click-away closes the flower. This is the ONLY thing that closes it:
-  // the pointer merely leaving does not, so the user can stray off the
-  // control — or outrun it while dragging — without it folding up on them.
+  // Click-away also closes it, for the case where the pointer never
+  // crosses the control's edge — a press straight onto the canvas.
   // Bound to the capture phase on document so it still sees presses that a
   // stopPropagation somewhere in between would otherwise hide.
   const onDocumentPointerDown = (event: PointerEvent): void => {
@@ -183,15 +182,17 @@ export function ViewCube(props: { onSelect?: (view: ViewId) => void }) {
         y: clamp(origin.y + deltaY, window.innerHeight),
       })
     }
-    const onUp = (): void => {
+    const onUp = (event: PointerEvent): void => {
       window.removeEventListener("pointermove", onMove)
       window.removeEventListener("pointerup", onUp)
       if (moved) {
-        // The flower is left exactly as it was: a finished drag neither
-        // closes it nor re-opens it. Releasing the pointer outside the
-        // control is the normal way to park it somewhere, and having it fold
-        // up at that moment would undo the shape the user was aiming at.
         writePosition(position())
+        // A drag suppresses the leave handler, so the flower can end up
+        // open with the pointer nowhere near it. Resolve that here, by
+        // where the pointer ACTUALLY finished: inside, it stays open and
+        // the leave handler takes over again; outside, it closes now.
+        const under = document.elementFromPoint(event.clientX, event.clientY)
+        if (!under?.closest(".view-cube")) setOpen(false)
         // Clear the drag flag AFTER the click event would fire, so the
         // click that ends a drag is swallowed rather than selecting a view.
         setTimeout(() => setDragging(false), 0)
@@ -212,16 +213,16 @@ export function ViewCube(props: { onSelect?: (view: ViewId) => void }) {
           control moves it, so the user does not have to close the flower (or
           hunt for the trigger beneath it) just to reposition the thing.
 
-          The flower opens on hover but does NOT close when the pointer
-          leaves — it closes on a click elsewhere (see the click-away effect
-          above). Leaving it open means the pointer can stray outside the
-          control, or outrun it during a drag, without the thing folding up
-          mid-gesture; the user decides when they are done with it. */}
+          The flower opens on hover and closes when the pointer leaves,
+          the way a menu should. The one exception is a DRAG: the pointer
+          routinely outruns the control while moving it, and folding up
+          mid-gesture would yank the thing out from under the cursor. */}
       <div
         class="view-cube"
         classList={{ open: open() }}
         onPointerDown={onPointerDown}
         onPointerEnter={() => setOpen(true)}
+        onPointerLeave={() => { if (!dragging()) setOpen(false) }}
       >
         {/* The button is both the drag handle and the flower trigger; the
             gesture itself is tracked on window (see onPointerDown). */}

@@ -29,6 +29,7 @@ interface GoogleIdentity {
 
 export function Login(props: { auth: Auth }) {
   const [error, setError] = createSignal<string | null>(null)
+  const [developer, setDeveloper] = createSignal("Developer")
   let googleButton: HTMLDivElement | undefined
 
   const loadGoogleScript = (): Promise<void> =>
@@ -64,13 +65,46 @@ export function Login(props: { auth: Auth }) {
     }
   })
 
+  const signInAsDeveloper = async (): Promise<void> => {
+    try {
+      setError(null)
+      await props.auth.signInAsDeveloper(developer())
+    } catch (caught) {
+      setError((caught as Error).message)
+    }
+  }
+
   return (
     <div class="login-scene">
+      {/* The SERVER decides which provider is live. Running the dev
+          provider, there is no Google button to render — showing one
+          that cannot possibly work is worse than showing none. */}
       <Show
-        when={GOOGLE_CLIENT_ID}
-        fallback={<p class="login-note">Set VITE_GOOGLE_CLIENT_ID to enable Google sign-in.</p>}
+        when={props.auth.provider() === "google"}
+        fallback={
+          <div class="login-dev">
+            <p class="login-note">
+              Development sign-in — no password, no verification.
+            </p>
+            <input
+              class="login-dev-input"
+              placeholder="Your name"
+              value={developer()}
+              onInput={(event) => setDeveloper(event.currentTarget.value)}
+              onKeyDown={(event) => event.key === "Enter" && void signInAsDeveloper()}
+            />
+            <button class="login-dev-button" onClick={() => void signInAsDeveloper()}>
+              Continue
+            </button>
+          </div>
+        }
       >
-        <div class="login-google" ref={googleButton} />
+        <Show
+          when={GOOGLE_CLIENT_ID}
+          fallback={<p class="login-note">Set VITE_GOOGLE_CLIENT_ID to enable Google sign-in.</p>}
+        >
+          <div class="login-google" ref={googleButton} />
+        </Show>
       </Show>
 
       <Show when={error()}>

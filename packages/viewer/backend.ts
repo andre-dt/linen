@@ -14,7 +14,18 @@ import type { Backend, BackendKind, BackendLimits } from "./index"
 
 export async function createBackend(
   canvas: HTMLCanvasElement,
-  preference: BackendKind = "webgpu",
+  // WebGL2 is the DEFAULT until the WebGPU renderer exists.
+  //
+  // Preferring WebGPU here while createScene implements only WebGL2 made
+  // the pair disagree: on a machine with a WebGPU adapter this returned a
+  // backend the scene then refused, and the viewport died with "the
+  // WebGPU renderer is not implemented yet". A machine WITHOUT an adapter
+  // fell through to WebGL2 and worked — so it broke only on real GPUs,
+  // which is the worst way for it to break.
+  //
+  // Flip this back to "webgpu" in the same change that lands the WebGPU
+  // path in scene.ts, never before.
+  preference: BackendKind = "webgl2",
 ): Promise<Backend> {
   if (preference === "webgpu") {
     const webgpu = await tryWebGpu(canvas)

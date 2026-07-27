@@ -582,7 +582,23 @@ body {
 .direction-row,
 .plane-row {
   display: flex;
+  align-items: center;
   gap: 2px;
+}
+
+/* Six named planes in two rows of three, pairing each with its opposite:
+   Top/Bottom, Front/Back, Right/Left read as pairs because that is what
+   they are — the same geometric plane from either side. */
+.plane-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  margin-bottom: 4px;
+}
+.plane-hint {
+  flex: 1;
+  font-size: 10px;
+  font-style: italic;
 }
 
 .direction-pick,
@@ -834,6 +850,21 @@ table.point-list {
 .login-google { display: flex; justify-content: center; min-height: 44px; }
 .login-note { margin: 0; color: #6b7280; font-size: 13px; }
 .login-error { margin: 0; color: #d23b3b; font-size: 12px; }
+
+/* Development sign-in. Deliberately plain — it must not be mistaken for
+   the real thing, and it only ever appears when the server says it is
+   running the dev provider. */
+.login-dev { display: flex; flex-direction: column; gap: 8px; align-items: stretch; min-width: 240px; }
+.login-dev-input {
+  padding: 8px 12px; border: 1px solid #d4d7dd; border-radius: 8px;
+  font: inherit; font-size: 14px; outline: none;
+}
+.login-dev-input:focus { border-color: #4a7cf7; }
+.login-dev-button {
+  padding: 8px 12px; border: none; border-radius: 8px; cursor: pointer;
+  background: #1f2937; color: #fff; font: inherit; font-size: 14px; font-weight: 500;
+}
+.login-dev-button:hover { background: #111827; }
 
 /* =====================================================================
    HUD — a canvas with panels floating over it, the same language the
@@ -1179,14 +1210,12 @@ table.point-list {
    around the edges, plus a top toolbar and a bottom status bar.
    ===================================================================== */
 
+/* The viewport fills the slot outright. No centring grid: the canvas is
+   the content, and it sizes itself from this box via ResizeObserver.
+   The scene clears to its own colour, so no background here either —
+   painting one would only show through on a failed context. */
 .project-canvas {
-  display: grid;
-  place-content: center;
-}
-.project-canvas-hint {
-  color: var(--hud-text-faint);
-  font-size: 13px;
-  opacity: 0.5;
+  background: var(--surface);
 }
 
 /* --- extra slot positions specific to the project screen ------------ */
@@ -1584,3 +1613,13 @@ table.point-list {
   cursor: pointer; transition: background 100ms ease, color 100ms ease;
 }
 .hud-icon-button:hover { background: rgba(255, 255, 255, 0.1); color: var(--hud-text); }
+
+/* --- viewport overlays ------------------------------------------------ */
+/* The canvas plus anything positioned over it. The canvas has no
+   children, so the labels need this as their offset parent. */
+.viewport-stack {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+

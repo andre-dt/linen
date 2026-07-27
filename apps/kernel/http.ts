@@ -13,24 +13,36 @@
 // to decide between the login screen and the app, so a returning user
 // with a live cookie never sees the login screen.
 //
-// Sessions live in memory here (a Map). That is fine for the walking
-// skeleton — losing them only forces a re-login — and matches the rule
-// that nothing of VALUE lives only in memory: the value is in git.
+// Sessions are a Map plus a token->accountId file beside the data
+// directory. The file exists for ONE reason: `tsx watch` restarts this
+// process on every source edit, and a Map dies with the process — so
+// editing any kernel file silently signed the user out. Nothing of value
+// lives there either way; the value is in git, and the file holds only
+// the opaque tokens already sitting in the cookie.
 // =====================================================================
 
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { randomUUID } from "node:crypto"
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs"
+import { resolve, dirname } from "node:path"
 import { createStore, type Store, type Account } from "@linen/store"
 import { createLocalBackend } from "@linen/store/backend/local"
 import { createGoogleAuthProvider } from "@linen/auth/google"
+import { createDevAuthProvider } from "@linen/auth/dev"
 
 const SESSION_COOKIE = "linen_session"
 
 export interface HttpConfig {
   /** Where the git repositories live. */
   readonly dataDir: string
-  /** Google OAuth client id. Required — Google is the only way in. */
-  readonly googleClientId: string
+  /**
+   * Google OAuth client id, or null to fall back to the DEV provider.
+   *
+   * Null is a local-development affordance only: the dev provider trusts
+   * whatever the client sends, so a server started this way says so out
+   * loud and must never run in production.
+   */
+  readonly googleClientId: string | null
 }
 
 interface UserSession {
@@ -48,13 +60,61 @@ export const createHttpApi = (config: HttpConfig): HttpApi => {
   const backend = createLocalBackend({ root: config.dataDir })
   const store: Store = createStore({
     backend,
-    // Google is the only provider: verifies the id_token end to end.
-    auth: createGoogleAuthProvider({ clientId: config.googleClientId }),
+    // Google verifies the id_token end to end. Without a client id there
+    // is nothing to verify against, so development falls back to the dev
+    // provider rather than leaving the app unreachable.
+    auth: config.googleClientId
+      ? createGoogleAuthProvider({ clientId: config.googleClientId })
+      : // LINEN_DEV_PROVIDER lets a dev session adopt another provider's
+        // name. Set to "google" with your real Google `sub`, the account
+        // key `provider:subject` matches the one Google sign-in created —
+        // so you reach YOUR existing projects instead of an empty sandbox.
+        // Defaults to "dev", which can never collide with a real account.
+        createDevAuthProvider({ provider: process.env.LINEN_DEV_PROVIDER ?? "dev" }),
     now: () => new Date().toISOString(),
     newId: () => randomUUID(),
   })
 
   const sessions = new Map<string, UserSession>()
+
+  // --- session persistence ---------------------------------------------
+  // token -> accountId, on disk beside the data directory. This exists so
+  // a kernel restart (every source edit, under `tsx watch`) does not sign
+  // everyone out. It holds no secret beyond the tokens themselves, which
+  // are the same opaque values already in the cookie.
+  const sessionFile = resolve(config.dataDir, ".sessions.json")
+
+  const persistedSessions = (): Map<string, string> => {
+    try {
+      const raw = readFileSync(sessionFile, "utf8")
+      return new Map(Object.entries(JSON.parse(raw) as Record<string, string>))
+    } catch {
+      // Missing or corrupt: an empty map just means everyone logs in
+      // again, which is the behaviour we already had.
+      return new Map()
+    }
+  }
+
+  const persistSession = (token: string, accountId: string): void => {
+    try {
+      const all = persistedSessions()
+      all.set(token, accountId)
+      mkdirSync(dirname(sessionFile), { recursive: true })
+      writeFileSync(sessionFile, JSON.stringify(Object.fromEntries(all), null, 2))
+    } catch {
+      // Not fatal: the session still works for this process's lifetime.
+    }
+  }
+
+  const forgetSession = (token: string): void => {
+    try {
+      const all = persistedSessions()
+      all.delete(token)
+      writeFileSync(sessionFile, JSON.stringify(Object.fromEntries(all), null, 2))
+    } catch {
+      // Nothing to do — the in-memory delete already happened.
+    }
+  }
 
   // --- tiny helpers ---------------------------------------------------
 
@@ -82,18 +142,39 @@ export const createHttpApi = (config: HttpConfig): HttpApi => {
     response.setHeader("set-cookie", `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`)
   }
 
-  // Resolves the request's session from the in-memory token map.
-  //
-  // NOTE: per-request re-validation against git is DISABLED for now — it
-  // was dropping live sessions (any transient read returning null deleted
-  // the session and forced a re-login). For the moment the in-memory
-  // session IS the source of truth for a request; it is rebuilt from git
-  // only on sign-in. Re-enable the git check once session lifetime is
-  // solid.
+  /**
+   * Resolves the request's session, rehydrating from disk when the
+   * in-memory map does not have it.
+   *
+   * WHY DISK. `tsx watch` restarts the kernel on every source edit, and a
+   * Map only lives as long as the process — so every edit silently signed
+   * the user out. Persisting the token means a restart is invisible,
+   * which is the whole point of a dev watcher.
+   *
+   * Only `accountId` is written: an Account carries live store handles
+   * that cannot be serialised, so it is re-resolved from git here. That
+   * also means a deleted account cannot be revived by a stale token.
+   *
+   * NOTE: per-request re-validation against git is otherwise DISABLED —
+   * it was dropping live sessions (any transient read returning null
+   * deleted the session and forced a re-login).
+   */
   const currentSession = async (request: IncomingMessage): Promise<UserSession | null> => {
     const token = readCookie(request, SESSION_COOKIE)
     if (!token) return null
-    return sessions.get(token) ?? null
+
+    const live = sessions.get(token)
+    if (live) return live
+
+    const accountId = persistedSessions().get(token)
+    if (!accountId) return null
+
+    // Survived a restart: rebuild the account from git and re-cache it.
+    const account = await store.account(accountId).catch(() => null)
+    if (!account) return null
+    const restored: UserSession = { account, accountId }
+    sessions.set(token, restored)
+    return restored
   }
 
   const readJson = async (request: IncomingMessage): Promise<unknown> => {
@@ -129,6 +210,7 @@ export const createHttpApi = (config: HttpConfig): HttpApi => {
     const account = await store.signIn(credential)
     const token = randomUUID()
     sessions.set(token, { account, accountId: account.record.id })
+    persistSession(token, account.record.id)
     setSessionCookie(response, token)
     send(response, 200, { account: accountView(account) })
   }
@@ -150,7 +232,13 @@ export const createHttpApi = (config: HttpConfig): HttpApi => {
 
         if (path === "/auth/me" && method === "GET") {
           const session = await currentSession(request)
-          send(response, 200, { account: session ? accountView(session.account) : null })
+          // The client needs to know WHICH provider is live: with the dev
+          // provider there is no Google button to render, and rendering
+          // one that cannot work is worse than offering none.
+          send(response, 200, {
+            account: session ? accountView(session.account) : null,
+            provider: config.googleClientId ? "google" : "dev",
+          })
           return true
         }
 
@@ -176,7 +264,10 @@ export const createHttpApi = (config: HttpConfig): HttpApi => {
 
         if (path === "/auth/logout" && method === "POST") {
           const token = readCookie(request, SESSION_COOKIE)
-          if (token) sessions.delete(token)
+          if (token) {
+            sessions.delete(token)
+            forgetSession(token)
+          }
           clearSessionCookie(response)
           send(response, 200, { ok: true })
           return true

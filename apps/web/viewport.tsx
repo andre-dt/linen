@@ -13,8 +13,17 @@
 // =====================================================================
 
 import { onMount, onCleanup, createSignal, Show, createEffect } from "solid-js"
+import {
+  GestureDetector,
+  type DragGesture, type HoverGesture, type ClickGesture,
+} from "./gestures"
 import { createBackend, createScene, PLANE_EXTENT } from "@linen/viewer"
-import type { Backend, Scene, PlaneHit, DatumPlaneId } from "@linen/viewer"
+import type {
+  Backend, Scene, PlaneHit, DatumPlaneId, SketchFrame, SketchCurve, SketchPoint,
+} from "@linen/viewer"
+
+/** How much of the viewport height the origin planes occupy on open. */
+const PLANE_COVERAGE = 0.6
 
 interface ViewportProps {
   /** True while a step is asking for a plane: the datum planes appear
@@ -28,6 +37,21 @@ interface ViewportProps {
   readonly onPickPlane?: (hit: PlaneHit) => void
   /** Set once the scene exists, so the parent can drive the camera. */
   readonly onScene?: (scene: Scene | null) => void
+
+  // --- drawing ---------------------------------------------------------
+  /** The plane being sketched on. Non-null puts the viewport in drawing
+   *  mode: clicks become points instead of camera moves. */
+  readonly sketchFrame?: SketchFrame | null
+  /** Curves already drawn, rendered solid. */
+  readonly sketchCurves?: readonly SketchCurve[]
+  /** The rubber band, recomputed by the parent from the live cursor. */
+  readonly sketchPreview?: SketchCurve | null
+  /** A point was clicked on the sketch plane, already snapped. */
+  readonly onSketchClick?: (point: SketchPoint) => void
+  /** The cursor moved over the sketch plane. Drives the rubber band. */
+  readonly onSketchMove?: (point: SketchPoint | null) => void
+  /** A double click: ends an open-ended tool such as a spline. */
+  readonly onSketchFinish?: () => void
 }
 
 export function Viewport(props: ViewportProps) {
@@ -42,26 +66,54 @@ export function Viewport(props: ViewportProps) {
   onMount(async () => {
     let device: Backend
     try {
-      // WebGPU when available, WebGL2 otherwise. A missing WebGPU is the
-      // expected path on older browsers, not an error worth surfacing.
-      device = await createBackend(canvas)
+      // WebGL2 explicitly, NOT the default preference.
+      //
+      // createBackend prefers WebGPU, but createScene only implements
+      // WebGL2 — so on a machine that HAS a WebGPU adapter the two
+      // disagree and the viewport dies with "the WebGPU renderer is not
+      // implemented yet". Asking for what we can actually draw with is
+      // the fix; flip this back the moment the WebGPU path lands.
+      device = await createBackend(canvas, "webgl2")
       setBackend(device.kind)
     } catch (error) {
       setFailure(error instanceof Error ? error.message : "no usable graphics backend")
       return
     }
 
-    const active = createScene(device)
+    // Inside the guard: createScene throws for an unimplemented backend
+    // and for any shader that fails to compile. Outside it, that throw
+    // escaped into an async onMount and vanished — leaving a blank canvas
+    // and no message, which is the hardest possible failure to diagnose.
+    let active: Scene
+    try {
+      active = createScene(device)
+    } catch (error) {
+      setFailure(error instanceof Error ? error.message : "could not create the scene")
+      device.dispose()
+      return
+    }
     scene = active
     props.onScene?.(active)
 
     // Frame the datum planes, so an empty part opens looking at the
     // things it can actually be started from rather than at nothing.
-    active.camera.fit({
-      minimum: [-PLANE_EXTENT, -PLANE_EXTENT, -PLANE_EXTENT],
-      maximum: [PLANE_EXTENT, PLANE_EXTENT, PLANE_EXTENT],
-    })
+    //
+    // Orient BEFORE fitting: fit derives the distance from the bounds as
+    // seen from the current angle, so framing first and turning after
+    // would frame the wrong silhouette.
     active.camera.viewFrom("isometric")
+    active.camera.fit(
+      {
+        minimum: [-PLANE_EXTENT, -PLANE_EXTENT, -PLANE_EXTENT],
+        maximum: [PLANE_EXTENT, PLANE_EXTENT, PLANE_EXTENT],
+      },
+      // fit() measures the bounding DIAGONAL, which is the right measure
+      // for a solid. The origin planes are a hollow cross: their
+      // silhouette is 1/√2 of that diagonal, so asking for 60% of the
+      // box yields 42% of the screen. Dividing by √2 asks for the box
+      // fraction whose CROSS lands at the 60% actually wanted.
+      PLANE_COVERAGE * Math.SQRT2,
+    )
 
     // --- render loop ---------------------------------------------------
     // Driven by the browser, never by a signal.
@@ -97,96 +149,92 @@ export function Viewport(props: ViewportProps) {
   // it crosses as two scalar writes per change, not as a redraw.
   createEffect(() => {
     if (!scene) return
-    scene.planes.visible = props.pickingPlane === true
+    // The origin planes stay visible: they are the empty scene itself,
+    // not a transient affordance. `pickingPlane` decides whether clicks
+    // land on them, not whether they are drawn.
     scene.planes.selected = (props.selectedPlane as DatumPlaneId | null) ?? null
     // Nothing under the cursor until the pointer moves again: a stale
     // hover would stay lit after the planes are re-shown.
     if (!props.pickingPlane) scene.planes.hovered = null
   })
 
-  /** Cursor position relative to the canvas, in CSS pixels — the space
-   *  the ray cast expects. */
-  const canvasPoint = (event: PointerEvent): readonly [number, number] => {
-    const rect = canvas.getBoundingClientRect()
-    return [event.clientX - rect.left, event.clientY - rect.top]
+  // The sketch, likewise: signals publish what to draw, the scene draws
+  // it. The cursor is NOT in here — it changes on every mouse move and
+  // is written directly in the pointer handler, because routing sixty
+  // updates a second through the reactive graph is the one thing this
+  // boundary exists to prevent.
+  createEffect(() => {
+    if (!scene) return
+    scene.sketch.frame = props.sketchFrame ?? null
+    scene.sketch.curves = props.sketchCurves ?? []
+    scene.sketch.pending = props.sketchPreview ?? null
+    if (!props.sketchFrame) {
+      scene.sketch.cursor = null
+      scene.sketch.snappedTo = null
+    }
+  })
+
+  /** True while the viewport is a drawing surface rather than a camera. */
+  const drawing = (): boolean => props.sketchFrame != null
+
+  // --- gestures ---------------------------------------------------------
+  // The viewport receives INTENT, never button numbers: GestureDetector
+  // resolves those through the binding supplied by GestureProvider. What
+  // is left here is only what a viewport should know — how to move a
+  // camera and what a click means to the active step.
+
+  const onDrag = (gesture: DragGesture): void => {
+    if (!scene) return
+    if (gesture.kind === "orbit") {
+      scene.camera.orbit(-gesture.deltaX * 0.008, gesture.deltaY * 0.008)
+    } else {
+      scene.camera.pan(gesture.deltaX, gesture.deltaY)
+    }
   }
 
-  // --- pointer ----------------------------------------------------------
-  // Picking is driven by the ACTIVE PANEL FIELD: it declares what it
-  // accepts, so an "up to face" step cannot select an edge by accident.
-  // That rule lives in metadata, not in this file.
-
-  // Camera control is imperative and deliberately outside the reactive
-  // graph: it fires on every mouse move, and routing that through
-  // signals would schedule DOM work sixty times a second for state no
-  // DOM node reads.
-  let dragging: "orbit" | "pan" | null = null
-  let lastX = 0
-  let lastY = 0
-  // How far the pointer travelled while down. A click that orbited is a
-  // camera move, not a selection — without this, every orbit that ends
-  // over a plane would also select it.
-  let travelled = 0
-  const CLICK_SLOP = 4
-
-  const onPointerDown = (event: PointerEvent) => {
+  const onHover = (gesture: HoverGesture): void => {
     if (!scene) return
 
-    // Middle button or shift-drag pans; left button orbits. Matches
-    // what every CAD tool does, so the muscle memory carries over.
-    dragging = event.button === 1 || event.shiftKey ? "pan" : "orbit"
-    lastX = event.clientX
-    lastY = event.clientY
-    travelled = 0
-    event.currentTarget instanceof HTMLElement &&
-      event.currentTarget.setPointerCapture(event.pointerId)
-  }
-
-  const onPointerMove = (event: PointerEvent) => {
-    if (!scene) return
-
-    if (!dragging) {
-      // Hovering: ray cast so the plane under the cursor lights up
-      // before it is clicked. Only while a step is asking for one —
-      // otherwise the planes are not even drawn.
-      if (props.pickingPlane) {
-        const [x, y] = canvasPoint(event)
-        scene.planes.hovered = scene.planes.pick(x, y)?.plane.id ?? null
-      }
+    // Drawing: resolve the cursor onto the sketch plane and publish it.
+    // Written straight to the scene so the crosshair tracks at frame
+    // rate, and handed up so the rubber band can follow.
+    if (drawing()) {
+      const found = scene.sketch.locate(gesture.x, gesture.y)
+      scene.sketch.cursor = found?.point ?? null
+      scene.sketch.snappedTo = found?.kind ?? null
+      props.onSketchMove?.(found?.point ?? null)
       return
     }
 
-    const deltaX = event.clientX - lastX
-    const deltaY = event.clientY - lastY
-    lastX = event.clientX
-    lastY = event.clientY
-    travelled += Math.abs(deltaX) + Math.abs(deltaY)
-
-    if (dragging === "orbit") {
-      scene.camera.orbit(-deltaX * 0.008, deltaY * 0.008)
-    } else {
-      scene.camera.pan(deltaX, deltaY)
+    // Otherwise light the datum plane under the cursor, but only while a
+    // step is actually asking for one.
+    if (props.pickingPlane) {
+      scene.planes.hovered = scene.planes.pick(gesture.x, gesture.y)?.plane.id ?? null
     }
   }
 
-  const onPointerUp = (event: PointerEvent) => {
-    const wasDragging = dragging
-    dragging = null
-    event.currentTarget instanceof HTMLElement &&
-      event.currentTarget.releasePointerCapture(event.pointerId)
+  const onClick = (gesture: ClickGesture): void => {
+    if (!scene) return
 
-    // A click, not a drag: hit-test whatever the step is asking for.
-    if (!scene || travelled > CLICK_SLOP || wasDragging === "pan") return
+    if (drawing()) {
+      const found = scene.sketch.locate(gesture.x, gesture.y)
+      if (found) props.onSketchClick?.(found.point)
+      return
+    }
+
     if (!props.pickingPlane) return
-
-    const [x, y] = canvasPoint(event)
-    const hit = scene.planes.pick(x, y)
+    const hit = scene.planes.pick(gesture.x, gesture.y)
     if (hit) props.onPickPlane?.(hit)
   }
 
-  const onWheel = (event: WheelEvent) => {
-    event.preventDefault()
-    scene?.camera.dolly(event.deltaY)
+  // The cursor left the canvas: drop the crosshair and the rubber band,
+  // or they stay frozen wherever the pointer last was.
+  const onLeave = (): void => {
+    if (!scene) return
+    scene.sketch.cursor = null
+    scene.sketch.snappedTo = null
+    scene.planes.hovered = null
+    if (drawing()) props.onSketchMove?.(null)
   }
 
   return (
@@ -201,18 +249,32 @@ export function Viewport(props: ViewportProps) {
         </div>
       }
     >
-      <canvas
-        ref={canvas}
-        class="viewport"
-        data-backend={backend()}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        onWheel={onWheel}
-      />
+      {/* A positioned wrapper: the labels are absolutely placed against
+          it, and the canvas fills it. The canvas cannot be their offset
+          parent — it has no children. */}
+      <div class="viewport-stack">
+        <GestureDetector
+          onDrag={onDrag}
+          onHover={onHover}
+          onClick={onClick}
+          onLeave={onLeave}
+          onDoubleClick={() => drawing() && props.onSketchFinish?.()}
+          onZoom={(delta) => scene?.camera.dolly(delta)}
+        >
+          {(gestures) => (
+            <canvas
+              ref={canvas}
+              class="viewport"
+              data-backend={backend()}
+              // A crosshair says "this surface takes clicks" before the
+              // user tries one — the signal every drawing tool gives.
+              data-drawing={drawing()}
+              {...gestures}
+            />
+          )}
+        </GestureDetector>
+
+      </div>
     </Show>
   )
 }
-
-
