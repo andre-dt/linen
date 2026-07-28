@@ -31,12 +31,12 @@ import type { Vector3 } from "@linen/cad/kernel"
  * How far in from each corner the chamfer cuts, as a fraction of the
  * half-edge.
  *
- * 0.28 is a compromise measured against the two failure modes: below
- * about 0.2 the corner facets are too small to hit comfortably at the
- * control's size, and above about 0.35 the face panels have shrunk
- * enough that their labels start to crowd.
+ * The chamfer IS the frame around each panel, so it sets how heavy the
+ * cube looks. At 0.28 the bevel was thick enough that a face read as a
+ * small tile floating on a fat surround rather than as a face with
+ * rounded corners.
  */
-export const CHAMFER = 0.28
+export const CHAMFER = 0.17
 
 /**
  * How far the flat panel on each face extends before the rounded
@@ -46,11 +46,26 @@ export const CHAMFER = 0.28
  * simply follows the geometry has square corners. Pulling it in to here
  * and rounding what is left is what gives the face its rounded-rectangle
  * shape and, where three faces meet, the circular opening at the corner.
+ *
+ * This is the half-width of the panel's STRAIGHT run; PANEL_RADIUS then
+ * rounds what lies beyond it, so the panel actually reaches
+ * PANEL_HALF + PANEL_RADIUS along its axes.
+ *
+ * The gap between the two matters. Set too close to the flat region's
+ * own half-width (1 - CHAMFER) there is no room left for the corner arc
+ * and the classification never fires — measured, the panel came out at a
+ * corner/edge ratio of 1.413 against 1.414 for a perfect square, so the
+ * rounding was doing nothing at all.
+ *
+ * These two were solved for rather than nudged: with the panel reaching
+ * PANEL_HALF + PANEL_RADIUS on its axes and hypot(H, H) + R on its
+ * diagonals, the pair below puts the ratio at about 1.15 — clearly
+ * rounded, and still square enough to read as a face.
  */
-export const PANEL_HALF = 0.48
+export const PANEL_HALF = 0.30
 
 /** The radius of the panel's rounded corner, in the same units. */
-export const PANEL_RADIUS = 0.20
+export const PANEL_RADIUS = 0.55
 
 /** Which kind of region a facet is. The camera treats all three alike —
  *  they are directions — but the renderer styles them differently and
@@ -226,8 +241,17 @@ export const buildCube = (): readonly CubeRegion[] => {
     // coordinates both run past PANEL_HALF belongs to the surround, not
     // to the panel.
     //
-    // The surround is given to the EDGE that faces it, so the margin
-    // takes the bevel's colour and the panel reads as set into it.
+    // The surround at the panel's rounded CORNER goes to the CORNER
+    // region — one single wedge — not to whichever bevel edge is nearer.
+    //
+    // Splitting it between the two adjacent edges was the artifact: the
+    // panel corner sits on the diagonal where the two in-plane coordinates
+    // are equal, which is exactly where a nearest-edge tie-break flips. So
+    // the arc was cut by a seam between two separate edge batches right at
+    // the corner — a T-junction that no amount of tessellation removes,
+    // because the two sides are genuinely different regions. The corner
+    // wedge owns the whole arc with no seam through it, so the boundary is
+    // a clean `face`↔`corner` transition the adaptive split can resolve.
     const inPlane = [0, 1, 2].filter((axis) => axis !== dominant) as [number, number]
     const first = Math.abs(point[inPlane[0]]!)
     const second = Math.abs(point[inPlane[1]]!)
@@ -238,13 +262,12 @@ export const buildCube = (): readonly CubeRegion[] => {
       const overshootFirst = first - PANEL_HALF
       const overshootSecond = second - PANEL_HALF
       if (Math.hypot(overshootFirst, overshootSecond) > PANEL_RADIUS) {
-        const nearer = overshootFirst > overshootSecond ? inPlane[0] : inPlane[1]
         return {
-          kind: "edge",
+          kind: "corner",
           direction: normalise([
-            nearer === 0 ? Math.sign(point[0]) : dominant === 0 ? Math.sign(point[0]) : 0,
-            nearer === 1 ? Math.sign(point[1]) : dominant === 1 ? Math.sign(point[1]) : 0,
-            nearer === 2 ? Math.sign(point[2]) : dominant === 2 ? Math.sign(point[2]) : 0,
+            Math.sign(point[0]),
+            Math.sign(point[1]),
+            Math.sign(point[2]),
           ]),
         }
       }
@@ -270,13 +293,60 @@ export const buildCube = (): readonly CubeRegion[] => {
   // has neither problem: the cells stay well-shaped everywhere, and the
   // six patches share their boundary vertices exactly because each edge
   // is generated from the same coordinates on both sides.
-  const GRID = 48
+  // The base grid no longer has to be dense to hide the panel boundary:
+  // `emit` splits boundary triangles adaptively, so the arcs stay clean
+  // at a far coarser tessellation than the 161 that brute force needed.
+  // This just has to sample the rounded surface finely enough that the
+  // bevels and corners read as curved between boundaries.
+  //
+  // ODD, deliberately. With an even count a cell boundary falls exactly
+  // on each face's centre line, and therefore exactly on four of the
+  // eight corner diagonals — a ray straight down such a diagonal threads
+  // between triangles and misses the disc entirely, so two corners could
+  // not be picked at all. An odd count puts cell CENTRES on those lines
+  // instead.
+  const GRID = 41
   const buckets = new Map<
     string,
     { kind: CubeRegionKind; direction: Vector3; positions: number[] }
   >()
 
-  const emit = (a: Vector3, b: Vector3, c: Vector3): void => {
+  /** The region key a surface point resolves to, for boundary testing. */
+  const keyAt = (point: Vector3): string => {
+    const { kind, direction } = classify(point)
+    return `${kind}:${direction.map((v) => v.toFixed(3)).join(",")}`
+  }
+
+  // Adaptively split a triangle that STRADDLES a region boundary before
+  // committing it, so the panel's rounded corners resolve as a clean arc
+  // instead of the cell-edge staircase a per-triangle classification
+  // leaves. A triangle whose three corners all classify alike is interior
+  // to one region and emitted whole; one whose corners disagree sits on a
+  // boundary, so it is cut at its edge midpoints into four and each part
+  // retested. Only boundary triangles pay for this — the flat interior of
+  // every panel stays two triangles — so it sharpens the arcs without the
+  // global cost of raising GRID. Depth is bounded: past a few levels the
+  // remaining zigzag is sub-pixel at the control's size.
+  const SPLIT_DEPTH = 4
+  const emit = (a: Vector3, b: Vector3, c: Vector3, depth = 0): void => {
+    if (depth < SPLIT_DEPTH) {
+      const ka = keyAt(a)
+      const kb = keyAt(b)
+      const kc = keyAt(c)
+      if (ka !== kb || kb !== kc) {
+        const mid = (p: Vector3, q: Vector3): Vector3 =>
+          surfaceAt([p[0] + q[0], p[1] + q[1], p[2] + q[2]])
+        const ab = mid(a, b)
+        const bc = mid(b, c)
+        const ca = mid(c, a)
+        emit(a, ab, ca, depth + 1)
+        emit(ab, b, bc, depth + 1)
+        emit(ca, bc, c, depth + 1)
+        emit(ab, bc, ca, depth + 1)
+        return
+      }
+    }
+
     const centre: Vector3 = [
       (a[0] + b[0] + c[0]) / 3,
       (a[1] + b[1] + c[1]) / 3,

@@ -184,6 +184,8 @@ export function createScene(backend: Backend): Scene {
   const originUniforms = {
     viewProjection: gl.getUniformLocation(originProgram, "uViewProjection"),
     lightDirection: gl.getUniformLocation(originProgram, "uLightDirection"),
+    viewport: gl.getUniformLocation(originProgram, "uViewport"),
+    pixelRadius: gl.getUniformLocation(originProgram, "uPixelRadius"),
   }
   const originVertexArray = createOriginBuffer(gl, originProgram, originSphere())
   const originVertexCount = originSphereVertexCount()
@@ -324,6 +326,16 @@ export function createScene(backend: Backend): Scene {
     gl.useProgram(originProgram)
     gl.uniformMatrix4fv(originUniforms.viewProjection, false, viewProjection)
     gl.uniform3f(originUniforms.lightDirection, 0.4, 0.6, 0.7)
+    // Constant on-screen size: the marker is a 2D sprite, not a world sphere.
+    gl.uniform2f(
+      originUniforms.viewport,
+      gl.drawingBufferWidth,
+      gl.drawingBufferHeight,
+    )
+    gl.uniform1f(
+      originUniforms.pixelRadius,
+      ORIGIN_PIXEL_RADIUS * devicePixelRatio,
+    )
     gl.bindVertexArray(originVertexArray)
     gl.drawArrays(gl.TRIANGLES, 0, originVertexCount)
 
@@ -710,15 +722,37 @@ void main() {
 }
 `
 
+// On-screen radius of the origin marker, in CSS pixels (scaled by the device
+// pixel ratio at draw time). Roughly the eight-across dot Onshape shows.
+const ORIGIN_PIXEL_RADIUS = 5
+
+// The origin has NO size — it is an infinitely small point in 3D space.
+// aPosition is a UNIT sphere; we read its xy as a screen-space offset so the
+// marker is a constant-size 2D sprite billboarded around the projected
+// origin, the same pixels at every zoom (like Onshape). Only the origin
+// point (0,0,0) is transformed by the camera; the sphere is inflated in
+// clip space afterwards, in pixels. The normal keeps its 3D direction so the
+// checker shading still reads as a round ball rather than a flat disc.
 const ORIGIN_VERTEX_SHADER = `#version 300 es
 in vec3 aPosition;
 in vec3 aNormal;
 uniform mat4 uViewProjection;
+uniform vec2 uViewport;      // drawing-buffer size in pixels
+uniform float uPixelRadius;  // marker radius in pixels
 out vec3 vNormal;
 
 void main() {
   vNormal = aNormal;
-  gl_Position = uViewProjection * vec4(aPosition, 1.0);
+
+  // Project the origin point itself. Its clip depth anchors the marker so it
+  // still occludes against the planes correctly.
+  vec4 anchor = uViewProjection * vec4(0.0, 0.0, 0.0, 1.0);
+
+  // Offset in clip space. A clip-space delta of d.xy shifts the point by
+  // d.xy / uViewport * 2 in NDC after the perspective divide, so multiply by
+  // anchor.w and by 2/viewport to land exactly uPixelRadius pixels out.
+  vec2 offset = aPosition.xy * uPixelRadius * 2.0 / uViewport * anchor.w;
+  gl_Position = vec4(anchor.xy + offset, anchor.zw);
 }
 `
 

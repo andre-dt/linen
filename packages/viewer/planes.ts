@@ -317,15 +317,19 @@ export const planeOutline = (
 }
 
 /**
- * The origin marker: a small solid sphere at (0,0,0).
+ * The origin marker: a small solid sphere drawn AT (0,0,0).
  *
  * Onshape draws a dot there, and it earns its place — it is the one point
  * every coordinate in the model is measured from, and without it the eye
  * has nothing to fix on where the planes intersect.
  *
- * A real 1mm-radius sphere in WORLD units, not a screen-space dot: it is
- * a landmark IN the model, so it should zoom with the model. At the
- * default framing that is roughly eight pixels across.
+ * The origin itself is an infinitely small location in 3D space: it has no
+ * size. So this is NOT a world-space sphere that zooms with the model — it
+ * is a UNIT sphere whose positions the origin shader reads as SCREEN-SPACE
+ * offsets, billboarded around the projected origin at a fixed pixel radius.
+ * The marker stays the same size on screen at every zoom, like Onshape. The
+ * default radius is therefore 1 (a unit sphere), scaled to pixels in the
+ * shader, not a length in millimetres.
  *
  * A UV sphere rather than an icosphere: at this size the difference is
  * invisible, and the parameterisation is four lines instead of a
@@ -374,7 +378,8 @@ export const originSphere = (
   return new Float32Array(out)
 }
 
-/** Radius in millimetres, like every other length in the system. */
+/** Unit radius: the shader treats these positions as screen-space offsets
+ *  scaled to a fixed pixel radius, so this is a shape, not a length. */
 export const ORIGIN_RADIUS = 1
 
 /** Vertex count for a sphere of the given tessellation — what the draw
