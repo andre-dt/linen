@@ -1401,189 +1401,151 @@ table.point-list {
 /* The view cube FLOATS: fixed to the viewport at a user-dragged position
    (left/top set inline, persisted to localStorage). It sits on the HUD
    plane, above the canvas but below tooltips/toasts. */
+/* The wrapper owns enter/leave for the whole control, so it has to
+   ENCLOSE the whole control — the collapsed button and the bloomed
+   flower alike. Collapsed it is button-sized; open it grows to the
+   flower's footprint, centred on the same point, so the pointer never
+   crosses its edge while travelling to a cell.
+
+/* =====================================================================
+   THE VIEW CUBE
+   =====================================================================
+   An actual cube in CSS 3D, floating over the canvas and draggable.
+
+   It TURNS WITH THE CAMERA, so its orientation is the readout: the face
+   toward you is the view you are in. That is the whole reason it
+   replaced the unfolded-grid control that came before — a flat grid had
+   to put Front and Back in one cell, which left the four circles around
+   that cell ambiguous.
+
+   The stage owns the perspective; the body owns the rotation; the faces
+   are six planes pushed out from a shared centre. Arrows sit OUTSIDE the
+   3D context so they stay square to the screen. */
 .view-cube-slot {
   position: fixed;
   z-index: var(--z-floating);
-  display: grid;
-  place-items: center;
-  width: var(--hud-top-row);
-  height: var(--hud-top-row);
-  touch-action: none; /* we handle the drag ourselves */
-}
-.view-cube-slot.dragging { cursor: grabbing; }
-/* The wrapper is the size of the WHOLE FLOWER, centred on the button — not
-   the size of the button. It is the element that owns enter/leave, so if it
-   only covered the 40px button the pointer would "leave" the instant it set
-   off toward a cell and the flower would shut in the user's face. Sized to
-   the flower, the pointer stays inside for the entire trip.
-
-   It is centred with a negative offset rather than by growing the slot, so
-   the button's own position (and every drag/clamp calculation built on it)
-   is untouched. */
-.view-cube {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: var(--flower-size);
-  height: var(--flower-size);
-  transform: translate(-50%, -50%);
-  display: grid;
-  place-items: center;
-  /* Always inert as a box. Nothing here depends on the wrapper receiving
-     the pointer any more — the flower closes on click-away, not on leave —
-     so this 192px square never has to swallow a click meant for the canvas
-     behind it. Only the real targets inside opt back in. */
+  /* Must match CUBE_SIZE / CUBE_MARGIN in view-cube.tsx: the widget
+     sizes the GL backing store from those, and the slot's footprint and
+     drag clamp come from these. Out of step, the canvas renders at one
+     size inside a box of another. */
+  --cube-size: 118px;
+  --cube-margin: 24px;
+  width: calc(var(--cube-size) + var(--cube-margin) * 2);
+  height: calc(var(--cube-size) + var(--cube-margin) * 2);
+  cursor: grab;
+  /* The slot is mostly empty air around the cube; only the parts that
+     are actually drawn should take the pointer, or this square would
+     swallow canvas clicks. */
   pointer-events: none;
+  user-select: none;
 }
-/* The button is hit-testable in both states: it is what opens the flower. */
-.view-cube .view-cube-button { pointer-events: auto; }
+.view-cube-slot:active { cursor: grabbing; }
 
-/* The trigger and every flower cell are the shared base button
-   (.ui-button-hud-icon), the same one a collapsed HUD panel uses — so the
-   floating view control speaks the same button language as the panels
-   without being one. Only what is specific to *this* control lives here.
-
-   --view-cell MUST equal the base button's ICON_SIZE: the flower is centred
-   on the trigger, so FRONT only covers it exactly when the two match. */
-.view-cube {
-  --view-cell: 56px;
-  --view-cell-gap: 6px;
-  /* How far a cell travels when blooming: exactly one cell plus one gap, so
-     collapsed it sits dead-centre on FRONT. */
-  --bloom-step: calc(var(--view-cell) + var(--view-cell-gap));
-  /* The flower's full footprint: 3 cells + 2 gaps + the grid's padding on
-     both sides. Mirrors FLOWER_SIZE in view-cube.tsx — the wrapper and the
-     drag clamp must agree on how big this thing gets. */
-  --flower-size: calc(var(--view-cell) * 3 + var(--view-cell-gap) * 2 + 12px);
-}
-
-/* Hover is OPAQUE here, unlike the shared .ui-button-hud-icon hover. That
-   one is a translucent white wash, which works over the navy panel material
-   a collapsed HUD button sits on. The view cube floats over the white
-   canvas, where the same wash lands white-on-white and the button reads as
-   a blank blob. A solid lift off the panel colour keeps it legible on any
-   background — the control floats, so it cannot assume what is behind it. */
-.view-cube-button:hover,
-.view-cube-cell:hover {
-  background: #1d2c4d;
-  color: var(--hud-text);
-}
-
-/* The trigger doubles as the drag handle. */
-.view-cube-button { cursor: grab; }
-.view-cube-slot.dragging .view-cube-button { cursor: grabbing; }
-/* The trigger sits BENEATH the open flower: it stays in the auto stacking
-   layer while .view-cube-grid raises itself above. Giving the button its own
-   z-index here would lift it ABOVE the grid — it would then paint over FRONT
-   and, being on top, swallow the pointer over the centre cell. */
-
-/* The grid is centred ON the button — both axes — so its middle cell
-   (FRONT) sits exactly over the view button and the box unfolds evenly to
-   all sides from that centre. Hidden until the whole .view-cube is hovered;
-   the grid's own padding bridges the pointer gap so travelling from button
-   to grid never crosses empty space and collapses it. */
-.view-cube-grid {
+/* The cube itself: a WebGL canvas, transparent so the viewport shows
+   through around its silhouette. Everything drawn in it — the chamfered
+   facets, the labels, the hover highlight — comes from the GL scene, so
+   there is nothing here to style but the box. */
+.view-cube-canvas {
   position: absolute;
-  /* Centred ON the button, both axes: the middle cell (FRONT) lands exactly
-     over the button and the box unfolds evenly to every side. Transparent —
-     no panel, no shadow — so only the cells show. */
-  top: 50%;
   left: 50%;
-  /* NOT scaled. Scaling the grid would scale FRONT with it, and FRONT sits
-     exactly over the trigger — the one cell that must look welded in place.
-     Growing it a couple of px on open reads as a shift precisely where the
-     eye is already resting. The container holds still; the cells animate
-     individually below. */
+  top: 50%;
   transform: translate(-50%, -50%);
-  transform-origin: center center;
-  z-index: 20;
-  display: grid;
-  /* Cells are exactly the size of the view button, so the middle cell
-     (FRONT) covers the trigger perfectly when the flower opens. */
-  grid-template-columns: repeat(3, var(--view-cell));
-  grid-template-rows: repeat(3, var(--view-cell));
-  gap: var(--view-cell-gap);
-  /* Padding widens the hover target so the pointer never crosses a dead
-     zone travelling from the button into the grid. */
-  padding: 6px;
-  background: transparent;
-  pointer-events: none;
-}
-/* The grid box itself NEVER takes the pointer — it spans the whole flower,
-   including the centre square where the trigger lives, so making the box
-   hit-testable would blanket the button. Only the cells become targets. */
-.view-cube.open .view-cube-cell,
-.view-cube:focus-within .view-cube-cell {
   pointer-events: auto;
+  display: block;
+}
+/* No WebGL2: the canvas paints nothing, so hide it rather than leave a
+   transparent hole that still swallows clicks. The arrows around it
+   remain usable. */
+.view-cube-canvas.failed { display: none; }
+
+/* --- the flat arrows -------------------------------------------------- */
+/*
+   Outside the 3D stage, so they stay square to the screen: they mean
+   "up on screen", not "up on the model".
+
+   Drawn as CSS triangles rather than glyphs or SVG — a triangle is the
+   one shape borders make exactly, at any size, with no font or asset.
+*/
+.view-cube-nudge {
+  position: absolute;
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  pointer-events: auto;
+  opacity: 0.42;
+  transition: opacity 100ms ease;
+}
+.view-cube-nudge:hover { opacity: 0.95; }
+.view-cube-nudge::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 0;
+  height: 0;
+  /* 7px half-width, 9px length: slim enough not to compete with the
+     cube, long enough to read as a direction at a glance. */
+  border: 7px solid transparent;
+}
+.view-cube-nudge[data-side="up"] {
+  top: 2px; left: 50%; transform: translateX(-50%);
+}
+.view-cube-nudge[data-side="up"]::before {
+  border-bottom: 9px solid var(--hud-text-muted); margin-bottom: 16px;
+}
+.view-cube-nudge[data-side="down"] {
+  bottom: 2px; left: 50%; transform: translateX(-50%);
+}
+.view-cube-nudge[data-side="down"]::before {
+  border-top: 9px solid var(--hud-text-muted); margin-top: 16px;
+}
+.view-cube-nudge[data-side="left"] {
+  left: 2px; top: 50%; transform: translateY(-50%);
+}
+.view-cube-nudge[data-side="left"]::before {
+  border-right: 9px solid var(--hud-text-muted); margin-right: 16px;
+}
+.view-cube-nudge[data-side="right"] {
+  right: 2px; top: 50%; transform: translateY(-50%);
+}
+.view-cube-nudge[data-side="right"]::before {
+  border-left: 9px solid var(--hud-text-muted); margin-left: 16px;
 }
 
-
-/* The bloom. Each cell starts collapsed onto the centre — where FRONT, and
-   so the trigger, already is — and travels out to its grid slot. The box
-   unfolds from the button instead of the whole panel fading in on top of
-   it, which is what the control is meant to depict.
-
-   FRONT is the exception: it is already at the centre and already covering
-   the trigger, so it neither moves nor fades. That is the whole point — the
-   button appears to BECOME the flower rather than being replaced by it. */
-.view-cube-cell {
-  opacity: 0;
-  transform: translate(var(--bloom-x, 0), var(--bloom-y, 0));
-  transition: opacity 120ms ease, transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+/* --- the curved roll arrows ------------------------------------------- */
+/*
+   Flanking the top, outside the stage like the flat arrows. Quiet by
+   default: they frame the control rather than being the point of it.
+*/
+.view-cube-roll {
+  position: absolute;
+  top: -6px;
+  width: 30px;
+  height: 19px;
+  appearance: none;
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: var(--hud-text-muted);
+  cursor: pointer;
+  pointer-events: auto;
+  opacity: 0.42;
+  transition: opacity 100ms ease, color 100ms ease;
 }
-.view-cube.open .view-cube-cell,
-.view-cube:focus-within .view-cube-cell {
-  opacity: 1;
-  transform: translate(0, 0);
+.view-cube-roll[data-side="left"]  { left: -4px; }
+.view-cube-roll[data-side="right"] { right: -4px; }
+.view-cube-roll:hover { opacity: 0.95; color: var(--hud-text); }
+
+.view-cube-roll-icon {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
 }
-
-/* Collapsed, every cell is stacked on the centre one: one cell-plus-gap in
-   from its own row/column. */
-.view-cube-cell[data-view="iso-tl"] { --bloom-x: var(--bloom-step); --bloom-y: var(--bloom-step); }
-.view-cube-cell[data-view="top"] { --bloom-y: var(--bloom-step); }
-.view-cube-cell[data-view="iso-tr"] { --bloom-x: calc(-1 * var(--bloom-step)); --bloom-y: var(--bloom-step); }
-.view-cube-cell[data-view="left"] { --bloom-x: var(--bloom-step); }
-.view-cube-cell[data-view="right"] { --bloom-x: calc(-1 * var(--bloom-step)); }
-.view-cube-cell[data-view="iso-bl"] { --bloom-x: var(--bloom-step); --bloom-y: calc(-1 * var(--bloom-step)); }
-.view-cube-cell[data-view="bottom"] { --bloom-y: calc(-1 * var(--bloom-step)); }
-.view-cube-cell[data-view="iso-br"] { --bloom-x: calc(-1 * var(--bloom-step)); --bloom-y: calc(-1 * var(--bloom-step)); }
-
-/* FRONT does not bloom — it is already dead-centre, exactly over the
-   trigger, so it has nowhere to travel from. It still FADES, though: while
-   the flower is shut there is nothing behind it to blend into, and a
-   permanently-opaque FRONT would simply cover the trigger's icon.
-
-   It also never takes the pointer. Stacked exactly on the trigger, a
-   hit-testable FRONT swallows every press aimed at the button beneath —
-   including the one that starts a drag. It is a label for the trigger
-   already showing through, not a target: the centre belongs to the button.
-   The :hover selector below has to be matched here, or its higher
-   specificity would hand FRONT the pointer right back. */
-.view-cube-cell[data-view="front"],
-.view-cube.open .view-cube-cell[data-view="front"],
-.view-cube:focus-within .view-cube-cell[data-view="front"] {
-  transform: none;
-  pointer-events: none;
-}
-/* Dragging does NOT close the flower — the control keeps its shape while it
-   is being moved, so what the user grabbed is what they see land. Cells stop
-   taking the pointer for the duration, though: a press that turns into a
-   drag must never also select a view when it is released. */
-.view-cube-slot.dragging .view-cube-cell {
-  pointer-events: none !important;
-}
-
-/* The six faces spell their names out. At 40px a word like BOTTOM only fits
-   at a small size with the letter-spacing pulled in, and it must never wrap
-   — a two-line cell would break the grid's even rhythm. */
-.view-cube-cell {
-  font-size: 10px;
-  white-space: nowrap;
-}
-
-/* the four corners are isometric views — dimmer, they are the "flaps" */
-.view-cube-cell[data-view^="iso-"] { color: var(--hud-text-faint); font-size: 15px; }
-.view-cube-cell[data-view^="iso-"]:hover { color: var(--hud-text); }
 
 /* =====================================================================
    COLLAPSIBLE PANEL — expanded titled panel ↔ a single icon button.
@@ -1606,13 +1568,28 @@ table.point-list {
 .hud-head-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .hud-icon-button {
   display: grid; place-items: center;
-  width: 24px; height: 24px;
-  appearance: none; border: none; background: transparent;
-  color: var(--hud-text-faint);
+  /* 28px, not 24. This is the collapse half of a pair: the button that
+     undoes it is the shared 40px icon button, so at 24px the trip out of a
+     panel started from a target noticeably smaller than the one that
+     brought you back. 28 is as close as the header's own height lets the
+     two get without the cluster growing taller than the title beside it. */
+  width: 28px; height: 28px;
+  /* padding: 0 is load-bearing. A <button> carries a UA default of
+     1px 6px, and `place-items: center` then centres within the box that
+     padding leaves — which is not square, so the glyph sat a pixel off
+     centre. */
+  padding: 0;
+  appearance: none; border: none;
+  /* A resting surface, faint but present. Fully transparent it read as a
+     stray glyph rather than a control — the restore button it pairs with
+     carries the panel material at rest, so this one has to look like a
+     button before it is hovered too. */
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--hud-text-muted);
   border-radius: 8px; corner-shape: squircle;
   cursor: pointer; transition: background 100ms ease, color 100ms ease;
 }
-.hud-icon-button:hover { background: rgba(255, 255, 255, 0.1); color: var(--hud-text); }
+.hud-icon-button:hover { background: rgba(255, 255, 255, 0.14); color: var(--hud-text); }
 
 /* --- viewport overlays ------------------------------------------------ */
 /* The canvas plus anything positioned over it. The canvas has no
@@ -1621,5 +1598,4 @@ table.point-list {
   position: relative;
   width: 100%;
   height: 100%;
-}
 

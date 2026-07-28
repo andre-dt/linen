@@ -22,7 +22,7 @@
 // it later is filling a box — not rebuilding the layout.
 // =====================================================================
 
-import { createSignal, createMemo, For, Show, onMount } from "solid-js"
+import { createSignal, createMemo, For, Show, onMount, onCleanup } from "solid-js"
 import { useNavigate, useParams } from "@solidjs/router"
 import { standardPreset, setField, type CommandDefinition } from "@linen/cad/features"
 import type { PlaneHit, Scene as SceneHandle, StandardView } from "@linen/viewer"
@@ -35,7 +35,7 @@ import { appendElement, elementsOf, removeElement, updateElement } from "../elem
 import { Drawer } from "../widgets/drawer"
 import { SplitButton } from "../widgets/split-button"
 import { FeatureToolbar } from "../widgets/feature-toolbar"
-import { ViewCube, type ViewId } from "../widgets/view-cube"
+import { ViewCube, type ViewDirection, type ViewNudge } from "../widgets/view-cube"
 import { CollapsiblePanel } from "../widgets/collapsible-panel"
 import { LucideIcon } from "../widgets/lucide-icon"
 import { CommandPanel } from "../panels/command-panel"
@@ -47,17 +47,6 @@ import { X } from "../icons"
  *  a per-feature lookup, which is what keeps a new feature UI-free. */
 const DEFINITIONS: readonly CommandDefinition<never, never>[] =
   standardPreset.flatMap((feature) => feature.commands)
-
-/** The cube's cells, in the camera's vocabulary. The six faces map
- *  straight across; the four corners become the four isometric views. */
-const VIEW_OF_CUBE: Record<ViewId, StandardView> = {
-  front: "front", back: "back", left: "left", right: "right",
-  top: "top", bottom: "bottom",
-  "iso-tl": "isometric-front-left",
-  "iso-tr": "isometric-front-right",
-  "iso-bl": "isometric-back-left",
-  "iso-br": "isometric-back-right",
-}
 
 export function Project(props: { auth: Auth }) {
   // The URL carries the selection: :kind (part|module) + :artifactId, and
@@ -176,10 +165,58 @@ export function Project(props: { auth: Auth }) {
    */
   let sceneRef: SceneHandle | null = null
 
-  const applyView = (view: ViewId): void => {
-    const camera = sceneRef?.camera
-    if (!camera) return
-    camera.viewFrom(VIEW_OF_CUBE[view])
+  /**
+   * The camera's orientation, mirrored into the reactive graph so the
+   * view cube can turn with it.
+   *
+   * Polled on an animation frame rather than pushed from the render
+   * loop: the loop lives inside Viewport and publishing from there would
+   * make every frame a reactive write. Three numbers compared per frame
+   * is cheap, and the signal only fires when one actually changes — so a
+   * still camera costs nothing downstream.
+   */
+  const [cameraAngles, setCameraAngles] = createSignal(
+    { azimuth: 0, elevation: 0, roll: 0 },
+    { equals: (a, b) =>
+        a.azimuth === b.azimuth && a.elevation === b.elevation && a.roll === b.roll },
+  )
+
+  onMount(() => {
+    let frame = 0
+    const sample = (): void => {
+      const camera = sceneRef?.camera
+      if (camera) {
+        setCameraAngles({
+          azimuth: camera.azimuth,
+          elevation: camera.elevation,
+          roll: camera.rollAngle,
+        })
+      }
+      frame = requestAnimationFrame(sample)
+    }
+    frame = requestAnimationFrame(sample)
+    onCleanup(() => cancelAnimationFrame(frame))
+  })
+
+  const applyView = (direction: ViewDirection): void => {
+    // Straight through as a vector: the cube's faces, edges and corners
+    // are twenty-six poses, and the camera resolves any of them without
+    // a lookup table here that could fall out of step with the widget.
+    sceneRef?.camera.lookFrom(direction)
+  }
+
+  /**
+   * The corner arrows turn the camera one step, rather than jumping to a
+   * named view. `y` is screen-down while elevation is measured up, so it
+   * is negated — pressing the up arrow has to raise the camera.
+   */
+  const nudgeView = (nudge: ViewNudge): void => {
+    sceneRef?.camera.nudge(nudge.x, -nudge.y)
+  }
+
+  /** The circular arrows turn the picture in its own plane. */
+  const rollView = (steps: number): void => {
+    sceneRef?.camera.roll(steps)
   }
 
   const discardElement = (elementId: string): void => {
@@ -423,7 +460,14 @@ export function Project(props: { auth: Auth }) {
           control (fixed position, user-dragged, persisted), independent of
           whether a part is selected. It rides above the HUD, so it is never
           covered by a panel. */}
-      <ViewCube onSelect={applyView} />
+      <ViewCube
+        onPick={applyView}
+        onNudge={nudgeView}
+        onRoll={rollView}
+        azimuth={cameraAngles().azimuth}
+        elevation={cameraAngles().elevation}
+        rollAngle={cameraAngles().roll}
+      />
 
       {/* THE DESIGNER: the selected element's input HUD. Entirely
           derived from the command's metadata — the plane picker, the

@@ -101,11 +101,19 @@ export interface WebGpuBackend extends Backend {
 
 function tryWebGl2(canvas: HTMLCanvasElement): Backend | null {
   const gl = canvas.getContext("webgl2", {
+    // MSAA. Every edge in this scene is a thin line — plane borders,
+    // sketch curves, the origin sphere's silhouette — and those are
+    // exactly what aliases worst without it.
     antialias: true,
     depth: true,
-    // Picking reads pixels back, which needs the buffer preserved
-    // across the read.
-    preserveDrawingBuffer: true,
+    // NOT preserved.
+    //
+    // It was set for readback picking, but picking is a ray cast in
+    // JavaScript now and never reads the framebuffer. Meanwhile many
+    // drivers silently DISABLE multisampling when this is on, because a
+    // preserved buffer cannot be a multisample one — so it was costing
+    // the anti-aliasing above and buying nothing.
+    preserveDrawingBuffer: false,
     powerPreference: "high-performance",
   })
   if (!gl) return null

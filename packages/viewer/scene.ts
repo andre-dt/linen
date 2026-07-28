@@ -25,7 +25,7 @@ import { decodeMesh } from "./mesh"
 import { createCamera } from "./camera"
 import { matrixMultiply, invert, type Matrix } from "./math"
 import {
-  DATUM_PLANES, planeQuad, planeOutline, planeLabelQuad,
+  DATUM_PLANES, PLANE_EXTENT, planeQuad, planeOutline, planeLabelQuad,
   originSphere, originSphereVertexCount, pickPlane, rayThrough,
   type DatumPlaneId,
 } from "./planes"
@@ -42,6 +42,25 @@ const OPPOSITE: Record<DatumPlaneId, DatumPlaneId> = {
   top: "bottom", bottom: "top",
   front: "back", back: "front",
   right: "left", left: "right",
+}
+
+const dotProduct = (a: readonly number[], b: readonly number[]): number =>
+  a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!
+
+const crossProduct = (
+  a: readonly number[],
+  b: readonly number[],
+): readonly [number, number, number] => [
+  a[1]! * b[2]! - a[2]! * b[1]!,
+  a[2]! * b[0]! - a[0]! * b[2]!,
+  a[0]! * b[1]! - a[1]! * b[0]!,
+]
+
+const normalized = (a: readonly number[]): readonly [number, number, number] => {
+  const magnitude = Math.hypot(a[0]!, a[1]!, a[2]!)
+  return magnitude < 1e-12
+    ? [a[0]!, a[1]!, a[2]!]
+    : [a[0]! / magnitude, a[1]! / magnitude, a[2]! / magnitude]
 }
 
 const DEFAULT_APPEARANCE: Appearance = {
@@ -87,6 +106,8 @@ export function createScene(backend: Backend): Scene {
 
   let width = 1
   let height = 1
+  /** Wall clock of the previous frame, for time-based animation. */
+  let lastFrameAt: number | null = null
 
   gl.enable(gl.DEPTH_TEST)
   gl.enable(gl.CULL_FACE)
@@ -118,9 +139,13 @@ export function createScene(backend: Backend): Scene {
 
   const planeMeshes = DATUM_PLANES.filter((plane) => FRONT_FACES.has(plane.id)).map(
     (plane) => {
-      const text = createTextTexture(gl, plane.label.toUpperCase(), {
+      // The label as written — "Top", not "TOP". Sentence case reads
+      // faster at this size, and the all-caps tracking that made the
+      // uppercase legible is unnecessary once the word has ascenders and
+      // descenders to give it shape.
+      const text = createTextTexture(gl, plane.label, {
         fontSize: 32,
-        letterSpacing: 1.5,
+        letterSpacing: 0.5,
       })
       return {
         plane,
@@ -130,11 +155,24 @@ export function createScene(backend: Backend): Scene {
         // Sized in MILLIMETRES, from the texture's aspect so the glyphs
         // are never stretched. The label scales with the plane, as
         // anything printed on a surface does.
+        // TWO quads, built once: the normal one and its mirror. A plane
+        // is drawn two-sided, so from behind its front face the glyphs
+        // read backwards — and which side the camera is on changes as it
+        // orbits. Choosing between two static buffers per frame beats
+        // re-uploading geometry every time the view crosses the plane.
         label: text
           ? createLabelBuffer(
-              gl,
-              labelProgram,
+              gl, labelProgram,
               planeLabelQuad(plane, LABEL_HEIGHT_MM * text.aspect, LABEL_HEIGHT_MM),
+            )
+          : null,
+        labelMirrored: text
+          ? createLabelBuffer(
+              gl, labelProgram,
+              planeLabelQuad(
+                plane, LABEL_HEIGHT_MM * text.aspect, LABEL_HEIGHT_MM,
+                PLANE_EXTENT, 2, true,
+              ),
             )
           : null,
       }
@@ -142,7 +180,12 @@ export function createScene(backend: Backend): Scene {
   )
 
   // The origin, shared by all three planes rather than owned by any.
-  const originVertexArray = createPlaneBuffer(gl, planeProgram, originSphere())
+  const originProgram = buildOriginProgram(gl)
+  const originUniforms = {
+    viewProjection: gl.getUniformLocation(originProgram, "uViewProjection"),
+    lightDirection: gl.getUniformLocation(originProgram, "uLightDirection"),
+  }
+  const originVertexArray = createOriginBuffer(gl, originProgram, originSphere())
   const originVertexCount = originSphereVertexCount()
 
   const planes: PlaneLayer = {
@@ -225,8 +268,39 @@ export function createScene(backend: Backend): Scene {
     gl.uniform1i(labelUniforms.text, 0)
     gl.activeTexture(gl.TEXTURE0)
 
-    for (const { plane, text, label } of planeMeshes) {
-      if (!text || !label) continue
+    // Screen-space axes, for deciding which labels read backwards.
+    const eye = camera.position
+    const forward = normalized([
+      camera.target[0] - eye[0], camera.target[1] - eye[1], camera.target[2] - eye[2],
+    ])
+    // worldUp x forward, in THAT order. The reverse yields a
+    // left-handed basis, which inverts every handedness test below and
+    // mirrors exactly the labels that were already correct.
+    const screenRight = normalized(crossProduct([0, 0, 1], forward))
+    const screenUp = crossProduct(forward, screenRight)
+
+    for (const { plane, text, label, labelMirrored } of planeMeshes) {
+      if (!text || !label || !labelMirrored) continue
+
+      // Is this plane's face turned toward the camera?
+      //
+      // Project the plane's own (right, up) axes to screen and take their
+      // 2D cross product. The sign is the handedness of the projected
+      // frame: positive means the front face is toward us and the glyphs
+      // read correctly; negative means we are looking through the back
+      // and the mirrored variant is needed.
+      //
+      // Both axes are required. Testing `right` alone cannot resolve the
+      // top plane, whose right and up are both horizontal — nothing in
+      // that one axis says whether the surface is seen from above or
+      // below. Read off rendered pixels; two derivations landed on the
+      // wrong sign before this.
+      const runX = dotProduct(plane.right, screenRight)
+      const runY = dotProduct(plane.right, screenUp)
+      const upX = dotProduct(plane.up, screenRight)
+      const upY = dotProduct(plane.up, screenUp)
+      const rightReading = runX * upY - runY * upX < 0
+
       const opposite = OPPOSITE[plane.id]
       const active =
         planes.selected === plane.id || planes.selected === opposite ||
@@ -234,9 +308,9 @@ export function createScene(backend: Backend): Scene {
 
       const color = active ? PLANE_ACTIVE_COLOR : LABEL_COLOR
       gl.uniform3f(labelUniforms.color, color[0], color[1], color[2])
-      gl.uniform1f(labelUniforms.opacity, active ? 1 : 0.55)
+      gl.uniform1f(labelUniforms.opacity, active ? 1 : 0.85)
       gl.bindTexture(gl.TEXTURE_2D, text.texture)
-      gl.bindVertexArray(label)
+      gl.bindVertexArray(rightReading ? label : labelMirrored)
       gl.drawArrays(gl.TRIANGLES, 0, 6)
     }
     gl.bindTexture(gl.TEXTURE_2D, null)
@@ -247,8 +321,9 @@ export function createScene(backend: Backend): Scene {
     // sphere occludes properly instead of showing its own far side
     // through its near side.
     gl.depthMask(true)
-    gl.uniform3f(planeUniforms.color, ORIGIN_COLOR[0], ORIGIN_COLOR[1], ORIGIN_COLOR[2])
-    gl.uniform1f(planeUniforms.opacity, 1)
+    gl.useProgram(originProgram)
+    gl.uniformMatrix4fv(originUniforms.viewProjection, false, viewProjection)
+    gl.uniform3f(originUniforms.lightDirection, 0.4, 0.6, 0.7)
     gl.bindVertexArray(originVertexArray)
     gl.drawArrays(gl.TRIANGLES, 0, originVertexCount)
 
@@ -422,6 +497,19 @@ export function createScene(backend: Backend): Scene {
     },
 
     render() {
+      // Advance any view-cube transition before the matrix is built, or
+      // the frame would draw the camera's previous pose.
+      //
+      // Timed off the wall clock rather than counting frames: at 30fps a
+      // per-frame step would take twice as long as at 60, and the
+      // transition would visibly drag on a slower machine.
+      const now = performance.now()
+      const deltaSeconds = lastFrameAt === null ? 0 : (now - lastFrameAt) / 1000
+      lastFrameAt = now
+      // Clamped: a backgrounded tab resumes with a delta of many seconds,
+      // which would teleport the camera past its target in one step.
+      camera.advance(Math.min(deltaSeconds, 0.1))
+
       gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight)
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
@@ -482,13 +570,15 @@ export function createScene(backend: Backend): Scene {
       for (const mesh of meshes.values()) releaseMesh(gl, mesh)
       meshes.clear()
       drawables.clear()
-      for (const { fill, outline, label, text } of planeMeshes) {
+      for (const { fill, outline, label, labelMirrored, text } of planeMeshes) {
         gl.deleteVertexArray(fill)
         gl.deleteVertexArray(outline)
         if (label) gl.deleteVertexArray(label)
+        if (labelMirrored) gl.deleteVertexArray(labelMirrored)
         if (text) gl.deleteTexture(text.texture)
       }
       gl.deleteVertexArray(originVertexArray)
+      gl.deleteProgram(originProgram)
       gl.deleteProgram(labelProgram)
       gl.deleteVertexArray(sketchVertexArray)
       gl.deleteBuffer(sketchBufferHandle)
@@ -515,16 +605,15 @@ const PLANE_COLOR: readonly [number, number, number] = [0.62, 0.70, 0.82]
  *  neutral the other planes keep. */
 const PLANE_ACTIVE_COLOR: readonly [number, number, number] = [0.44, 0.7, 1]
 
-/** Brighter than the planes: the origin is a landmark, not scenery. */
-const ORIGIN_COLOR: readonly [number, number, number] = [0.85, 0.88, 0.94]
 
 /** Cap height of a plane's name, in millimetres. Roughly 7% of the
  *  plane's 120mm width — large enough to read at the default framing,
  *  small enough not to compete with the geometry. */
-const LABEL_HEIGHT_MM = 8
+const LABEL_HEIGHT_MM = 6
 
-/** The name at rest: readable, but clearly subordinate to the geometry. */
-const LABEL_COLOR: readonly [number, number, number] = [0.78, 0.83, 0.9]
+/** Near-white: the name has to stay legible against both a lit plane and
+ *  the dark space behind one, and the planes themselves are very faint. */
+const LABEL_COLOR: readonly [number, number, number] = [0.96, 0.97, 1]
 
 /** Drawn geometry is near-white: it is the subject, and everything else
  *  in the viewport is scenery. */
@@ -620,6 +709,112 @@ void main() {
   fragColor = vec4(uColor, coverage * uOpacity);
 }
 `
+
+const ORIGIN_VERTEX_SHADER = `#version 300 es
+in vec3 aPosition;
+in vec3 aNormal;
+uniform mat4 uViewProjection;
+out vec3 vNormal;
+
+void main() {
+  vNormal = aNormal;
+  gl_Position = uViewProjection * vec4(aPosition, 1.0);
+}
+`
+
+const ORIGIN_FRAGMENT_SHADER = `#version 300 es
+precision highp float;
+
+in vec3 vNormal;
+uniform vec3 uLightDirection;
+
+// The equator splits the sphere in two; three more cuts through the
+// axis divide each half into four. Eight patches, alternating colour,
+// and every patch is the same size — the cuts are evenly spaced in
+// azimuth, so the pattern is symmetric under a quarter turn.
+#define ORIGIN_MERIDIAN_COUNT 4.0
+
+const vec3 ORIGIN_CHECKER_LIGHT = vec3(1.0, 1.0, 1.0);
+const vec3 ORIGIN_CHECKER_DARK = vec3(0.55, 0.57, 0.60);
+
+const float PI = 3.14159265359;
+
+out vec4 fragColor;
+
+void main() {
+  vec3 normal = normalize(vNormal);
+  vec3 light = normalize(uLightDirection);
+
+  // Wrapped diffuse only, and a shallow one. No specular: a moving
+  // highlight is a material cue, and this marker is not a material —
+  // it is a landmark. The shading exists solely so the sphere does not
+  // collapse into a flat disc, since the checker's wedges vanish at the
+  // silhouette and cannot carry roundness by themselves.
+  float diffuse = max(dot(normal, light) * 0.5 + 0.5, 0.0);
+
+  // Croatian-jersey checkerboard: the equator splits top from bottom,
+  // and the meridian cuts split each half into quarters. Adding the two
+  // parities makes neighbours alternate across BOTH cuts, so no two
+  // patches sharing an edge land on the same colour.
+  //
+  // Z is the polar axis here, matching how originSphere() walks its
+  // rings — so the equator is the plane the top and bottom planes meet.
+  float hemisphere = step(0.0, normal.z);
+  float azimuth = atan(normal.y, normal.x) / (2.0 * PI) + 0.5;
+  float wedge = floor(azimuth * ORIGIN_MERIDIAN_COUNT);
+  float parity = mod(hemisphere + wedge, 2.0);
+  vec3 base = mix(ORIGIN_CHECKER_LIGHT, ORIGIN_CHECKER_DARK, parity);
+
+  // A narrow band: the white must still read as white and the grey as
+  // grey. Shading deep enough to be obvious would make the checker's
+  // two colours ambiguous, which is the opposite of what it is for.
+  vec3 shaded = base * (0.78 + diffuse * 0.22);
+  fragColor = vec4(shaded, 1.0);
+}
+`
+
+function buildOriginProgram(gl: WebGL2RenderingContext): WebGLProgram {
+  const vertex = compile(gl, gl.VERTEX_SHADER, ORIGIN_VERTEX_SHADER)
+  const fragment = compile(gl, gl.FRAGMENT_SHADER, ORIGIN_FRAGMENT_SHADER)
+  const program = gl.createProgram()
+  if (!program) throw new Error("could not create a program")
+  gl.attachShader(program, vertex)
+  gl.attachShader(program, fragment)
+  gl.linkProgram(program)
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    throw new Error(`origin shader link failed: ${gl.getProgramInfoLog(program)}`)
+  }
+  gl.deleteShader(vertex)
+  gl.deleteShader(fragment)
+  return program
+}
+
+/** Interleaved x,y,z,nx,ny,nz. */
+function createOriginBuffer(
+  gl: WebGL2RenderingContext,
+  program: WebGLProgram,
+  data: Float32Array,
+): WebGLVertexArrayObject {
+  const vertexArray = gl.createVertexArray()
+  if (!vertexArray) throw new Error("could not create a vertex array")
+  gl.bindVertexArray(vertexArray)
+
+  const buffer = gl.createBuffer()
+  if (!buffer) throw new Error("could not create a buffer")
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer)
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW)
+
+  const stride = 6 * 4
+  const position = gl.getAttribLocation(program, "aPosition")
+  gl.enableVertexAttribArray(position)
+  gl.vertexAttribPointer(position, 3, gl.FLOAT, false, stride, 0)
+  const normal = gl.getAttribLocation(program, "aNormal")
+  gl.enableVertexAttribArray(normal)
+  gl.vertexAttribPointer(normal, 3, gl.FLOAT, false, stride, 3 * 4)
+
+  gl.bindVertexArray(null)
+  return vertexArray
+}
 
 function buildLabelProgram(gl: WebGL2RenderingContext): WebGLProgram {
   const vertex = compile(gl, gl.VERTEX_SHADER, LABEL_VERTEX_SHADER)

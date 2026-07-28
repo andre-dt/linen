@@ -1,3 +1,8 @@
+// Probe config: the app on 5216 against the dev-auth kernel on 5188.
+//
+// Separate from vite.config.ts so headless verification never has to
+// disturb the developer's own server, and so the dev auth provider
+// stays confined to a port nothing else uses.
 import { defineConfig } from "vite"
 import solid from "vite-plugin-solid"
 
@@ -5,7 +10,7 @@ export default defineConfig({
   plugins: [solid()],
 
   server: {
-    port: 5173,
+    port: 5216,
     proxy: {
       // The kernel runs on 5174 and speaks two channels over one socket:
       // JSON for commands, binary for meshes. Vite proxies both under

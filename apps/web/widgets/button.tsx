@@ -23,26 +23,13 @@ export type ButtonVariant =
   | "hud-subtle"
 
 /** The one icon-button edge length, in px. EVERY square icon button on the
- *  HUD is this size — a collapsed panel, the view trigger, and each cell of
- *  the view cube's flower alike. It lives here because it is a visual
- *  characteristic: wrappers choose behavior, never look.
+ *  HUD is this size. It lives here because it is a visual characteristic:
+ *  wrappers choose behavior, never look.
  *
- *  The view cube is the exception and sets its own, larger size (see
- *  VIEW_CELL_SIZE) — its cells carry words, not icons. */
+ *  It is also the size a collapsed HUD panel presents, which is why the
+ *  panel header's own minimize button is sized to approach it — a control
+ *  and the control that undoes it should not be wildly different targets. */
 export const ICON_SIZE = 40
-
-/** The view cube's button size — trigger and every flower cell alike.
- *
- *  Larger than ICON_SIZE because it is set by the widest thing a cell must
- *  hold: "BOTTOM" measures 45px at the 10px type size, and 56 leaves it
- *  comfortable padding. Sizing the button to the text beats shrinking the
- *  text to the button — at 8px the labels fit but stop being readable.
- *
- *  Trigger and cells sharing one number is load-bearing, not incidental: the
- *  flower is centred on the trigger, so its middle cell (FRONT) can only
- *  cover the trigger exactly if the two are the same size. Must stay in sync
- *  with --view-cell in the stylesheet. */
-export const VIEW_CELL_SIZE = 56
 
 export interface BaseButtonProps extends JSX.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant

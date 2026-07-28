@@ -348,7 +348,17 @@ export const originSphere = (
     ]
   }
 
+  // Interleaved x,y,z,nx,ny,nz. On a sphere centred at the origin the
+  // surface normal IS the normalised position, so it costs one divide
+  // rather than a second pass.
   const out: number[] = []
+  const push = (point: readonly number[]): void => {
+    out.push(
+      point[0]!, point[1]!, point[2]!,
+      point[0]! / radius, point[1]! / radius, point[2]! / radius,
+    )
+  }
+
   for (let ring = 0; ring < rings; ring++) {
     for (let segment = 0; segment < segments; segment++) {
       const a = at(ring, segment)
@@ -357,7 +367,8 @@ export const originSphere = (
       const d = at(ring, segment + 1)
       // Two triangles per quad. The poles degenerate to slivers, which
       // cost nothing and save special-casing the first and last ring.
-      out.push(...a, ...b, ...c, ...a, ...c, ...d)
+      push(a); push(b); push(c)
+      push(a); push(c); push(d)
     }
   }
   return new Float32Array(out)
@@ -390,9 +401,13 @@ export const planeLabelQuad = (
   heightMillimetres: number,
   extent: number = PLANE_EXTENT,
   inset = 2,
+  /** Flip the text horizontally. A plane is drawn two-sided, so from one
+   *  side its glyphs read backwards; the caller picks the variant that
+   *  reads correctly from where the camera actually is. */
+  mirrored = false,
 ): Float32Array => {
-  // Anchored at the top-left corner, running right and downward — the
-  // reading direction, in the plane's own axes.
+  // Always anchored at the plane's own top-left, running right and
+  // downward. The QUAD never moves; only the texture is flipped.
   const left = -extent + inset
   const top = extent - inset
 
@@ -407,10 +422,19 @@ export const planeLabelQuad = (
   const c = at(left + widthMillimetres, top - heightMillimetres) // bottom-right
   const d = at(left, top - heightMillimetres)                    // bottom-left
 
+  // Mirroring is a TEXTURE flip, not a geometry one.
+  //
+  // Moving the quad to the far corner and advancing backwards — the
+  // obvious first attempt — relocates the label but leaves the glyphs
+  // reversed, because each corner still samples the same texel it did
+  // before. Swapping U is what actually un-mirrors the text.
+  const u0 = mirrored ? 1 : 0
+  const u1 = mirrored ? 0 : 1
+
   // Texture V runs downward, so the top of the quad samples v = 0.
   return new Float32Array([
-    ...a, 0, 0, ...b, 1, 0, ...c, 1, 1,
-    ...a, 0, 0, ...c, 1, 1, ...d, 0, 1,
+    ...a, u0, 0, ...b, u1, 0, ...c, u1, 1,
+    ...a, u0, 0, ...c, u1, 1, ...d, u0, 1,
   ])
 }
 

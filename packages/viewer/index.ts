@@ -208,6 +208,12 @@ export interface Camera {
   readonly position: Vector3
   readonly target: Vector3
   readonly up: Vector3
+  /** Orientation, in radians. Read-only: a control that mirrors the
+   *  camera reads these, but moves it through viewFrom/nudge/roll. */
+  readonly azimuth: number
+  readonly elevation: number
+  /** Current roll, in radians. Named apart from the `roll()` method. */
+  readonly rollAngle: number
   readonly projection: Projection
 
   orbit(deltaAzimuth: number, deltaElevation: number): void
@@ -219,6 +225,51 @@ export interface Camera {
   fit(bounds?: BoundingBox, coverage?: number): void
   /** Standard views. Animates unless `immediate`. */
   viewFrom(direction: StandardView, immediate?: boolean): void
+  /**
+   * Looks from an ARBITRARY direction, animated unless `immediate`.
+   *
+   * The view cube's twenty-six regions are more poses than the named
+   * views cover, and each already knows itself as a vector — so this
+   * takes the vector rather than growing the name table. Clears roll,
+   * like `viewFrom`.
+   */
+  lookFrom(direction: readonly [number, number, number], immediate?: boolean): void
+  /**
+   * Turns the camera by whole steps, animated — the view cube's corner
+   * arrows. Each step is 45 degrees, so eight of them make a revolution
+   * and every stop is a standard view.
+   *
+   * Distinct from `orbit`, which is the drag path: that one jumps and
+   * cancels any running animation, because a drag means the user has
+   * taken direct control.
+   */
+  nudge(stepsAzimuth: number, stepsElevation: number): void
+  /**
+   * Rotates the view about its own axis, in quarter turns. Positive is
+   * clockwise on screen.
+   *
+   * The view cube's circular corner arrows. Unlike `nudge` this does not
+   * move the camera — the same faces stay visible, only the orientation
+   * on screen changes — so it applies at once rather than animating.
+   */
+  roll(steps: number): void
+  /**
+   * Advances any in-flight view transition. Called once per frame by the
+   * scene; returns true while still animating.
+   *
+   * The camera does not own a clock or a frame loop — it is driven, so
+   * it stays testable and cannot schedule work of its own.
+   */
+  advance(deltaSeconds: number): boolean
+  /**
+   * Switches between parallel and perspective projection.
+   *
+   * Orthographic is the default and the right one for CAD: it preserves
+   * lengths, so two equal edges at different depths measure equal on
+   * screen. Perspective is offered for the times a shape reads better
+   * with depth cues. Switching preserves the apparent zoom.
+   */
+  setProjection(kind: Projection["kind"]): void
 }
 
 export type Projection =
@@ -346,6 +397,11 @@ export { createBackend } from "./backend"
 export type { WebGpuBackend, WebGl2Backend } from "./backend"
 export { createScene } from "./scene"
 export { createCamera } from "./camera"
+export { createCubeScene, type CubeScene } from "./cube-scene"
+export {
+  buildCube, pickCube, CHAMFER,
+  type CubeRegion, type CubeRegionKind,
+} from "./cube"
 export { decodeMesh, readMeshHeader, faceOfTriangle, syntheticBox } from "./mesh"
 export type { DecodedMesh as DecodedMeshView } from "./mesh"
 export {

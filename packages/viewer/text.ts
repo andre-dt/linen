@@ -44,12 +44,16 @@ export interface TextTexture {
  * and highlighted states by multiplying, instead of being re-rendered
  * whenever the colour changes.
  *
- * `scale` oversamples relative to the on-screen size. Text baked at
- * exactly its display size turns to mush the moment the camera moves
- * closer; 4x costs a few kilobytes and stays sharp through a reasonable
- * zoom.
- */
-export const createTextTexture = (
+ * `scale` oversamples relative to the on-screen size, and the browser's
+ * own font rasteriser does the anti-aliasing — which is the same
+ * hinted, gamma-corrected output the rest of the interface uses.
+ *
+ * A signed distance field was tried here for "vector-crisp" edges. It
+ * looked worse: the field fills every texel, so the transparent margin
+ * around the glyphs stopped being transparent and the label gained a
+ * pale rectangle. Sharpness at an angle turned out to be a FILTERING
+ * problem, not a representation one — see the anisotropy below.
+ */export const createTextTexture = (
   gl: WebGL2RenderingContext,
   text: string,
   options: {
@@ -57,11 +61,20 @@ export const createTextTexture = (
     readonly fontFamily?: string
     readonly letterSpacing?: number
     readonly scale?: number
+    /** CSS font weight. Defaults to 500. */
+    readonly weight?: number
   } = {},
 ): TextTexture | null => {
   const fontSize = options.fontSize ?? 32
   const fontFamily = options.fontFamily ?? "system-ui, sans-serif"
+  // Rasterise large, then measure distances on that. The field itself is
+  // resolution-independent, so this only needs to be fine enough to
+  // capture the glyph outlines accurately.
   const scale = options.scale ?? 4
+  // 600 was the original and reads heavy on the view cube, where the
+  // labels sit on small facets and every stroke competes with the
+  // bevels. Callers that want the old weight ask for it.
+  const weight = options.weight ?? 500
 
   const canvas = document.createElement("canvas")
   const context = canvas.getContext("2d")
@@ -69,7 +82,7 @@ export const createTextTexture = (
   // draws no label rather than failing the whole scene over a caption.
   if (!context) return null
 
-  const font = `600 ${fontSize * scale}px ${fontFamily}`
+  const font = `${weight} ${fontSize * scale}px ${fontFamily}`
   context.font = font
   if (options.letterSpacing) {
     // Not supported everywhere; harmless where it is ignored.
@@ -102,11 +115,27 @@ export const createTextTexture = (
   gl.bindTexture(gl.TEXTURE_2D, texture)
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas)
 
-  // Mipmaps matter here: the label is often minified (a plane turned
-  // away, or zoomed out), and without them the text aliases into noise.
   gl.generateMipmap(gl.TEXTURE_2D)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+
+  // Anisotropic filtering, where the driver offers it. These labels lie
+  // ON a surface the camera almost never faces squarely, and at a
+  // grazing angle plain trilinear picks a mip based on the WORST axis —
+  // blurring the direction that was still sharp. This is most of the
+  // remaining softness.
+  const anisotropic =
+    gl.getExtension("EXT_texture_filter_anisotropic") ??
+    gl.getExtension("WEBKIT_EXT_texture_filter_anisotropic")
+  if (anisotropic) {
+    const maximum = gl.getParameter(
+      anisotropic.MAX_TEXTURE_MAX_ANISOTROPY_EXT,
+    ) as number
+    gl.texParameterf(
+      gl.TEXTURE_2D, anisotropic.TEXTURE_MAX_ANISOTROPY_EXT,
+      Math.min(16, maximum),
+    )
+  }
   // Clamp: the quad samples exactly [0,1], and repeating would wrap a
   // stray column of glyph onto the opposite edge.
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
