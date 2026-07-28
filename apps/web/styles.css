@@ -132,6 +132,40 @@ body {
   font-size: 12px;
 }
 
+/* The capability gate: shown in place of the 3D designer canvas when the
+   browser lacks a 3D backend or the HTML-in-Canvas API. The BLOCK is
+   centred in the canvas area; the TEXT inside it is left aligned, since a
+   multi-line, multi-paragraph explanation reads far better ragged-right
+   than centred. */
+.viewport-unsupported {
+  display: grid;
+  place-content: center;
+  height: 100%;
+  padding: 24px;
+}
+
+.viewport-unsupported-body {
+  max-width: 42ch;
+  text-align: left;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.viewport-unsupported-body > p {
+  margin: 0 0 12px;
+}
+
+.viewport-unsupported-body > p:last-child {
+  margin-bottom: 0;
+}
+
+.viewport-unsupported-title {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 14px;
+}
+
 /* =====================================================================
    TOOLBAR
    ===================================================================== */
@@ -1421,6 +1455,35 @@ table.point-list {
    The stage owns the perspective; the body owns the rotation; the faces
    are six planes pushed out from a shared centre. Arrows sit OUTSIDE the
    3D context so they stay square to the screen. */
+/* The HTML face label uploaded onto each cube panel via HTML-in-Canvas
+   (texElementImage2D). The panel's dark recess colour comes from the GL
+   shader tint; this element supplies ONLY the glyphs, over a transparent
+   ground, so the two composite the same way the baked bitmap used to —
+   but drawn by the browser's text engine, at device resolution, and fully
+   styleable here. The box is square (matches FACE_TEXTURE_SIZE); the flex
+   centring places the label in the middle of the panel. */
+.cube-face-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--hud-text);
+  font-family: var(--font-ui, system-ui, sans-serif);
+  /* Sized to fit the longest label ("BOTTOM") inside the 256px texture
+     box with margin. The UV span maps this box across the whole panel, so
+     this is the only knob for how large the word lands. */
+  font-size: 40px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 0 12px;
+  box-sizing: border-box;
+  text-align: center;
+  /* A whisper of glow so the light type holds its edge against the dark
+     panel without a hard outline. */
+  text-shadow: 0 0 8px rgba(0, 0, 0, 0.35);
+}
+
 .view-cube-slot {
   position: fixed;
   z-index: var(--z-floating);
@@ -1429,7 +1492,7 @@ table.point-list {
      drag clamp come from these. Out of step, the canvas renders at one
      size inside a box of another. */
   --cube-size: 118px;
-  --cube-margin: 24px;
+  --cube-margin: 8px;
   width: calc(var(--cube-size) + var(--cube-margin) * 2);
   height: calc(var(--cube-size) + var(--cube-margin) * 2);
   cursor: grab;
@@ -1458,94 +1521,6 @@ table.point-list {
    remain usable. */
 .view-cube-canvas.failed { display: none; }
 
-/* --- the flat arrows -------------------------------------------------- */
-/*
-   Outside the 3D stage, so they stay square to the screen: they mean
-   "up on screen", not "up on the model".
-
-   Drawn as CSS triangles rather than glyphs or SVG — a triangle is the
-   one shape borders make exactly, at any size, with no font or asset.
-*/
-.view-cube-nudge {
-  position: absolute;
-  appearance: none;
-  border: none;
-  background: transparent;
-  padding: 0;
-  width: 22px;
-  height: 22px;
-  cursor: pointer;
-  pointer-events: auto;
-  opacity: 0.42;
-  transition: opacity 100ms ease;
-}
-.view-cube-nudge:hover { opacity: 0.95; }
-.view-cube-nudge::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  width: 0;
-  height: 0;
-  /* 7px half-width, 9px length: slim enough not to compete with the
-     cube, long enough to read as a direction at a glance. */
-  border: 7px solid transparent;
-}
-.view-cube-nudge[data-side="up"] {
-  top: 2px; left: 50%; transform: translateX(-50%);
-}
-.view-cube-nudge[data-side="up"]::before {
-  border-bottom: 9px solid var(--hud-text-muted); margin-bottom: 16px;
-}
-.view-cube-nudge[data-side="down"] {
-  bottom: 2px; left: 50%; transform: translateX(-50%);
-}
-.view-cube-nudge[data-side="down"]::before {
-  border-top: 9px solid var(--hud-text-muted); margin-top: 16px;
-}
-.view-cube-nudge[data-side="left"] {
-  left: 2px; top: 50%; transform: translateY(-50%);
-}
-.view-cube-nudge[data-side="left"]::before {
-  border-right: 9px solid var(--hud-text-muted); margin-right: 16px;
-}
-.view-cube-nudge[data-side="right"] {
-  right: 2px; top: 50%; transform: translateY(-50%);
-}
-.view-cube-nudge[data-side="right"]::before {
-  border-left: 9px solid var(--hud-text-muted); margin-left: 16px;
-}
-
-/* --- the curved roll arrows ------------------------------------------- */
-/*
-   Flanking the top, outside the stage like the flat arrows. Quiet by
-   default: they frame the control rather than being the point of it.
-*/
-.view-cube-roll {
-  position: absolute;
-  top: -6px;
-  width: 30px;
-  height: 19px;
-  appearance: none;
-  border: none;
-  padding: 0;
-  background: transparent;
-  color: var(--hud-text-muted);
-  cursor: pointer;
-  pointer-events: auto;
-  opacity: 0.42;
-  transition: opacity 100ms ease, color 100ms ease;
-}
-.view-cube-roll[data-side="left"]  { left: -4px; }
-.view-cube-roll[data-side="right"] { right: -4px; }
-.view-cube-roll:hover { opacity: 0.95; color: var(--hud-text); }
-
-.view-cube-roll-icon {
-  width: 100%;
-  height: 100%;
-  display: block;
-  overflow: visible;
-}
 
 /* =====================================================================
    COLLAPSIBLE PANEL — expanded titled panel ↔ a single icon button.

@@ -29,15 +29,6 @@ const ISOMETRIC_ELEVATION = Math.atan(1 / Math.SQRT2)
  *  your bearings — short enough not to feel like waiting. */
 const VIEW_TRANSITION_SECONDS = 0.4
 
-/** How far one press of a roll arrow turns the picture in its own plane.
- *
- *  22.5 degrees — an exact sixteenth of a circle, so sixteen presses come
- *  back to level and every stop along the way is a clean fraction of a
- *  turn. (27.5 was tried first and does not divide: after thirteen
- *  presses the frame sat 2.5 degrees off upright, drifting further with
- *  each lap.) */
-const ROLL_STEP = Math.PI / 8
-
 /** A quarter turn: how far one press of a corner arrow moves the azimuth.
  *  Four presses complete a revolution, and every stop is a corner of the
  *  cube. Elevation does not use this — it steps between the three levels
@@ -394,34 +385,6 @@ export function createCamera(): OrbitCamera {
       }
     },
 
-    roll(steps) {
-      // Steps of ROLL_STEP about the view direction, EASED like every
-      // other way the view cube moves the camera.
-      //
-      // This was instant at first, on the reasoning that a roll shows no
-      // new geometry so there is no journey to narrate. That was wrong in
-      // practice: a picture that snaps ninety degrees is disorienting
-      // precisely BECAUSE nothing else changed — there is no cue that the
-      // model stayed put and only the frame turned. The sweep supplies it.
-      //
-      // Composed off any running transition's destination, so two quick
-      // presses turn a half circle rather than the second discarding the
-      // first.
-      const baseRoll = transition?.toRoll ?? roll
-      const targetRoll = baseRoll + steps * ROLL_STEP
-
-      transition = {
-        // Position is unchanged by a roll: both ends are where we are.
-        fromAzimuth: azimuth,
-        toAzimuth: transition?.toAzimuth ?? azimuth,
-        fromElevation: elevation,
-        toElevation: transition?.toElevation ?? elevation,
-        elapsed: 0,
-        fromRoll: roll,
-        toRoll: targetRoll,
-      }
-    },
-
     lookFrom(direction, immediate = false) {
       // An ARBITRARY direction, for the view cube: its twenty-six
       // regions are more poses than the named-view table holds, and
@@ -474,123 +437,6 @@ export function createCamera(): OrbitCamera {
         arc: arcBetween(azimuth, elevation, azimuth + delta, targetElevation),
         fromRoll: roll,
         toRoll: 0,
-      }
-    },
-
-    nudge(stepsAzimuth, stepsElevation) {
-      // A DISCRETE step, animated — the view cube's corner arrows.
-      //
-      // Deliberately not `orbit`: that is the drag path, so it jumps and
-      // clears any running transition. These arrows are buttons, and a
-      // button that teleports the camera reads as a glitch next to the
-      // face cells, which ease. Reusing the transition keeps every way of
-      // moving the camera from the cube consistent.
-      //
-      // Composed off the transition's DESTINATION when one is running, so
-      // clicking twice quickly turns two steps rather than the second
-      // click discarding the first.
-      const baseAzimuth = transition ? transition.toAzimuth : azimuth
-      const baseElevation = transition ? transition.toElevation : elevation
-
-      // Rotation about the CUBE'S BODY DIAGONAL — the corner-to-corner
-      // axis the pressed arrow points along.
-      //
-      // Two earlier designs failed, both measurably:
-      //
-      //   - Axis from the camera's own right/up vectors. That axis
-      //     depends on the current elevation, so every press turned about
-      //     a different one: five presses of the same corner from Front
-      //     gave elevations 30, 51.9, 59.9, 59.6, 59.6 with the azimuth
-      //     thrashing. It spiralled into the pole instead of stepping.
-      //
-      //   - Whole steps added to azimuth and elevation. Reversible only
-      //     when the starting elevation happens to be a multiple of the
-      //     step. From the isometric view (35.26 degrees) up gave +45 but
-      //     down gave -9.7, and up-then-down did not return home.
-      //
-      // A body diagonal is fixed in WORLD space and is a symmetry axis of
-      // the cube, so: the same arrow always turns the same way, the
-      // opposite arrow exactly undoes it, and three presses come back
-      // round — the axis has three-fold symmetry, which is why the step
-      // below is 120 degrees rather than 45. Every stop lands on a real
-      // corner of the cube.
-      if (stepsAzimuth === 0 && stepsElevation === 0) return
-
-      // Which of the four body diagonals. The arrow's screen direction
-      // picks the corner it points at: x chooses the east/west pair, y
-      // the north/south, and the diagonal runs from the bottom corner
-      // opposite it to the top corner nearest it.
-      //
-      // Anchored to the camera's current azimuth QUADRANT rather than to
-      // fixed world axes, so "up and to the right" still means up and to
-      // the right after the model has been turned around.
-      // Steps on a LATTICE OF CORNERS, snapped rather than accumulated.
-      //
-      // Rotating about the diagonal of the pose you happen to be in was
-      // tried and is not reversible: the diagonal moves with the camera,
-      // so the opposite arrow turns about a different axis and lands
-      // somewhere else. Measured from the isometric view, up-then-down
-      // finished 35 degrees below where it started.
-      //
-      // Snapping fixes that, and it is also what makes the control
-      // predictable: azimuth advances in quarter turns, elevation moves
-      // between the three levels a cube actually has corners at — the
-      // isometric elevation above the equator, the equator, and the
-      // isometric elevation below. Every stop is a pose the cube has a
-      // name for, and every arrow is undone exactly by its opposite.
-      const CORNER_ELEVATIONS = [
-        -ISOMETRIC_ELEVATION, 0, ISOMETRIC_ELEVATION,
-      ] as const
-
-      // Snap to the nearest lattice point FIRST, so a nudge that follows
-      // a free orbit starts from a corner rather than carrying the drag's
-      // arbitrary angles forward.
-      // On a 45-degree lattice, not 90.
-      //
-      // The corners of a cube sit at the diagonals — 45, 135, 225, 315 —
-      // and the faces at 0, 90, 180, 270. Snapping to quarter turns threw
-      // away every corner pose: from the isometric view at 45 degrees, a
-      // single press jumped to 180, three quarters of the way round,
-      // because the snap moved 45 to 90 before the step was even applied.
-      // An eighth-turn lattice holds both, so a nudge from a corner lands
-      // on the next corner and one from a face lands on the next face.
-      const azimuthIndex = Math.round(baseAzimuth / (Math.PI / 4))
-      let elevationIndex = CORNER_ELEVATIONS.reduce(
-        (best, value, index) =>
-          Math.abs(value - baseElevation) <
-          Math.abs(CORNER_ELEVATIONS[best]! - baseElevation)
-            ? index
-            : best,
-        0,
-      )
-      // Then step. Elevation saturates at the ends rather than wrapping:
-      // rolling over the pole would spin the model upside down.
-      //
-      // Saturation is what breaks strict reversibility here, and it is
-      // the right trade. Pressing up at the top is a no-op, so the
-      // following down-press descends a level and does not return to the
-      // top — but the alternative, wrapping, would flip the model over
-      // on a press the user reads as "tilt a bit more". The azimuth,
-      // which has no such boundary, IS exactly reversible.
-      elevationIndex = Math.max(
-        0,
-        Math.min(CORNER_ELEVATIONS.length - 1, elevationIndex + stepsElevation),
-      )
-
-      const targetAzimuth = (azimuthIndex + stepsAzimuth * 2) * (Math.PI / 4)
-      const targetElevation = CORNER_ELEVATIONS[elevationIndex]!
-
-      transition = {
-        fromAzimuth: azimuth,
-        toAzimuth: targetAzimuth,
-        fromElevation: elevation,
-        toElevation: targetElevation,
-        elapsed: 0,
-        // Swept along the great circle joining the two poses, so a
-        // diagonal press travels the direct route rather than bowing
-        // along a parallel and a meridian. The DESTINATION is the pair of
-        // stepped angles above; only the path between them is an arc.
-        arc: arcBetween(azimuth, elevation, targetAzimuth, targetElevation),
       }
     },
 

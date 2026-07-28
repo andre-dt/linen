@@ -42,67 +42,12 @@
 // click that ends it is swallowed.
 // =====================================================================
 
-import { createSignal, createEffect, onMount, onCleanup, For } from "solid-js"
+import { createSignal, createEffect, onMount, onCleanup } from "solid-js"
 import { createCubeScene, type CubeScene, type CubeRegion } from "@linen/viewer"
 
 /** A direction to look FROM, in the kernel's frame: X right, Y away at
  *  the Front view, Z up. */
 export type ViewDirection = readonly [number, number, number]
-
-/** Screen-space nudge: which way the flat arrows point. */
-export interface ViewNudge {
-  readonly x: -1 | 0 | 1
-  readonly y: -1 | 0 | 1
-}
-
-/** The four flat arrows outside the cube. */
-const NUDGES: readonly {
-  readonly side: "up" | "down" | "left" | "right"
-  readonly nudge: ViewNudge
-  readonly label: string
-}[] = [
-  { side: "up", nudge: { x: 0, y: -1 }, label: "Rotate up" },
-  { side: "down", nudge: { x: 0, y: 1 }, label: "Rotate down" },
-  { side: "left", nudge: { x: -1, y: 0 }, label: "Rotate left" },
-  { side: "right", nudge: { x: 1, y: 0 }, label: "Rotate right" },
-]
-
-/** The two curved arrows above the cube. */
-const ROLLS: readonly {
-  readonly steps: 1 | -1
-  readonly label: string
-  readonly side: "left" | "right"
-}[] = [
-  { steps: -1, label: "Rotate view anticlockwise", side: "left" },
-  { steps: 1, label: "Rotate view clockwise", side: "right" },
-]
-
-/**
- * A curved arrow, drawn rather than typed.
- *
- * SVG because the arc and its head must line up exactly and scale with
- * the button; a text character renders at whatever size and weight the
- * platform's font happens to choose.
- */
-function RollIcon(props: { readonly clockwise: boolean }) {
-  return (
-    <svg viewBox="0 0 32 20" aria-hidden="true" class="view-cube-roll-icon">
-      <g transform={props.clockwise ? "scale(-1 1) translate(-32 0)" : undefined}>
-        {/* A SHALLOW arc, not a near-closed loop: a full circle reads as
-            "reload", which is the wrong verb entirely. */}
-        <path
-          d="M 28 17 A 15 15 0 0 0 8.5 8"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-        />
-        {/* The head, on the arc's leading end, along the tangent. */}
-        <path d="M 3 4.5 L 12.5 6.5 L 7 13.5 Z" fill="currentColor" />
-      </g>
-    </svg>
-  )
-}
 
 interface Position {
   readonly x: number
@@ -119,12 +64,12 @@ const DRAG_THRESHOLD = 3
  *  to aim at or even make out. Seen in a full page rather than a tight
  *  crop, it read as a smudge in the corner. */
 const CUBE_SIZE = 118
-/** Room around the cube for the arrows. Mirrors --cube-margin.
+/** A little breathing room around the cube. Mirrors --cube-margin.
  *
- *  Tight to the cube on purpose: the arrows belong to it, and at the
- *  previous 30 against a 68 cube they floated in empty space, reading as
- *  four unrelated marks scattered round a small object. */
-const CUBE_MARGIN = 24
+ *  The arrows this once made space for are gone — the control is just the
+ *  cube now — so this is only the gap that keeps it off the very edge of
+ *  the viewport when parked in a corner. */
+const CUBE_MARGIN = 8
 const CONTROL_SIZE = CUBE_SIZE + CUBE_MARGIN * 2
 
 const readPosition = (): Position | null => {
@@ -164,10 +109,6 @@ const defaultPosition = (): Position => ({
 export interface ViewCubeProps {
   /** A face, edge or corner was clicked: look from this direction. */
   onPick?: (direction: ViewDirection) => void
-  /** A flat arrow was clicked: step the camera one notch. */
-  onNudge?: (nudge: ViewNudge) => void
-  /** A curved arrow was clicked: roll the picture. */
-  onRoll?: (steps: number) => void
   /** The camera's orientation, so the cube can mirror it. Radians. */
   azimuth?: number
   elevation?: number
@@ -315,38 +256,6 @@ export function ViewCube(props: ViewCubeProps) {
         onPointerLeave={onCubeLeave}
         onClick={onCubeClick}
       />
-
-      <For each={NUDGES}>
-        {(control) => (
-          <button
-            class="view-cube-nudge"
-            data-side={control.side}
-            title={control.label}
-            aria-label={control.label}
-            onClick={() => {
-              if (dragging()) return
-              props.onNudge?.(control.nudge)
-            }}
-          />
-        )}
-      </For>
-
-      <For each={ROLLS}>
-        {(control) => (
-          <button
-            class="view-cube-roll"
-            data-side={control.side}
-            title={control.label}
-            aria-label={control.label}
-            onClick={() => {
-              if (dragging()) return
-              props.onRoll?.(control.steps)
-            }}
-          >
-            <RollIcon clockwise={control.steps > 0} />
-          </button>
-        )}
-      </For>
     </div>
   )
 }

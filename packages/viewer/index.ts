@@ -209,10 +209,10 @@ export interface Camera {
   readonly target: Vector3
   readonly up: Vector3
   /** Orientation, in radians. Read-only: a control that mirrors the
-   *  camera reads these, but moves it through viewFrom/nudge/roll. */
+   *  camera reads these, but moves it through viewFrom/lookFrom/orbit. */
   readonly azimuth: number
   readonly elevation: number
-  /** Current roll, in radians. Named apart from the `roll()` method. */
+  /** Current roll, in radians. */
   readonly rollAngle: number
   readonly projection: Projection
 
@@ -234,25 +234,6 @@ export interface Camera {
    * like `viewFrom`.
    */
   lookFrom(direction: readonly [number, number, number], immediate?: boolean): void
-  /**
-   * Turns the camera by whole steps, animated — the view cube's corner
-   * arrows. Each step is 45 degrees, so eight of them make a revolution
-   * and every stop is a standard view.
-   *
-   * Distinct from `orbit`, which is the drag path: that one jumps and
-   * cancels any running animation, because a drag means the user has
-   * taken direct control.
-   */
-  nudge(stepsAzimuth: number, stepsElevation: number): void
-  /**
-   * Rotates the view about its own axis, in quarter turns. Positive is
-   * clockwise on screen.
-   *
-   * The view cube's circular corner arrows. Unlike `nudge` this does not
-   * move the camera — the same faces stay visible, only the orientation
-   * on screen changes — so it applies at once rather than animating.
-   */
-  roll(steps: number): void
   /**
    * Advances any in-flight view transition. Called once per frame by the
    * scene; returns true while still animating.
@@ -395,11 +376,20 @@ export interface HandleDrag {
 
 export { createBackend } from "./backend"
 export type { WebGpuBackend, WebGl2Backend } from "./backend"
+export {
+  checkViewportCapabilities, hasThreeDBackend, hasHtmlInCanvas,
+  CAPABILITY_MESSAGE,
+  type CapabilityReport, type CapabilityReason,
+} from "./capability"
 export { createScene } from "./scene"
 export { createCamera } from "./camera"
 export { createCubeScene, type CubeScene } from "./cube-scene"
 export {
-  buildCube, pickCube, CHAMFER,
+  createCubeFaceTexture, uploadCubeFaceTexture, disposeCubeFaceTexture,
+  type CubeFaceTexture,
+} from "./cube-face-texture"
+export {
+  buildCube, pickCube,
   type CubeRegion, type CubeRegionKind,
 } from "./cube"
 export { decodeMesh, readMeshHeader, faceOfTriangle, syntheticBox } from "./mesh"

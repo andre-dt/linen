@@ -12,14 +12,20 @@
 // would schedule a GPU upload — and the frame budget would go with it.
 // =====================================================================
 
-import { onMount, onCleanup, createSignal, Show, createEffect } from "solid-js"
+import {
+  onMount, onCleanup, createSignal, Show, createEffect, For,
+} from "solid-js"
 import {
   GestureDetector,
   type DragGesture, type HoverGesture, type ClickGesture,
 } from "./gestures"
-import { createBackend, createScene, PLANE_EXTENT } from "@linen/viewer"
+import {
+  createBackend, createScene, PLANE_EXTENT,
+  checkViewportCapabilities, CAPABILITY_MESSAGE,
+} from "@linen/viewer"
 import type {
   Backend, Scene, PlaneHit, DatumPlaneId, SketchFrame, SketchCurve, SketchPoint,
+  CapabilityReason,
 } from "@linen/viewer"
 
 /** How much of the viewport height the origin planes occupy on open. */
@@ -58,12 +64,28 @@ export function Viewport(props: ViewportProps) {
   let canvas!: HTMLCanvasElement
   const [failure, setFailure] = createSignal<string | null>(null)
   const [backend, setBackend] = createSignal<"webgpu" | "webgl2" | null>(null)
+  // The capabilities the viewport hard-requires and cannot fake: a 3D
+  // backend and the HTML-in-Canvas API the chrome is drawn with. Checked
+  // once up front. When something is missing this stays populated and the
+  // canvas is replaced by a message naming EACH missing piece — the rest
+  // of the app is unaffected, only the designer canvas is.
+  const [missing, setMissing] = createSignal<readonly CapabilityReason[]>([])
   // Held outside the reactive graph on purpose: the render loop reads it
   // every frame, and a signal would schedule DOM work sixty times a
   // second for state no DOM node displays.
   let scene: Scene | null = null
 
   onMount(async () => {
+    // The capability gate comes FIRST — before touching a real backend.
+    // If the browser is missing a requirement there is nothing to draw
+    // and no point allocating a context; the message stands in for the
+    // canvas and mounting stops here.
+    const capability = checkViewportCapabilities()
+    if (!capability.ok) {
+      setMissing(capability.missing)
+      return
+    }
+
     let device: Backend
     try {
       // WebGL2 explicitly, NOT the default preference.
@@ -239,6 +261,26 @@ export function Viewport(props: ViewportProps) {
 
   return (
     <Show
+      when={missing().length === 0}
+      fallback={
+        // The designer canvas cannot render here. The block sits centred
+        // in the area the canvas would have filled, but its TEXT is left
+        // aligned — a wall of centred prose is hard to read, and each
+        // reason is its own paragraph so a browser missing more than one
+        // capability learns about all of them at once.
+        <div class="viewport-unsupported">
+          <div class="viewport-unsupported-body">
+            <p class="viewport-unsupported-title">
+              The 3D designer can't run in this browser.
+            </p>
+            <For each={missing()}>
+              {(reason) => <p>{CAPABILITY_MESSAGE[reason]}</p>}
+            </For>
+          </div>
+        </div>
+      }
+    >
+    <Show
       when={!failure()}
       fallback={
         <div class="viewport-failure">
@@ -275,6 +317,7 @@ export function Viewport(props: ViewportProps) {
         </GestureDetector>
 
       </div>
+    </Show>
     </Show>
   )
 }

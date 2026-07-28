@@ -1,76 +1,94 @@
 // =====================================================================
 // packages/viewer/cube.ts — THE VIEW CUBE'S GEOMETRY.
 //
-// A chamfered cube: six face panels, twelve bevelled edge strips and
-// eight corner triangles, each a separate pickable region standing for
-// the direction you would look from.
+// Implemented strictly from packages/viewer/cube-spec.md. Read that first;
+// any change goes into the SPEC before it comes here.
 //
-// WHY NOT CSS
-// -----------
-// The first attempt built this with CSS 3D transforms, and it cannot
-// work. `transform-style: preserve-3d` composites by DOCUMENT ORDER, not
-// depth — verified directly: a quad at translateZ(-30px) paints over one
-// at +30px. Six faces can be hand-sorted, but twenty-six facets, several
-// of them nearly coplanar, cannot. Hit testing has the same problem: a
-// bevel's target would be a rectangle approximating a strip.
+// The cube is HOLLOW and ASSEMBLED, Onshape-style — NOT a solid with a
+// classified surface. It is a small set of detached parts floating in cube
+// space:
 //
-// With real geometry both fall out for free — the depth buffer sorts,
-// and picking is a ray cast against the same triangles that were drawn.
+//   - 6 face panels  — flat rounded-rectangles, one per cube face.
+//   - 8 corner circles — flat discs, one per cube corner.
 //
-// THE CHAMFER IS THE AFFORDANCE
-// -----------------------------
-// The bevels are not decoration. They are what makes an edge or a corner
-// a thing you can aim at: on a sharp cube those regions have zero area
-// and can only be faked with overlays. Cutting them gives every one of
-// the twenty-six directions a real facet with real pixels.
+// There are NO edges: no geometry, nothing to draw, nothing to click along
+// the cube's edges. The space between the parts is void. A pick ray that
+// misses every panel and disc simply passes through — so, facing the Front
+// panel, a click in an empty corner gap can hit the Back panel from behind.
+// That falls out for free: with no shell in the gaps, there is nothing to
+// occlude, and `pickCube` returns the NEAREST part the ray actually hits.
+//
+// This construction cannot produce the seam/corner artifacts the old
+// classified-solid did, because there are no shared or classified
+// boundaries — every part is its own clean mesh.
 // =====================================================================
 
 import type { Vector3 } from "@linen/cad/kernel"
 
-/**
- * How far in from each corner the chamfer cuts, as a fraction of the
- * half-edge.
- *
- * The chamfer IS the frame around each panel, so it sets how heavy the
- * cube looks. At 0.28 the bevel was thick enough that a face read as a
- * small tile floating on a fat surround rather than as a face with
- * rounded corners.
- */
-export const CHAMFER = 0.17
+// --- layout constants (cube-spec.md §3) -------------------------------
+// Display values in the cube's own unit space, tuned by eye against the
+// widget. Changing one is a SPEC edit first, then here.
 
-/**
- * How far the flat panel on each face extends before the rounded
- * surround begins, as a fraction of the half-edge.
- *
- * The flat region of a chamfered cube is a plain SQUARE, so a panel that
- * simply follows the geometry has square corners. Pulling it in to here
- * and rounding what is left is what gives the face its rounded-rectangle
- * shape and, where three faces meet, the circular opening at the corner.
- *
- * This is the half-width of the panel's STRAIGHT run; PANEL_RADIUS then
- * rounds what lies beyond it, so the panel actually reaches
- * PANEL_HALF + PANEL_RADIUS along its axes.
- *
- * The gap between the two matters. Set too close to the flat region's
- * own half-width (1 - CHAMFER) there is no room left for the corner arc
- * and the classification never fires — measured, the panel came out at a
- * corner/edge ratio of 1.413 against 1.414 for a perfect square, so the
- * rounding was doing nothing at all.
- *
- * These two were solved for rather than nudged: with the panel reaching
- * PANEL_HALF + PANEL_RADIUS on its axes and hypot(H, H) + R on its
- * diagonals, the pair below puts the ratio at about 1.15 — clearly
- * rounded, and still square enough to read as a face.
- */
-export const PANEL_HALF = 0.30
+/** Distance from the cube centre to each panel's plane. */
+export const HALF = 1.0
 
-/** The radius of the panel's rounded corner, in the same units. */
-export const PANEL_RADIUS = 0.55
+/** Half-width of a face panel's square (straight run before the arc). A
+ *  panel reaches PANEL_HALF + PANEL_CORNER_RADIUS along each axis; with
+ *  HALF = 1 that leaves a visible void gap between adjacent panels. */
+export const PANEL_HALF = 0.55
 
-/** Which kind of region a facet is. The camera treats all three alike —
- *  they are directions — but the renderer styles them differently and
- *  the labels only go on faces. */
-export type CubeRegionKind = "face" | "edge" | "corner"
+/** Radius the front plate's four corners are rounded by. */
+export const PANEL_CORNER_RADIUS = 0.16
+
+/** Half-width of the large BACK plate — nearly the full cube face, so its
+ *  rounded corners stop just short of the cube's corners (cube-spec.md
+ *  §2.1). This is the plain gray backdrop seen through the opposite face's
+ *  gaps. */
+export const BACK_PANEL_HALF = 0.84
+
+/** Rounding radius of the back plate's corners. */
+export const BACK_PANEL_CORNER_RADIUS = 0.16
+
+/** Depth gap between a face's front and back plates so the two coincident
+ *  rounded-rects do not z-fight. */
+export const PLATE_SEPARATION = 0.004
+
+// Corner disc placement, DERIVED from the panels so it stays correct if
+// the panel constants change (cube-spec.md §2.2 & §3). The disc sits at
+// the centroid of the three adjacent panels' nearest corner tips, so its
+// rim touches all three panels and it sits OUT at the cube corner, not in
+// the hollow interior.
+//
+// A panel's nearest corner tip toward a cube corner is at, on that panel's
+// plane, `PANEL_HALF + PANEL_CORNER_RADIUS/√2` on each in-plane axis and
+// `HALF` on the face axis. For the +X+Y+Z corner the three tips are
+// (HALF, c, c), (c, HALF, c), (c, c, HALF). Their centroid lies on the
+// body diagonal; its distance from the origin is CORNER_DISTANCE, and the
+// distance from it to a tip is CORNER_RADIUS.
+const CORNER_TIP = PANEL_HALF + PANEL_CORNER_RADIUS / Math.SQRT2
+/** Distance from the cube centre to a corner disc's centre, along the
+ *  body diagonal — the centroid of the three adjacent panel tips. */
+export const CORNER_DISTANCE = Math.hypot(
+  (HALF + 2 * CORNER_TIP) / 3,
+  (CORNER_TIP + HALF + CORNER_TIP) / 3,
+  (2 * CORNER_TIP + HALF) / 3,
+)
+/** Radius of a corner circle — reaches from the disc centroid to each of
+ *  the three panel tips, so the rim touches all three panels. */
+export const CORNER_RADIUS = (() => {
+  const centre = (HALF + 2 * CORNER_TIP) / 3
+  // Tip (HALF, CORNER_TIP, CORNER_TIP) minus centroid (centre, centre, centre).
+  return Math.hypot(HALF - centre, CORNER_TIP - centre, CORNER_TIP - centre)
+})()
+
+/** Segments per circle and per rounded-corner quarter-arc. */
+export const CIRCLE_SEGMENTS = 24
+
+/** The parts produced (cube-spec.md §2). "face" is a small labelled FRONT
+ *  plate; "back" is the large plain BACK plate of the same face; "corner"
+ *  is a corner circle. "edge" is retained in the type for compatibility
+ *  but never produced — there are no edge parts (cube-spec.md §2.3). */
+export type CubeRegionKind = "face" | "back" | "edge" | "corner"
 
 export interface CubeRegion {
   readonly id: string
@@ -80,11 +98,10 @@ export interface CubeRegion {
   readonly direction: Vector3
   /** Human-readable, for tooltips and assistive technology. */
   readonly label: string
-  /** Triangles, as flat vertex positions in cube space (edge length 2,
-   *  centred on the origin). Three vertices per triangle. */
+  /** Triangles, as flat vertex positions in cube space. Three vertices
+   *  per triangle. This is both what is drawn and what is picked. */
   readonly positions: Float32Array
-  /** Outward normal, shared by every triangle in the facet — these are
-   *  all planar. */
+  /** Outward normal, shared by every triangle in the part — planar. */
   readonly normal: Vector3
 }
 
@@ -110,313 +127,223 @@ const normalise = (v: Vector3): Vector3 => {
   return length < 1e-9 ? v : [v[0] / length, v[1] / length, v[2] / length]
 }
 
-/**
- * The eight corner points of the chamfered solid, as a lookup.
- *
- * Cutting a corner replaces the single sharp vertex (±1, ±1, ±1) with
- * three points, one pulled back along each axis. `cornerVertex` returns
- * the one pulled back along `axis`.
- */
-const cornerVertex = (
-  sx: number, sy: number, sz: number, axis: 0 | 1 | 2,
-): Vector3 => {
-  const inset = 1 - CHAMFER
-  // Every component is inset EXCEPT the one this vertex keeps at full
-  // extent — that is what makes three distinct points per corner.
-  return [
-    axis === 0 ? sx : sx * inset,
-    axis === 1 ? sy : sy * inset,
-    axis === 2 ? sz : sz * inset,
-  ]
-}
-
-/** Two triangles covering a quad, wound counter-clockwise seen from
- *  outside. */
-const quad = (a: Vector3, b: Vector3, c: Vector3, d: Vector3): number[] => [
-  ...a, ...b, ...c,
-  ...a, ...c, ...d,
+const cross = (a: Vector3, b: Vector3): Vector3 => [
+  a[1] * b[2] - a[2] * b[1],
+  a[2] * b[0] - a[0] * b[2],
+  a[0] * b[1] - a[1] * b[0],
 ]
 
 /**
- * Builds every facet of the chamfered cube.
+ * A flat mesh living in a plane, built from 2D points mapped through an
+ * origin plus two in-plane basis vectors.
  *
- * Generated rather than listed: twenty-six facets written out by hand is
- * twenty-six chances for a vertex to disagree with the direction it
- * claims to represent, and the two must match exactly or clicking a
- * region moves the camera somewhere else.
+ * `contour` is the outline as (u, v) pairs; it is triangulated as a fan
+ * from its centroid, which is valid because every outline here (a rounded
+ * rectangle, a circle) is convex. Returns flat xyz triangle positions.
+ */
+const fillPlanarContour = (
+  origin: Vector3,
+  axisU: Vector3,
+  axisV: Vector3,
+  contour: readonly (readonly [number, number])[],
+  flip = false,
+): number[] => {
+  const at = (u: number, v: number): Vector3 => [
+    origin[0] + axisU[0] * u + axisV[0] * v,
+    origin[1] + axisU[1] * u + axisV[1] * v,
+    origin[2] + axisU[2] * u + axisV[2] * v,
+  ]
+  // Centroid of the outline, the fan's shared apex.
+  let cu = 0
+  let cv = 0
+  for (const [u, v] of contour) { cu += u; cv += v }
+  cu /= contour.length
+  cv /= contour.length
+  const centre = at(cu, cv)
+
+  const out: number[] = []
+  for (let i = 0; i < contour.length; i += 1) {
+    const [u0, v0] = contour[i]!
+    const [u1, v1] = contour[(i + 1) % contour.length]!
+    const p0 = at(u0, v0)
+    const p1 = at(u1, v1)
+    // `flip` reverses the winding, so a plate can be made to face the
+    // opposite way (the inward-facing back plate) from the same contour.
+    if (flip) {
+      out.push(
+        centre[0], centre[1], centre[2],
+        p1[0], p1[1], p1[2],
+        p0[0], p0[1], p0[2],
+      )
+    } else {
+      out.push(
+        centre[0], centre[1], centre[2],
+        p0[0], p0[1], p0[2],
+        p1[0], p1[1], p1[2],
+      )
+    }
+  }
+  return out
+}
+
+/** The (u, v) outline of a rounded rectangle centred at the origin, half
+ *  width `half` on both axes, corners rounded by `radius`. The straight
+ *  run reaches `half`; each corner is a quarter-arc of `radius` OUTSIDE
+ *  it, so the panel spans `half + radius`. */
+const roundedRectContour = (
+  half: number, radius: number, segments: number,
+): [number, number][] => {
+  const points: [number, number][] = []
+  // Four corners, each a quarter circle. Centres sit at (±half, ±half);
+  // the arc sweeps the outer quadrant so the seams land on the straight
+  // edges. Order: +u+v, -u+v, -u-v, +u-v — counter-clockwise.
+  const corners: [number, number, number][] = [
+    [half, half, 0],       // start angle 0     -> 90
+    [-half, half, Math.PI / 2],
+    [-half, -half, Math.PI],
+    [half, -half, (3 * Math.PI) / 2],
+  ]
+  for (const [cx, cy, start] of corners) {
+    for (let s = 0; s <= segments; s += 1) {
+      const angle = start + (s / segments) * (Math.PI / 2)
+      points.push([cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius])
+    }
+  }
+  return points
+}
+
+/** The (u, v) outline of a circle of `radius`, `segments` around. */
+const circleContour = (
+  radius: number, segments: number,
+): [number, number][] => {
+  const points: [number, number][] = []
+  for (let s = 0; s < segments; s += 1) {
+    const angle = (s / segments) * Math.PI * 2
+    points.push([Math.cos(angle) * radius, Math.sin(angle) * radius])
+  }
+  return points
+}
+
+/**
+ * Builds the hollow, assembled view cube: 6 face panels + 8 corner
+ * circles, each a detached planar mesh. No shell, no edges.
  */
 export const buildCube = (): readonly CubeRegion[] => {
   const regions: CubeRegion[] = []
-  const inset = 1 - CHAMFER
 
-  // ONE SOLID, classified — not three constructions stitched together.
-  //
-  // Faces, bevels and corners were each built to their own scheme and
-  // never made to share boundaries: measured, the facets covered 19.4 of
-  // an expected ~23 surface units, so a sixth of the cube was simply
-  // missing. On screen that was holes at every corner and a ragged
-  // silhouette, and patching the three against each other failed
-  // repeatedly because there was no single source of truth for where a
-  // boundary lay.
-  //
-  // Here the whole solid is generated as one subdivided surface, and a
-  // vertex's REGION is then read off from where it sits. Two facets can
-  // no longer disagree about a shared edge, because neither owns it:
-  // they are cut from the same cloth.
-  //
-  // The shape is a cube whose surface is pushed out to a rounded form:
-  // each point is the nearest point of the inner box [-half, half]^3
-  // plus CHAMFER along the outward direction. Flat where the box is
-  // flat, cylindrical along its edges, spherical at its corners.
-  // The inner box the rounded surface is offset from. ONE chamfer in
-  // from the cube's half-edge of 1 — not from `inset`, which is already
-  // 1 - CHAMFER. Subtracting it twice put the whole solid at 0.72 where
-  // its faces belong at 1.0, shrinking the surface to 10.3 units against
-  // the ~23 a cube of this size has.
-  const half = 1 - CHAMFER
-
-  /** The rounded solid's surface point in a given direction. */
-  const surfaceAt = (direction: Vector3): Vector3 => {
-    const length = Math.hypot(direction[0], direction[1], direction[2])
-    const unit: Vector3 = [
-      direction[0] / length, direction[1] / length, direction[2] / length,
-    ]
-    // March out until the ray leaves the rounded box. The nearest inner
-    // box point along the ray, plus the chamfer radius, is exactly the
-    // boundary — the same construction the face rim used, in 3D.
-    let low = 0
-    let high = 4
-    for (let iteration = 0; iteration < 40; iteration += 1) {
-      const middle = (low + high) / 2
-      const point: Vector3 = [
-        unit[0] * middle, unit[1] * middle, unit[2] * middle,
-      ]
-      const clamped: Vector3 = [
-        Math.max(-half, Math.min(half, point[0])),
-        Math.max(-half, Math.min(half, point[1])),
-        Math.max(-half, Math.min(half, point[2])),
-      ]
-      const distance = Math.hypot(
-        point[0] - clamped[0], point[1] - clamped[1], point[2] - clamped[2],
-      )
-      if (distance > CHAMFER) high = middle
-      else low = middle
-    }
-    return [unit[0] * low, unit[1] * low, unit[2] * low]
-  }
-
-  /**
-   * Which region a surface point belongs to.
-   *
-   * Read from how many axes the point is saturated on — that is, how
-   * many of its coordinates have run past the inner box. None or one
-   * means a flat face, two an edge fillet, three a corner. The same
-   * count that defines the geometry defines the classification, which
-   * is what keeps the two from drifting.
-   */
-  const classify = (point: Vector3): {
-    kind: CubeRegionKind
-    direction: Vector3
-  } => {
-    const saturated = [0, 1, 2].map((axis) =>
-      Math.abs(point[axis]!) > half + 1e-6 ? Math.sign(point[axis]!) : 0,
-    ) as unknown as Vector3
-
-    const count = saturated.filter((value) => value !== 0).length
-    if (count >= 3) return { kind: "corner", direction: normalise(saturated) }
-    if (count === 2) return { kind: "edge", direction: normalise(saturated) }
-
-    // The dominant axis names the face this point sits on.
-    let dominant = 0
-    for (const axis of [1, 2] as const) {
-      if (Math.abs(point[axis]) > Math.abs(point[dominant]!)) dominant = axis
-    }
-
-    // A ROUNDED panel, inset within the flat region.
-    //
-    // The flat part of a chamfered cube is a plain square, so classifying
-    // by curvature alone gives square-cornered panels — geometrically
-    // honest, but not the shape a view cube has. The panel is therefore
-    // pulled in from the square's corners: a point whose two in-plane
-    // coordinates both run past PANEL_HALF belongs to the surround, not
-    // to the panel.
-    //
-    // The surround at the panel's rounded CORNER goes to the CORNER
-    // region — one single wedge — not to whichever bevel edge is nearer.
-    //
-    // Splitting it between the two adjacent edges was the artifact: the
-    // panel corner sits on the diagonal where the two in-plane coordinates
-    // are equal, which is exactly where a nearest-edge tie-break flips. So
-    // the arc was cut by a seam between two separate edge batches right at
-    // the corner — a T-junction that no amount of tessellation removes,
-    // because the two sides are genuinely different regions. The corner
-    // wedge owns the whole arc with no seam through it, so the boundary is
-    // a clean `face`↔`corner` transition the adaptive split can resolve.
-    const inPlane = [0, 1, 2].filter((axis) => axis !== dominant) as [number, number]
-    const first = Math.abs(point[inPlane[0]]!)
-    const second = Math.abs(point[inPlane[1]]!)
-    if (first > PANEL_HALF && second > PANEL_HALF) {
-      // Beyond the panel's rounded corner? Compare against the corner
-      // arc rather than the square, so the boundary is an arc and not a
-      // notch.
-      const overshootFirst = first - PANEL_HALF
-      const overshootSecond = second - PANEL_HALF
-      if (Math.hypot(overshootFirst, overshootSecond) > PANEL_RADIUS) {
-        return {
-          kind: "corner",
-          direction: normalise([
-            Math.sign(point[0]),
-            Math.sign(point[1]),
-            Math.sign(point[2]),
-          ]),
-        }
-      }
-    }
-    const direction: Vector3 = [
-      dominant === 0 ? Math.sign(point[0]) : 0,
-      dominant === 1 ? Math.sign(point[1]) : 0,
-      dominant === 2 ? Math.sign(point[2]) : 0,
-    ]
-    return { kind: "face", direction }
-  }
-
-  // Tessellate PER CUBE FACE, not from a sphere of directions.
-  //
-  // A spherical grid seemed the natural way to sweep every direction,
-  // and it has two faults that only show up under measurement. It
-  // collapses at the poles, wasting thousands of zero-area triangles
-  // there; and the slivers it leaves are numerically unpickable — a ray
-  // straight down the axis hit `det` = 3.5e-5 with `u` landing exactly
-  // on 1.0, so the Bottom face could not be selected at all.
-  //
-  // Projecting a uniform grid outward from each of the cube's six sides
-  // has neither problem: the cells stay well-shaped everywhere, and the
-  // six patches share their boundary vertices exactly because each edge
-  // is generated from the same coordinates on both sides.
-  // The base grid no longer has to be dense to hide the panel boundary:
-  // `emit` splits boundary triangles adaptively, so the arcs stay clean
-  // at a far coarser tessellation than the 161 that brute force needed.
-  // This just has to sample the rounded surface finely enough that the
-  // bevels and corners read as curved between boundaries.
-  //
-  // ODD, deliberately. With an even count a cell boundary falls exactly
-  // on each face's centre line, and therefore exactly on four of the
-  // eight corner diagonals — a ray straight down such a diagonal threads
-  // between triangles and misses the disc entirely, so two corners could
-  // not be picked at all. An odd count puts cell CENTRES on those lines
-  // instead.
-  const GRID = 41
-  const buckets = new Map<
-    string,
-    { kind: CubeRegionKind; direction: Vector3; positions: number[] }
-  >()
-
-  /** The region key a surface point resolves to, for boundary testing. */
-  const keyAt = (point: Vector3): string => {
-    const { kind, direction } = classify(point)
-    return `${kind}:${direction.map((v) => v.toFixed(3)).join(",")}`
-  }
-
-  // Adaptively split a triangle that STRADDLES a region boundary before
-  // committing it, so the panel's rounded corners resolve as a clean arc
-  // instead of the cell-edge staircase a per-triangle classification
-  // leaves. A triangle whose three corners all classify alike is interior
-  // to one region and emitted whole; one whose corners disagree sits on a
-  // boundary, so it is cut at its edge midpoints into four and each part
-  // retested. Only boundary triangles pay for this — the flat interior of
-  // every panel stays two triangles — so it sharpens the arcs without the
-  // global cost of raising GRID. Depth is bounded: past a few levels the
-  // remaining zigzag is sub-pixel at the control's size.
-  const SPLIT_DEPTH = 4
-  const emit = (a: Vector3, b: Vector3, c: Vector3, depth = 0): void => {
-    if (depth < SPLIT_DEPTH) {
-      const ka = keyAt(a)
-      const kb = keyAt(b)
-      const kc = keyAt(c)
-      if (ka !== kb || kb !== kc) {
-        const mid = (p: Vector3, q: Vector3): Vector3 =>
-          surfaceAt([p[0] + q[0], p[1] + q[1], p[2] + q[2]])
-        const ab = mid(a, b)
-        const bc = mid(b, c)
-        const ca = mid(c, a)
-        emit(a, ab, ca, depth + 1)
-        emit(ab, b, bc, depth + 1)
-        emit(ca, bc, c, depth + 1)
-        emit(ab, bc, ca, depth + 1)
-        return
-      }
-    }
-
-    const centre: Vector3 = [
-      (a[0] + b[0] + c[0]) / 3,
-      (a[1] + b[1] + c[1]) / 3,
-      (a[2] + b[2] + c[2]) / 3,
-    ]
-    const { kind, direction } = classify(centre)
-    const key = `${kind}:${direction.map((v) => v.toFixed(3)).join(",")}`
-    let bucket = buckets.get(key)
-    if (!bucket) {
-      bucket = { kind, direction, positions: [] }
-      buckets.set(key, bucket)
-    }
-
-    // Winding DERIVED against the surface point, which on a solid
-    // centred at the origin IS the outward direction. Assuming an order
-    // instead left whole patches facing inward.
-    const e1: Vector3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]]
-    const e2: Vector3 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]]
-    const cross: Vector3 = [
-      e1[1] * e2[2] - e1[2] * e2[1],
-      e1[2] * e2[0] - e1[0] * e2[2],
-      e1[0] * e2[1] - e1[1] * e2[0],
-    ]
-    const facing =
-      cross[0] * centre[0] + cross[1] * centre[1] + cross[2] * centre[2]
-    if (Math.abs(facing) < 1e-12) return
-    if (facing > 0) bucket.positions.push(...a, ...b, ...c)
-    else bucket.positions.push(...a, ...c, ...b)
-  }
+  // --- 6 face panels (cube-spec.md §2.1) ------------------------------
+  // One per signed axis. The panel lies in the face plane at distance
+  // HALF, a rounded square in the two in-plane axes.
+  /** A unit vector with `value` on `axis`, zero elsewhere. */
+  const onAxis = (axis: 0 | 1 | 2, value: number): Vector3 => [
+    axis === 0 ? value : 0,
+    axis === 1 ? value : 0,
+    axis === 2 ? value : 0,
+  ]
 
   for (const axis of [0, 1, 2] as const) {
     for (const sign of [1, -1] as const) {
+      const normal = onAxis(axis, sign)
       const u = ((axis + 1) % 3) as 0 | 1 | 2
       const v = ((axis + 2) % 3) as 0 | 1 | 2
+      // The in-plane basis handedness MUST follow the outward normal, or
+      // the winding (axisU x axisV) points outward on the +axis faces and
+      // INWARD on the -axis faces — which made three faces show the wrong
+      // plate under back-face culling, breaking the effect on half the
+      // cube. Flipping axisV by `sign` keeps axisU x axisV = outward
+      // normal on all six faces, so every face behaves identically.
+      const axisU = onAxis(u, 1)
+      const axisV = onAxis(v, sign)
+      const direction = normalise(normal)
+      const label = labelFor(
+        axis === 0 ? sign : 0,
+        axis === 1 ? sign : 0,
+        axis === 2 ? sign : 0,
+      )
 
-      /** A direction pointing at (su, sv) on this side of the unit box. */
-      const towards = (su: number, sv: number): Vector3 => {
-        const component = (which: 0 | 1 | 2): number =>
-          which === axis ? sign : which === u ? su : sv
-        return [component(0), component(1), component(2)]
-      }
+      // FRONT plate: the small labelled rounded-rect, facing OUT. Sits a
+      // hair proud of the face plane so it wins over the back plate.
+      const frontOrigin: Vector3 = [
+        normal[0] * (HALF + PLATE_SEPARATION),
+        normal[1] * (HALF + PLATE_SEPARATION),
+        normal[2] * (HALF + PLATE_SEPARATION),
+      ]
+      const frontPositions = fillPlanarContour(
+        frontOrigin, axisU, axisV,
+        roundedRectContour(PANEL_HALF, PANEL_CORNER_RADIUS, CIRCLE_SEGMENTS),
+      )
+      regions.push({
+        id: `face:${normal.join(",")}`,
+        kind: "face",
+        direction,
+        label,
+        positions: new Float32Array(frontPositions),
+        normal: direction,
+      })
 
-      const row = (index: number): number => (index / GRID) * 2 - 1
-      for (let i = 0; i < GRID; i += 1) {
-        for (let j = 0; j < GRID; j += 1) {
-          const a = surfaceAt(towards(row(i), row(j)))
-          const b = surfaceAt(towards(row(i + 1), row(j)))
-          const c = surfaceAt(towards(row(i + 1), row(j + 1)))
-          const d = surfaceAt(towards(row(i), row(j + 1)))
-          emit(a, b, c)
-          emit(a, c, d)
-        }
-      }
+      // BACK plate: the large plain rounded-rect, nearly the full cube
+      // face, facing IN (its winding is flipped). Sits a hair below the
+      // face plane. This is the gray backdrop seen through the opposite
+      // face's gaps.
+      const backOrigin: Vector3 = [
+        normal[0] * (HALF - PLATE_SEPARATION),
+        normal[1] * (HALF - PLATE_SEPARATION),
+        normal[2] * (HALF - PLATE_SEPARATION),
+      ]
+      const backPositions = fillPlanarContour(
+        backOrigin, axisU, axisV,
+        roundedRectContour(
+          BACK_PANEL_HALF, BACK_PANEL_CORNER_RADIUS, CIRCLE_SEGMENTS,
+        ),
+        true,
+      )
+      regions.push({
+        id: `back:${normal.join(",")}`,
+        kind: "back",
+        direction,
+        label,
+        positions: new Float32Array(backPositions),
+        // Faces inward — the negated normal — so lighting/culling see it
+        // as the inside surface.
+        normal: [-direction[0], -direction[1], -direction[2]],
+      })
     }
   }
 
-  for (const [key, bucket] of buckets) {
-    const [x, y, z] = bucket.direction
-    regions.push({
-      id: key,
-      kind: bucket.kind,
-      direction: bucket.direction,
-      label: labelFor(
-        Math.abs(x) > 0.01 ? Math.sign(x) : 0,
-        Math.abs(y) > 0.01 ? Math.sign(y) : 0,
-        Math.abs(z) > 0.01 ? Math.sign(z) : 0,
-      ),
-      positions: new Float32Array(bucket.positions),
-      normal: bucket.direction,
-    })
+  // --- 8 corner circles (cube-spec.md §2.2) ---------------------------
+  // A flat disc perpendicular to the body diagonal, centred on the
+  // diagonal at CORNER_DISTANCE, sized to reach the three adjacent
+  // panels. Its in-plane basis is any two vectors spanning the plane
+  // whose normal is the diagonal.
+  for (const sx of [1, -1] as const) {
+    for (const sy of [1, -1] as const) {
+      for (const sz of [1, -1] as const) {
+        const diagonal = normalise([sx, sy, sz])
+        // A stable in-plane basis: cross the diagonal with whichever world
+        // axis it is least parallel to, then complete the frame.
+        const reference: Vector3 =
+          Math.abs(diagonal[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0]
+        const axisU = normalise(cross(diagonal, reference))
+        const axisV = cross(diagonal, axisU)
+        const origin: Vector3 = [
+          diagonal[0] * CORNER_DISTANCE,
+          diagonal[1] * CORNER_DISTANCE,
+          diagonal[2] * CORNER_DISTANCE,
+        ]
+        const positions = fillPlanarContour(
+          origin, axisU, axisV,
+          circleContour(CORNER_RADIUS, CIRCLE_SEGMENTS),
+        )
+        regions.push({
+          id: `corner:${sx},${sy},${sz}`,
+          kind: "corner",
+          direction: diagonal,
+          label: labelFor(sx, sy, sz),
+          positions: new Float32Array(positions),
+          normal: diagonal,
+        })
+      }
+    }
   }
 
   return regions
@@ -426,7 +353,7 @@ export const buildCube = (): readonly CubeRegion[] => {
  * Ray/triangle intersection, Möller–Trumbore.
  *
  * Returns the distance along the ray, or null when it misses. Shared by
- * every region, so picking is one loop over the same triangles that were
+ * every part, so picking is one loop over the same triangles that were
  * drawn — the thing you click and the thing you see cannot disagree.
  */
 const intersectTriangle = (
@@ -465,12 +392,11 @@ const intersectTriangle = (
 }
 
 /**
- * The nearest region a ray hits, or null.
+ * The nearest part a ray hits, or null.
  *
- * Nearest rather than first: the ray passes through the far side of the
- * cube too, and returning whichever facet happened to be enumerated
- * first would sometimes select the region behind the one under the
- * cursor.
+ * Nearest rather than first: the ray passes through the void gaps and can
+ * reach a panel on the far side, so the closest hit along the ray is the
+ * one under the cursor (cube-spec.md §4).
  */
 export const pickCube = (
   regions: readonly CubeRegion[],

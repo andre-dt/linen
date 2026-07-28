@@ -173,6 +173,27 @@ export function GestureDetector(props: GestureDetectorProps) {
   let lastY = 0
   let travelled = 0
 
+  // ALT-CONSTRAINED ORBIT. Holding Alt as an orbit begins locks it to a
+  // single axis: the dominant direction of the first bit of travel picks
+  // azimuth (a mostly-horizontal start) or elevation (a mostly-vertical
+  // one), and the other axis is suppressed for the rest of the drag.
+  // Zoom is a separate gesture, so it stays free while the lock holds.
+  //
+  // `armed` is Alt's state sampled at the DRAG START (the axis is chosen
+  // at the start, per the interaction design — pressing Alt mid-drag does
+  // not arm it). `axisLock` is null until enough travel has accumulated
+  // to name the axis with confidence.
+  let lockArmed = false
+  let axisLock: "azimuth" | "elevation" | null = null
+  // Travel accumulated while still deciding which axis to lock.
+  let lockPendingX = 0
+  let lockPendingY = 0
+
+  /** How much drag (CSS px, summed on both axes) to see before committing
+   *  to an axis — enough that a near-diagonal flick does not lock the
+   *  wrong way on its first pixel. */
+  const LOCK_DECIDE_THRESHOLD = 6
+
   const localPoint = (event: PointerEvent): readonly [number, number] => {
     const target = event.currentTarget as HTMLElement | null
     if (!target) return [event.clientX, event.clientY]
@@ -189,6 +210,13 @@ export function GestureDetector(props: GestureDetectorProps) {
       lastX = event.clientX
       lastY = event.clientY
       travelled = 0
+
+      // Arm the axis lock only for an orbit begun with Alt down. Reset
+      // every gesture so a previous lock never leaks into the next drag.
+      lockArmed = kind === "orbit" && event.altKey
+      axisLock = null
+      lockPendingX = 0
+      lockPendingY = 0
 
       // Only a camera gesture captures. Capturing on select too would
       // swallow the pointerup that a click needs to be recognised
@@ -218,7 +246,38 @@ export function GestureDetector(props: GestureDetectorProps) {
       // rejected as a click, but report nothing.
       if (active === "select") return
 
-      props.onDrag?.({ kind: active, deltaX, deltaY })
+      // Alt-constrained orbit: decide the axis once, then suppress the
+      // other. Only ever engages for an orbit armed at its start.
+      let reportX = deltaX
+      let reportY = deltaY
+      if (lockArmed && active === "orbit") {
+        if (!axisLock) {
+          // Still deciding: pool the travel until it is unambiguous, and
+          // report nothing yet so the pre-lock jitter does not move the
+          // camera off the chosen line.
+          lockPendingX += deltaX
+          lockPendingY += deltaY
+          if (
+            Math.abs(lockPendingX) + Math.abs(lockPendingY) <
+            LOCK_DECIDE_THRESHOLD
+          ) {
+            return
+          }
+          axisLock =
+            Math.abs(lockPendingX) >= Math.abs(lockPendingY)
+              ? "azimuth"
+              : "elevation"
+          // Fold the pooled travel into this first locked report, so the
+          // camera picks up exactly where the finger already is.
+          reportX = lockPendingX
+          reportY = lockPendingY
+        }
+        // Suppress the off-axis component for the whole drag.
+        if (axisLock === "azimuth") reportY = 0
+        else reportX = 0
+      }
+
+      props.onDrag?.({ kind: active, deltaX: reportX, deltaY: reportY })
     },
 
     onPointerUp(event) {

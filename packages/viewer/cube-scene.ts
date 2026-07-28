@@ -18,38 +18,31 @@
 // redraws with a single uniform change per frame.
 // =====================================================================
 
-import { buildCube, pickCube, CHAMFER, type CubeRegion, type CubeRegionKind } from "./cube"
-import { createTextTexture, type TextTexture } from "./text"
+import {
+  buildCube, pickCube,
+  PANEL_HALF, PANEL_CORNER_RADIUS, CORNER_DISTANCE,
+  type CubeRegion,
+} from "./cube"
+import {
+  createCubeFaceTexture, uploadCubeFaceTexture, disposeCubeFaceTexture,
+  type CubeFaceTexture,
+} from "./cube-face-texture"
 import { identity, matrixMultiply, orthographic, lookAt, invert, type Matrix } from "./math"
 import type { Vector3 } from "@linen/cad/kernel"
 
 /** Half-extent of the orthographic box the cube is drawn into.
  *
- *  Sized to the CHAMFERED silhouette, not the sharp one. A sharp cube's
- *  corners reach sqrt(3) ~ 1.73, but the chamfer cuts them back, so
- *  reserving the full 1.73 left the cube floating in a third of its own
- *  canvas. 1.48 is that radius plus a hair, measured corner-on where the
- *  silhouette is widest. */
-const VIEW_EXTENT = 1.48
+ *  Sized to the assembled cube's silhouette: the widest parts are the
+ *  corner discs, whose centres sit at CORNER_DISTANCE along a body
+ *  diagonal, plus their own radius. A little headroom past that keeps the
+ *  control off the canvas edge. */
+const VIEW_EXTENT = CORNER_DISTANCE + 0.35
 
-/** How much of a face's width the label spans; the rest is margin.
- *
- *  The type size passed to createTextTexture sets the BITMAP's
- *  resolution, not how large the text lands — the quad stretches
- *  whatever it is given across the whole facet. Shrinking the text means
- *  shrinking the patch of UV space sampled from, which is this.
- *
- *  Note the direction: a SMALLER label needs a LARGER divisor, because
- *  the face's edge then maps beyond uv 1 and samples the texture's blank
- *  margin. Getting that backwards made the text grow on two attempts to
- *  shrink it. */
-const LABEL_COVERAGE = 0.30
-
-/** How far the face panels are pushed toward the viewer, in depth-buffer
- *  units, so they cover the shell's seams rather than z-fighting them.
- *  Large enough to win everywhere on a 16-bit depth buffer, small enough
- *  not to poke through the bevels at a grazing angle. */
-const FACE_LIFT = 24
+/** The half-extent, in cube units, that a panel's label texture spans
+ *  (cube-spec.md §5). Set to the panel's FULL extent so the whole word
+ *  fits inside the panel; the DOM element's own CSS controls how large the
+ *  glyphs sit within that texture. */
+const LABEL_HALF_SPAN = PANEL_HALF + PANEL_CORNER_RADIUS
 
 const VERTEX_SHADER = `#version 300 es
 in vec3 position;
@@ -126,31 +119,26 @@ export interface CubeScene {
 const BODY: Vector3 = [0.185, 0.240, 0.370]
 
 /**
- * Colour per region kind — the cube built up in three passes.
+ * Colour per part (cube-spec.md §5).
  *
- *   1. the solid, everywhere in BODY
- *   2. the six face panels, stamped darker
- *   3. the eight corner discs, stamped lighter
- *
- * The bevels keep BODY, so they read as the material the panels and
- * discs are set into rather than as a third thing.
+ * Panels are one uniform BODY tone; the DOM label alone distinguishes a
+ * face. The corner discs are a touch lighter so the eight corner targets
+ * read as their own controls. No tint STEPS across a single surface exist
+ * anymore — every part is its own detached mesh — so there are no seams to
+ * show.
  */
-const TINT: Record<CubeRegionKind, Vector3> = {
-  // Darker than the body, keyed to the HUD panel material: the panel is
-  // the recess, the bevel around it the surface it is cut into.
-  face: [0.100, 0.138, 0.232],
-  edge: BODY,
-  // Lighter than the bevels, so the eight corner targets read as the
-  // distinct controls they are. With flat shading these tiers are the
-  // only thing giving the cube its form, so the step has to be clear.
-  corner: [0.290, 0.360, 0.520],
-}
+const FACE_COLOR: Vector3 = BODY
+const CORNER_COLOR: Vector3 = [0.290, 0.360, 0.520]
+// The large plain BACK plate: grayer/darker than the front, so the far
+// side reads as a backdrop rather than another front panel (cube-spec.md
+// §5).
+const BACK_COLOR: Vector3 = [0.145, 0.180, 0.265]
 
 interface Batch {
   readonly region: CubeRegion
   readonly offset: number
   readonly count: number
-  readonly label: TextTexture | null
+  readonly label: CubeFaceTexture | null
 }
 
 export const createCubeScene = (canvas: HTMLCanvasElement): CubeScene => {
@@ -162,16 +150,18 @@ export const createCubeScene = (canvas: HTMLCanvasElement): CubeScene => {
   })
   if (!gl) throw new Error("the view cube needs WebGL2")
 
+  // Opt this canvas into HTML-in-Canvas: its child elements (the face
+  // labels created below) are laid out and become readable by
+  // `texElementImage2D`. Set imperatively because the canvas is created
+  // by the host widget, not here — see cube-face-texture.ts.
+  canvas.setAttribute("layoutsubtree", "")
+
   const program = buildProgram(gl)
   const regions = buildCube()
 
   // --- geometry, uploaded once ------------------------------------------
-  // One buffer for the whole cube, drawn as 26 ranges. Twenty-six small
-  // buffers would be twenty-six binds per frame for a shape that never
-  // changes.
-  // No normals: the shading is flat, so nothing downstream asks which
-  // way a facet points. The region's normal is still used below to
-  // derive each face's UVs, just never uploaded.
+  // One position/uv buffer for all parts, drawn as one range per part.
+  // The parts never change, so this is uploaded once.
   const positions: number[] = []
   const uvs: number[] = []
   const batches: Batch[] = []
@@ -180,12 +170,11 @@ export const createCubeScene = (canvas: HTMLCanvasElement): CubeScene => {
     const offset = positions.length / 3
     const count = region.positions.length / 3
 
-    // Built once per face and used twice: its aspect scales the UVs
-    // below, and the batch draws with it. Creating it in both places
-    // would upload two textures and leak one.
+    // Only face panels carry a DOM label. The corner discs have none, so
+    // they need no texture and no meaningful UVs.
     const labelTexture =
       region.kind === "face"
-        ? createTextTexture(gl, region.label, { fontSize: 15, scale: 5 })
+        ? createCubeFaceTexture(gl, canvas, region.label)
         : null
 
     for (let index = 0; index < region.positions.length; index += 3) {
@@ -196,67 +185,38 @@ export const createCubeScene = (canvas: HTMLCanvasElement): CubeScene => {
       )
     }
 
-    // Only faces carry text, so only faces need UVs.
-    //
-    // DERIVED per face, not a fixed list. cube.ts winds the positive and
-    // negative faces in opposite orders (that is what keeps every normal
-    // pointing outward), so one shared UV list had three faces reading
-    // correctly and three mirrored or upside-down — Top and Back most
-    // visibly. Projecting each vertex onto the face's own screen axes at
-    // the pose where it faces the camera gives the right mapping for all
-    // six without a table of special cases.
     if (region.kind === "face") {
-      const forward = region.normal
-      // Screen up for this face: world up, except on the horizontal
-      // faces where world up is parallel to the normal and says nothing
-      // — those take the Y axis instead, which is what puts Top's label
-      // the same way round as the Front view sees it.
-      // On the horizontal faces world up is parallel to the normal and
-      // says nothing, so the label's orientation has to be chosen. Both
-      // read with their up toward +Y — the direction away from a viewer
-      // standing at Front — which is the convention every view cube
-      // uses: you tip the model forward from Front and Top's text is
-      // already the right way up.
-      //
-      // The sign here was [0, -forward[2], 0] at one point. That made
-      // the isometric pose look right by coincidence and left Top
-      // upside-down from every other angle; the value below comes from
-      // computing where the label's up actually lands, not from
-      // matching one screenshot.
-      const reference: Vector3 =
-        Math.abs(forward[2]) > 0.99 ? [0, forward[2], 0] : [0, 0, 1]
+      // The panel is a flat rounded square in a known face plane. Map each
+      // vertex onto that plane's two in-plane axes (u, v) and into label
+      // space [0, 1] over ±LABEL_HALF_SPAN. The label's up is chosen so
+      // every face reads upright the way a view cube expects: on the
+      // vertical faces the world Z axis is up; on the horizontal Top and
+      // Bottom, where Z is the normal, the world Y axis stands in.
+      const normal = region.normal
+      const upWorld: Vector3 =
+        Math.abs(normal[2]) > 0.5 ? [0, 1, 0] : [0, 0, 1]
+      // right = up x normal, so (right, up) is a proper in-plane frame.
       const right: Vector3 = [
-        reference[1] * forward[2] - reference[2] * forward[1],
-        reference[2] * forward[0] - reference[0] * forward[2],
-        reference[0] * forward[1] - reference[1] * forward[0],
+        upWorld[1] * normal[2] - upWorld[2] * normal[1],
+        upWorld[2] * normal[0] - upWorld[0] * normal[2],
+        upWorld[0] * normal[1] - upWorld[1] * normal[0],
       ]
-      const rightLength = Math.hypot(right[0], right[1], right[2])
+      const rightLength = Math.hypot(right[0], right[1], right[2]) || 1
       const unitRight: Vector3 = [
         right[0] / rightLength, right[1] / rightLength, right[2] / rightLength,
       ]
-      const up: Vector3 = [
-        forward[1] * unitRight[2] - forward[2] * unitRight[1],
-        forward[2] * unitRight[0] - forward[0] * unitRight[2],
-        forward[0] * unitRight[1] - forward[1] * unitRight[0],
-      ]
-      // The face spans +/- inset on both axes, mapped onto [0, 1] with V
-      // flipped because texture space grows downward.
-      //
-      // Multiplied, not divided: see LABEL_COVERAGE.
-      //
-      // The two axes get DIFFERENT spans, scaled by the bitmap's aspect.
-      // A single square span stretched every label to fill a square
-      // patch, so "Front" came out wide and squat rather than set in the
-      // same proportions the browser drew it in.
-      const aspect = labelTexture?.aspect ?? 1
-      const spanU = 2 * (1 - CHAMFER) * LABEL_COVERAGE * aspect
-      const spanV = 2 * (1 - CHAMFER) * LABEL_COVERAGE
+      const up = upWorld
       for (let index = 0; index < region.positions.length; index += 3) {
         const x = region.positions[index]!
         const y = region.positions[index + 1]!
         const z = region.positions[index + 2]!
-        const u = (x * unitRight[0] + y * unitRight[1] + z * unitRight[2]) / spanU + 0.5
-        const v = (x * up[0] + y * up[1] + z * up[2]) / spanV + 0.5
+        const u =
+          (x * unitRight[0] + y * unitRight[1] + z * unitRight[2]) /
+            (2 * LABEL_HALF_SPAN) + 0.5
+        const v =
+          (x * up[0] + y * up[1] + z * up[2]) /
+            (2 * LABEL_HALF_SPAN) + 0.5
+        // V flipped: texture space grows downward.
         uvs.push(u, 1 - v)
       }
     } else {
@@ -288,6 +248,30 @@ export const createCubeScene = (canvas: HTMLCanvasElement): CubeScene => {
   const positionBuffer = bind("position", positions, 3)
   const uvBuffer = bind("uv", uvs, 2)
   gl.bindVertexArray(null)
+
+  // Populate the face-label textures AFTER a paint. Each face starts as a
+  // transparent placeholder so the cube draws in its solid tints from the
+  // first frame — the DOM upload cannot happen synchronously here because
+  // `texElementImage2D` needs the label element to have been painted at
+  // least once ("No cached paint record" otherwise). We retry on animation
+  // frames until every face has taken, then stop; if the API is absent the
+  // faces simply stay unlabelled and the cube is still fully usable.
+  const pendingUploads = batches
+    .map((batch) => batch.label)
+    .filter((label): label is CubeFaceTexture => label !== null)
+  const flushUploads = (): void => {
+    for (let index = pendingUploads.length - 1; index >= 0; index -= 1) {
+      if (uploadCubeFaceTexture(gl, pendingUploads[index]!)) {
+        pendingUploads.splice(index, 1)
+      }
+    }
+    if (pendingUploads.length > 0 && typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(flushUploads)
+    }
+  }
+  if (pendingUploads.length > 0 && typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(flushUploads)
+  }
 
   const uniform = (name: string) => gl.getUniformLocation(program, name)
   const uniforms = {
@@ -368,43 +352,36 @@ export const createCubeScene = (canvas: HTMLCanvasElement): CubeScene => {
       gl.clearColor(0, 0, 0, 0)
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
       gl.enable(gl.DEPTH_TEST)
-      // Culling OFF; the depth buffer does the hiding.
+      // Culling ON, and it MATTERS now: the two-plate magic (cube-spec.md
+      // §2.1) depends on each plate showing only from its own side. The
+      // small front plate faces OUT (shown from outside); the large back
+      // plate faces IN (shown from inside, seen through the opposite
+      // face's gaps). Front and back plates are wound oppositely, so
+      // back-face culling keeps exactly one visible per side.
       //
-      // Culling was on and culled the wrong set: the cube showed Back
-      // where Front belonged, because cube.ts winds its facets against
-      // an outward normal while lookAt builds a right-handed view, and
-      // the two conventions disagree about which side is "front".
-      //
-      // Rather than flip the winding of twenty-six generated facets --
-      // and re-derive the edge and corner handedness that was itself
-      // hard-won -- the depth test is left to sort them. The cube is
-      // twenty-six small facets drawn once a frame; there is no
-      // fill-rate argument for culling at this size.
-      gl.disable(gl.CULL_FACE)
+      // Corner discs are double-sided in intent, but a single disc has one
+      // winding; culling could hide it from one side. They are re-drawn
+      // with culling off below so they read from every angle.
+      gl.enable(gl.CULL_FACE)
+      gl.cullFace(gl.BACK)
 
       gl.useProgram(program)
       gl.bindVertexArray(vertexArray)
       gl.uniformMatrix4fv(uniforms.viewProjection, false, viewProjection)
 
-      // TWO PASSES: the shell first, then the face panels stamped over
-      // it.
-      //
-      // Drawn as one set, the twenty-six facets have to tile exactly,
-      // and they do not — adjacent facets are wound independently and
-      // their shared edges land a fraction apart, which showed as light
-      // slivers along every seam and stray lit pixels at the corner
-      // discs. Letting the faces sit PROUD of the shell (see
-      // FACE_LIFT) covers those seams instead of fighting them: the
-      // shell supplies a continuous solid in the bevel colour, and each
-      // face is a darker panel laid on top.
-      const ordered = [
-        ...batches.filter((batch) => batch.region.kind !== "face"),
-        ...batches.filter((batch) => batch.region.kind === "face"),
-      ]
-
-      for (const batch of ordered) {
-        const tint = TINT[batch.region.kind]
-        gl.uniform3f(uniforms.tint, tint[0], tint[1], tint[2])
+      // One flat draw per part. No shell, no two-pass, no polygon offset —
+      // the parts are detached and never overlap, so the depth buffer
+      // sorts them and there is nothing to z-fight. Panels carry their DOM
+      // label; corner discs are a plain lighter colour.
+      for (const batch of batches) {
+        const color =
+          batch.region.kind === "corner" ? CORNER_COLOR
+            : batch.region.kind === "back" ? BACK_COLOR
+              : FACE_COLOR
+        // Corner discs read from both sides; the plates are one-sided.
+        if (batch.region.kind === "corner") gl.disable(gl.CULL_FACE)
+        else gl.enable(gl.CULL_FACE)
+        gl.uniform3f(uniforms.tint, color[0], color[1], color[2])
         gl.uniform1f(
           uniforms.highlighted,
           state.hovered?.id === batch.region.id ? 1 : 0,
@@ -414,17 +391,6 @@ export const createCubeScene = (canvas: HTMLCanvasElement): CubeScene => {
           gl.activeTexture(gl.TEXTURE0)
           gl.bindTexture(gl.TEXTURE_2D, batch.label.texture)
           gl.uniform1i(uniforms.label, 0)
-        }
-        // Faces win the depth test against the shell they overlap, so
-        // no seam of shell can show through a panel. Polygon offset
-        // rather than moving the geometry: the positions stay exactly
-        // what picking ray-casts against, so what is drawn and what is
-        // clicked cannot drift apart.
-        if (batch.region.kind === "face") {
-          gl.enable(gl.POLYGON_OFFSET_FILL)
-          gl.polygonOffset(-1, -FACE_LIFT)
-        } else {
-          gl.disable(gl.POLYGON_OFFSET_FILL)
         }
         gl.drawArrays(gl.TRIANGLES, batch.offset, batch.count)
       }
@@ -470,7 +436,7 @@ export const createCubeScene = (canvas: HTMLCanvasElement): CubeScene => {
 
     dispose() {
       for (const batch of batches) {
-        if (batch.label) gl.deleteTexture(batch.label.texture)
+        if (batch.label) disposeCubeFaceTexture(gl, batch.label)
       }
       gl.deleteBuffer(positionBuffer)
       gl.deleteBuffer(uvBuffer)

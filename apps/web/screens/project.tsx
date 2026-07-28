@@ -35,7 +35,7 @@ import { appendElement, elementsOf, removeElement, updateElement } from "../elem
 import { Drawer } from "../widgets/drawer"
 import { SplitButton } from "../widgets/split-button"
 import { FeatureToolbar } from "../widgets/feature-toolbar"
-import { ViewCube, type ViewDirection, type ViewNudge } from "../widgets/view-cube"
+import { ViewCube, type ViewDirection } from "../widgets/view-cube"
 import { CollapsiblePanel } from "../widgets/collapsible-panel"
 import { LucideIcon } from "../widgets/lucide-icon"
 import { CommandPanel } from "../panels/command-panel"
@@ -203,20 +203,6 @@ export function Project(props: { auth: Auth }) {
     // are twenty-six poses, and the camera resolves any of them without
     // a lookup table here that could fall out of step with the widget.
     sceneRef?.camera.lookFrom(direction)
-  }
-
-  /**
-   * The corner arrows turn the camera one step, rather than jumping to a
-   * named view. `y` is screen-down while elevation is measured up, so it
-   * is negated — pressing the up arrow has to raise the camera.
-   */
-  const nudgeView = (nudge: ViewNudge): void => {
-    sceneRef?.camera.nudge(nudge.x, -nudge.y)
-  }
-
-  /** The circular arrows turn the picture in its own plane. */
-  const rollView = (steps: number): void => {
-    sceneRef?.camera.roll(steps)
   }
 
   const discardElement = (elementId: string): void => {
@@ -462,8 +448,6 @@ export function Project(props: { auth: Auth }) {
           covered by a panel. */}
       <ViewCube
         onPick={applyView}
-        onNudge={nudgeView}
-        onRoll={rollView}
         azimuth={cameraAngles().azimuth}
         elevation={cameraAngles().elevation}
         rollAngle={cameraAngles().roll}
