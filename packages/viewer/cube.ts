@@ -38,6 +38,20 @@ import type { Vector3 } from "@linen/cad/kernel"
  */
 export const CHAMFER = 0.28
 
+/**
+ * How far the flat panel on each face extends before the rounded
+ * surround begins, as a fraction of the half-edge.
+ *
+ * The flat region of a chamfered cube is a plain SQUARE, so a panel that
+ * simply follows the geometry has square corners. Pulling it in to here
+ * and rounding what is left is what gives the face its rounded-rectangle
+ * shape and, where three faces meet, the circular opening at the corner.
+ */
+export const PANEL_HALF = 0.48
+
+/** The radius of the panel's rounded corner, in the same units. */
+export const PANEL_RADIUS = 0.20
+
 /** Which kind of region a facet is. The camera treats all three alike —
  *  they are directions — but the renderer styles them differently and
  *  the labels only go on faces. */
@@ -197,11 +211,43 @@ export const buildCube = (): readonly CubeRegion[] => {
     if (count >= 3) return { kind: "corner", direction: normalise(saturated) }
     if (count === 2) return { kind: "edge", direction: normalise(saturated) }
 
-    // A face: the dominant axis names it, whether or not the point has
-    // saturated yet — the centre of a face has saturated on nothing.
+    // The dominant axis names the face this point sits on.
     let dominant = 0
     for (const axis of [1, 2] as const) {
       if (Math.abs(point[axis]) > Math.abs(point[dominant]!)) dominant = axis
+    }
+
+    // A ROUNDED panel, inset within the flat region.
+    //
+    // The flat part of a chamfered cube is a plain square, so classifying
+    // by curvature alone gives square-cornered panels — geometrically
+    // honest, but not the shape a view cube has. The panel is therefore
+    // pulled in from the square's corners: a point whose two in-plane
+    // coordinates both run past PANEL_HALF belongs to the surround, not
+    // to the panel.
+    //
+    // The surround is given to the EDGE that faces it, so the margin
+    // takes the bevel's colour and the panel reads as set into it.
+    const inPlane = [0, 1, 2].filter((axis) => axis !== dominant) as [number, number]
+    const first = Math.abs(point[inPlane[0]]!)
+    const second = Math.abs(point[inPlane[1]]!)
+    if (first > PANEL_HALF && second > PANEL_HALF) {
+      // Beyond the panel's rounded corner? Compare against the corner
+      // arc rather than the square, so the boundary is an arc and not a
+      // notch.
+      const overshootFirst = first - PANEL_HALF
+      const overshootSecond = second - PANEL_HALF
+      if (Math.hypot(overshootFirst, overshootSecond) > PANEL_RADIUS) {
+        const nearer = overshootFirst > overshootSecond ? inPlane[0] : inPlane[1]
+        return {
+          kind: "edge",
+          direction: normalise([
+            nearer === 0 ? Math.sign(point[0]) : dominant === 0 ? Math.sign(point[0]) : 0,
+            nearer === 1 ? Math.sign(point[1]) : dominant === 1 ? Math.sign(point[1]) : 0,
+            nearer === 2 ? Math.sign(point[2]) : dominant === 2 ? Math.sign(point[2]) : 0,
+          ]),
+        }
+      }
     }
     const direction: Vector3 = [
       dominant === 0 ? Math.sign(point[0]) : 0,

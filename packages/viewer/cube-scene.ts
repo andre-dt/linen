@@ -125,12 +125,25 @@ export interface CubeScene {
  */
 const BODY: Vector3 = [0.185, 0.240, 0.370]
 
-/** Base colour per kind, so the three read as one object with its edges
- *  eased rather than as three different materials. */
+/**
+ * Colour per region kind — the cube built up in three passes.
+ *
+ *   1. the solid, everywhere in BODY
+ *   2. the six face panels, stamped darker
+ *   3. the eight corner discs, stamped lighter
+ *
+ * The bevels keep BODY, so they read as the material the panels and
+ * discs are set into rather than as a third thing.
+ */
 const TINT: Record<CubeRegionKind, Vector3> = {
-  face: BODY,
+  // Darker than the body, keyed to the HUD panel material: the panel is
+  // the recess, the bevel around it the surface it is cut into.
+  face: [0.100, 0.138, 0.232],
   edge: BODY,
-  corner: BODY,
+  // Lighter than the bevels, so the eight corner targets read as the
+  // distinct controls they are. With flat shading these tiers are the
+  // only thing giving the cube its form, so the step has to be clear.
+  corner: [0.290, 0.360, 0.520],
 }
 
 interface Batch {
@@ -170,12 +183,8 @@ export const createCubeScene = (canvas: HTMLCanvasElement): CubeScene => {
     // Built once per face and used twice: its aspect scales the UVs
     // below, and the batch draws with it. Creating it in both places
     // would upload two textures and leak one.
-    // STEP 1 of three: the bare solid, no labels yet. Turned off here so
-    // the body's silhouette and tone can be judged on their own, before
-    // the face panels and the corner discs are stamped over it.
-    const SHOW_LABELS = false
     const labelTexture =
-      SHOW_LABELS && region.kind === "face"
+      region.kind === "face"
         ? createTextTexture(gl, region.label, { fontSize: 15, scale: 5 })
         : null
 
