@@ -384,6 +384,7 @@ export {
 export { createScene } from "./scene"
 export { createCamera } from "./camera"
 export { createCubeScene, type CubeScene } from "./cube-scene"
+export { createCubeSceneGpu, type CubeSceneGpu } from "./cube-scene-gpu"
 export {
   createCubeFaceTexture, uploadCubeFaceTexture, disposeCubeFaceTexture,
   type CubeFaceTexture,

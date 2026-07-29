@@ -1521,6 +1521,22 @@ table.point-list {
    remain usable. */
 .view-cube-canvas.failed { display: none; }
 
+/* Shown in place of the cube when WebGPU can't initialise — the cube is
+   WebGPU-only, so this explains the absence rather than leaving a blank. */
+.view-cube-failed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 12px;
+  border: 1px dashed var(--hud-text-faint, #7c8598);
+  border-radius: 10px;
+  color: var(--hud-text-muted, #aab2c2);
+  font-size: 12px;
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
 
 /* =====================================================================
    COLLAPSIBLE PANEL — expanded titled panel ↔ a single icon button.

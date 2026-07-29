@@ -43,7 +43,10 @@
 // =====================================================================
 
 import { createSignal, createEffect, onMount, onCleanup } from "solid-js"
-import { createCubeScene, type CubeScene, type CubeRegion } from "@linen/viewer"
+import {
+  createBackend, createCubeSceneGpu,
+  type CubeSceneGpu, type CubeRegion, type WebGpuBackend,
+} from "@linen/viewer"
 
 /** A direction to look FROM, in the kernel's frame: X right, Y away at
  *  the Front view, Z up. */
@@ -171,35 +174,57 @@ export function ViewCube(props: ViewCubeProps) {
   // frame, and a signal would schedule DOM work for state no DOM node
   // shows.
   let canvas!: HTMLCanvasElement
-  let cube: CubeScene | null = null
+  let cube: CubeSceneGpu | null = null
   const [failed, setFailed] = createSignal(false)
 
   onMount(() => {
-    try {
-      cube = createCubeScene(canvas)
-    } catch {
-      // No WebGL2. The arrows still work, so the control degrades to
-      // those rather than disappearing.
-      setFailed(true)
-      return
-    }
-    cube.resize(CUBE_SIZE, window.devicePixelRatio)
-
     let frame = 0
-    const draw = (): void => {
-      cube?.render(
-        props.azimuth ?? 0,
-        props.elevation ?? 0,
-        props.rollAngle ?? 0,
+    let backend: WebGpuBackend | null = null
+    let cancelled = false
+
+    // WebGPU only — no WebGL fallback. Backend creation is async (adapter +
+    // device), so mount kicks it off and wires the loop once it lands.
+    void (async () => {
+      let created: Awaited<ReturnType<typeof createBackend>>
+      try {
+        created = await createBackend(canvas, "webgpu")
+      } catch {
+        setFailed(true)
+        return
+      }
+      // createBackend falls through to WebGL2 when WebGPU is unavailable;
+      // the cube is WebGPU-only, so reject anything else rather than crash
+      // on a backend with no GPUDevice.
+      if (created.kind !== "webgpu") {
+        setFailed(true)
+        created.dispose()
+        return
+      }
+      backend = created as WebGpuBackend
+      if (cancelled) { backend.dispose(); return }
+
+      cube = createCubeSceneGpu(
+        canvas, backend.device, backend.context, backend.format,
       )
+      cube.resize(CUBE_SIZE, window.devicePixelRatio)
+
+      const draw = (): void => {
+        cube?.render(
+          props.azimuth ?? 0,
+          props.elevation ?? 0,
+          props.rollAngle ?? 0,
+        )
+        frame = requestAnimationFrame(draw)
+      }
       frame = requestAnimationFrame(draw)
-    }
-    frame = requestAnimationFrame(draw)
+    })()
 
     onCleanup(() => {
+      cancelled = true
       cancelAnimationFrame(frame)
       cube?.dispose()
       cube = null
+      backend?.dispose()
     })
   })
 
@@ -256,6 +281,16 @@ export function ViewCube(props: ViewCubeProps) {
         onPointerLeave={onCubeLeave}
         onClick={onCubeClick}
       />
+      {/* Visible reason when WebGPU is unavailable, instead of the cube
+          silently vanishing. The cube is WebGPU-only by design. */}
+      {failed() && (
+        <div
+          class="view-cube-failed"
+          style={{ width: `${CUBE_SIZE}px`, height: `${CUBE_SIZE}px` }}
+        >
+          WebGPU unavailable
+        </div>
+      )}
     </div>
   )
 }
