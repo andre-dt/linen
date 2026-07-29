@@ -1491,7 +1491,7 @@ table.point-list {
      sizes the GL backing store from those, and the slot's footprint and
      drag clamp come from these. Out of step, the canvas renders at one
      size inside a box of another. */
-  --cube-size: 118px;
+  --cube-size: 160px;
   --cube-margin: 8px;
   width: calc(var(--cube-size) + var(--cube-margin) * 2);
   height: calc(var(--cube-size) + var(--cube-margin) * 2);

@@ -63,7 +63,7 @@ const DRAG_THRESHOLD = 3
  *  chamfered facets — the whole reason for the rewrite — were too small
  *  to aim at or even make out. Seen in a full page rather than a tight
  *  crop, it read as a smudge in the corner. */
-const CUBE_SIZE = 118
+const CUBE_SIZE = 160
 /** A little breathing room around the cube. Mirrors --cube-margin.
  *
  *  The arrows this once made space for are gone — the control is just the
