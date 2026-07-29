@@ -37,8 +37,15 @@ export const HALF = 1.0
  *  HALF = 1 that leaves a visible void gap between adjacent panels. */
 export const PANEL_HALF = 0.55
 
-/** Radius the front plate's four corners are rounded by. */
-export const PANEL_CORNER_RADIUS = 0.16
+/** Radius the front plate's four corners are rounded by. Larger = rounder
+ *  corners on the labelled front plate. */
+export const PANEL_CORNER_RADIUS = 0.22
+
+/** Gap left between the FRONT plate's corner and the corner disc, so the
+ *  two do not touch (cube-spec.md §2.1, Onshape-like). The disc stays put;
+ *  the front plate's drawn size is pulled in by this margin. Per face
+ *  axis. */
+export const PANEL_DISC_GAP = 0.09
 
 /** Rounding radius of the back plate's corners. */
 export const BACK_PANEL_CORNER_RADIUS = 0.16
@@ -98,6 +105,12 @@ export const BACK_PANEL_HALF = (() => {
   const discCentrePerAxis = CORNER_DISTANCE / Math.sqrt(3)
   return discCentrePerAxis - BACK_PANEL_CORNER_RADIUS / Math.SQRT2
 })()
+
+/** Half-width of the FRONT plate as DRAWN — pulled in from PANEL_HALF by
+ *  PANEL_DISC_GAP so the labelled plate does not touch the discs. The disc
+ *  placement above stays anchored to PANEL_HALF, so only the visible front
+ *  plate backs off, opening the gap (cube-spec.md §2.1). */
+export const FRONT_PANEL_HALF = PANEL_HALF - PANEL_DISC_GAP
 
 /** Segments per circle and per rounded-corner quarter-arc. */
 export const CIRCLE_SEGMENTS = 24
@@ -286,9 +299,13 @@ export const buildCube = (): readonly CubeRegion[] => {
         normal[1] * (HALF + PLATE_SEPARATION),
         normal[2] * (HALF + PLATE_SEPARATION),
       ]
+      // The drawn front plate is pulled in by the disc gap so it never
+      // touches the discs.
       const frontPositions = fillPlanarContour(
         frontOrigin, axisU, axisV,
-        roundedRectContour(PANEL_HALF, PANEL_CORNER_RADIUS, CIRCLE_SEGMENTS),
+        roundedRectContour(
+          FRONT_PANEL_HALF, PANEL_CORNER_RADIUS, CIRCLE_SEGMENTS,
+        ),
       )
       regions.push({
         id: `face:${normal.join(",")}`,
@@ -299,16 +316,17 @@ export const buildCube = (): readonly CubeRegion[] => {
         normal: direction,
       })
 
-      // BACK plate: the large plain rounded-rect, nearly the full cube
-      // face, facing IN (its winding is flipped). Sits a hair below the
-      // face plane. This is the gray backdrop seen through the opposite
-      // face's gaps.
+      // BACK plate: the MERGED silhouette — the back rounded-rect UNION the
+      // four corner discs, all filled as one solid (cube-spec.md §2.1).
+      // Overlapping fills are fine; it reads as one continuous solid that
+      // bulges out at each disc. Facing IN (winding flipped), a hair below
+      // the face plane.
       const backOrigin: Vector3 = [
         normal[0] * (HALF - PLATE_SEPARATION),
         normal[1] * (HALF - PLATE_SEPARATION),
         normal[2] * (HALF - PLATE_SEPARATION),
       ]
-      const backPositions = fillPlanarContour(
+      const backPositions: number[] = fillPlanarContour(
         backOrigin, axisU, axisV,
         roundedRectContour(
           BACK_PANEL_HALF, BACK_PANEL_CORNER_RADIUS, CIRCLE_SEGMENTS,

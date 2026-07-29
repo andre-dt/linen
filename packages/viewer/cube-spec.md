@@ -30,16 +30,21 @@ confirmed from a screenshot):
   the cube face**, so there is a **void gap around it** — through that gap you
   see, and click through to, whatever is behind. It carries the face's **DOM
   label texture** (§5).
-- **Back plate (plain):** a rounded-rect that faces INWARD (toward the cube
-  centre). Its size is **solved so its rounded corners reach the corner discs'
-  FAR rim** (the disc edge toward the cube corner) — the plate covers the whole
-  disc width. The disc-rim far point, projected onto the plate's plane, lands at
-  a plate-diagonal coordinate the geometry gives as
-  `discFarRim = (CORNER_DISTANCE + CORNER_RADIUS·?)` — in practice it is
-  computed from the disc and equals ≈ `0.888` at the default constants. The back
-  plate's diagonal corner tip `BACK_PANEL_HALF + BACK_PANEL_CORNER_RADIUS/√2` is
-  set equal to that. It is a **solid plain colour, no label** — the backdrop
-  seen through the opposite face's gaps.
+  - **The front plate does NOT touch the corner discs** — there is a clear gap
+    between the plate's corners and each disc (Onshape does this). The plate's
+    diagonal corner tip stays SHORT of the disc's near rim by a margin
+    (`PANEL_DISC_GAP`).
+- **Back plate (plain, MERGED silhouette):** faces INWARD (toward the cube
+  centre). Its outline is **NOT a plain rounded-rect** — it is the **union of the
+  front panel's footprint AND the four corner discs**, projected onto the face
+  plane. So the solid gray backdrop bulges out at each corner where a disc sits,
+  and reads as one continuous solid = panel + 4 discs merged. This is why, from
+  the far side, "the contour matches the opposite face + the discs" (confirmed
+  from an Onshape screenshot). No label, plain solid colour.
+  - The four discs each project to a circle on the face plane, centred at the
+    panel's four corners' diagonal direction, at the disc's projected radius.
+    The back plate mesh is the panel rounded-rect plus these four circles, all
+    filled as one silhouette (overlapping fills are fine — it is one solid).
 
 So looking at a face you see: its own small labelled front plate, and — through
 the gaps around it — the large plain back plate of the OPPOSITE face filling the
