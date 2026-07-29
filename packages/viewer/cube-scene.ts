@@ -378,9 +378,6 @@ export const createCubeScene = (canvas: HTMLCanvasElement): CubeScene => {
           batch.region.kind === "corner" ? CORNER_COLOR
             : batch.region.kind === "back" ? BACK_COLOR
               : FACE_COLOR
-        // Corner discs read from both sides; the plates are one-sided.
-        if (batch.region.kind === "corner") gl.disable(gl.CULL_FACE)
-        else gl.enable(gl.CULL_FACE)
         gl.uniform3f(uniforms.tint, color[0], color[1], color[2])
         gl.uniform1f(
           uniforms.highlighted,

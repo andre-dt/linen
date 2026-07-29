@@ -40,12 +40,6 @@ export const PANEL_HALF = 0.55
 /** Radius the front plate's four corners are rounded by. */
 export const PANEL_CORNER_RADIUS = 0.16
 
-/** Half-width of the large BACK plate — nearly the full cube face, so its
- *  rounded corners stop just short of the cube's corners (cube-spec.md
- *  §2.1). This is the plain gray backdrop seen through the opposite face's
- *  gaps. */
-export const BACK_PANEL_HALF = 0.84
-
 /** Rounding radius of the back plate's corners. */
 export const BACK_PANEL_CORNER_RADIUS = 0.16
 
@@ -79,6 +73,30 @@ export const CORNER_RADIUS = (() => {
   const centre = (HALF + 2 * CORNER_TIP) / 3
   // Tip (HALF, CORNER_TIP, CORNER_TIP) minus centroid (centre, centre, centre).
   return Math.hypot(HALF - centre, CORNER_TIP - centre, CORNER_TIP - centre)
+})()
+
+/**
+ * Half-width of the BACK plate, DERIVED so its rounded corners reach the
+ * corner discs' FAR rim — the disc edge toward the cube corner, covering
+ * the whole disc width (cube-spec.md §2.1).
+ *
+ * On a plate plane (e.g. +X at x=HALF) the plate's diagonal is the
+ * direction (0,1,1)/√2 in-plane; a point's coordinate along it is
+ * (y+z)/√2. The disc centre sits at CORNER_DISTANCE/√3 on each axis, so on
+ * the plate diagonal it is at 2·(CORNER_DISTANCE/√3)/√2. The disc's far
+ * rim adds CORNER_RADIUS along that same in-plane diagonal (the rim point
+ * furthest toward the cube corner). The back plate's own diagonal corner
+ * tip is BACK_PANEL_HALF·√2 + BACK_PANEL_CORNER_RADIUS along that
+ * diagonal, so solve for BACK_PANEL_HALF to land the tip on the far rim.
+ */
+export const BACK_PANEL_HALF = (() => {
+  // Work in the plate's per-axis coordinate (y = z on the plate diagonal).
+  // The plate's rounded-corner tip should land on the disc CENTRE line: the
+  // far rim overshot and the near rim tucked in too far, so the corner tip
+  // reaches the disc's middle. The disc centre is at CORNER_DISTANCE/√3 per
+  // axis; the plate tip is BACK_PANEL_HALF + BACK_PANEL_CORNER_RADIUS/√2.
+  const discCentrePerAxis = CORNER_DISTANCE / Math.sqrt(3)
+  return discCentrePerAxis - BACK_PANEL_CORNER_RADIUS / Math.SQRT2
 })()
 
 /** Segments per circle and per rounded-corner quarter-arc. */
@@ -395,8 +413,16 @@ const intersectTriangle = (
  * The nearest part a ray hits, or null.
  *
  * Nearest rather than first: the ray passes through the void gaps and can
- * reach a panel on the far side, so the closest hit along the ray is the
+ * reach a part on the far side, so the closest hit along the ray is the
  * one under the cursor (cube-spec.md §4).
+ *
+ * BACK FACES ARE NOT PICKABLE (cube-spec.md §4.5). Every part is
+ * single-sided: a ray that strikes a part from behind — its direction
+ * agreeing with the part's outward normal (dot >= 0) — is ignored, so it
+ * passes through to whatever is beyond. This is what makes a far corner
+ * disc, and the open gaps of a front plate, click-through. The back plates
+ * carry an inward-pointing normal precisely so a ray reaching them through
+ * the opposite face's gap counts as hitting their front.
  */
 export const pickCube = (
   regions: readonly CubeRegion[],
@@ -407,6 +433,14 @@ export const pickCube = (
   let nearestDistance = Infinity
 
   for (const region of regions) {
+    // Skip a part the ray meets from behind: if the ray travels the same
+    // way the part faces, it can only strike its back.
+    const facing =
+      direction[0] * region.normal[0] +
+      direction[1] * region.normal[1] +
+      direction[2] * region.normal[2]
+    if (facing >= 0) continue
+
     const positions = region.positions
     for (let index = 0; index + 8 < positions.length; index += 9) {
       const a: Vector3 = [positions[index]!, positions[index + 1]!, positions[index + 2]!]

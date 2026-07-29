@@ -30,13 +30,16 @@ confirmed from a screenshot):
   the cube face**, so there is a **void gap around it** — through that gap you
   see, and click through to, whatever is behind. It carries the face's **DOM
   label texture** (§5).
-- **Back plate (large, plain):** a rounded-rect that faces INWARD (toward the
-  cube centre). It is **nearly the full cube-face size** — half-width
-  `BACK_PANEL_HALF` reaching almost edge-to-edge — with **rounded corners** that
-  stop just short of the cube's corners. It is a **solid plain colour, no
-  label**. It is what fills the frame when you look at a face from the far side:
-  facing Right, the large plain back plate of the Left face is the gray
-  rounded-rect seen through Right's gaps.
+- **Back plate (plain):** a rounded-rect that faces INWARD (toward the cube
+  centre). Its size is **solved so its rounded corners reach the corner discs'
+  FAR rim** (the disc edge toward the cube corner) — the plate covers the whole
+  disc width. The disc-rim far point, projected onto the plate's plane, lands at
+  a plate-diagonal coordinate the geometry gives as
+  `discFarRim = (CORNER_DISTANCE + CORNER_RADIUS·?)` — in practice it is
+  computed from the disc and equals ≈ `0.888` at the default constants. The back
+  plate's diagonal corner tip `BACK_PANEL_HALF + BACK_PANEL_CORNER_RADIUS/√2` is
+  set equal to that. It is a **solid plain colour, no label** — the backdrop
+  seen through the opposite face's gaps.
 
 So looking at a face you see: its own small labelled front plate, and — through
 the gaps around it — the large plain back plate of the OPPOSITE face filling the
@@ -57,11 +60,23 @@ whole frame behind it.
 - Position: centred on the corner point, pulled in from the sharp corner toward
   the cube centre by `CORNER_INSET` so it sits in the gap the rounded panel
   corners leave.
+- **Two-sided, like the panels (RESOLVED):** the disc has a FRONT and a BACK.
+  - **Front face** (its normal points OUT along the corner diagonal, toward you
+    when you face that corner): visible — solid colour, lights on hover — and
+    **pickable**.
+  - **Back face** (when that corner is on the far side): **invisible AND not
+    pickable**. A ray from behind passes straight through it, like a panel's
+    open gap. So a disc only appears, and only responds to clicks, when you are
+    facing its corner.
+  - Achieved the same way as the plates: the disc is single-sided (back-face
+    culled for drawing) and picking ignores hits on its back face (rejects a
+    ray that strikes the disc from behind — i.e. where the ray direction and the
+    disc's outward normal agree).
 - **Orientation (RESOLVED):** the disc lies in the plane **perpendicular to the
-  corner's body diagonal** — its normal is the normalised corner direction
-  `normalize(±1,±1,±1)`. It is symmetric to all three adjacent faces (not
-  billboarded to the camera, not lying in a single face plane). It turns with
-  the cube.
+  corner's body diagonal** — its outward normal is the normalised corner
+  direction `normalize(±1,±1,±1)`. It is symmetric to all three adjacent faces
+  (not billboarded to the camera, not lying in a single face plane). It turns
+  with the cube.
 - **Placement rule (RESOLVED — Onshape-like):** the disc "touches all 3
   panels." Its centre sits on the body diagonal at `CORNER_DISTANCE` from the
   cube centre, and `CORNER_RADIUS` / `CORNER_DISTANCE` are chosen so the disc's
@@ -91,7 +106,7 @@ orthographic camera scales it to the widget).
 | `HALF` | Distance from centre to each panel plane | `1.0` |
 | `PANEL_HALF` | Half-width of the small FRONT plate (straight run before arc) | `0.55` |
 | `PANEL_CORNER_RADIUS` | Rounding radius of the front plate's corners | `0.16` |
-| `BACK_PANEL_HALF` | Half-width of the large BACK plate (nearly full face) | `0.84` |
+| `BACK_PANEL_HALF` | Half-width of the BACK plate — sized so its corner reaches the disc CENTRE | `0.662` (derived) |
 | `BACK_PANEL_CORNER_RADIUS` | Rounding radius of the back plate's corners | `0.16` |
 | `PLATE_SEPARATION` | Depth gap between a face's front and back plates | `0.004` |
 | `CORNER_RADIUS` | Radius of a corner circle | `0.275` |
@@ -131,6 +146,14 @@ This is the defining property. Because the cube is hollow with void edges:
    gap around the Right front plate hits the Left face's back plate.
 4. **Nearest hit wins.** When a ray hits more than one part, the closest
    intersection along the ray wins — compared by ray `t`, not by a shell.
+5. **Back faces are not pickable.** Every part is single-sided: a ray that
+   strikes a part from behind (ray direction agreeing with the part's outward
+   normal) is ignored, so it passes through to whatever is beyond. This is what
+   makes a far corner disc — and the open gaps of a front plate — click-through.
+   The large BACK plates ARE meant to be hit from the inside, so their outward
+   normal points inward (they are "facing" the ray that reaches them through the
+   opposite face's gaps); the back-face test uses each part's own outward normal
+   accordingly.
 5. Picking is a **ray/geometry test in TypeScript** (like the rest of the
    viewer), returning which part was hit. What is drawn and what is picked use
    the **same geometry**, so they cannot disagree.
