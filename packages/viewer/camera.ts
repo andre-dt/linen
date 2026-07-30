@@ -459,41 +459,84 @@ export function createCamera(): OrbitCamera {
       // for the same reason viewFrom does.
       roll = 0
 
-      const targetElevation = Math.max(
-        -POLE_LIMIT,
-        Math.min(POLE_LIMIT, Math.asin(Math.max(-1, Math.min(1, z)))),
-      )
-      // Straight up or down (Top/Bottom) leaves the azimuth undetermined
-      // by the direction alone — every azimuth points at the same place.
+      // The EXACT elevation the direction names — not clamped short of the
+      // pole. POLE_LIMIT guards free ORBIT, where the up vector must stay
+      // defined; a snap-to-view should land dead-on the face, or the plane
+      // is a hair off normal and its grid lines double instead of reading
+      // as one crisp line. The exact pole (±π/2) is safe here because
+      // upVector has a guard for the degenerate up it produces.
+      const targetElevation = Math.asin(Math.max(-1, Math.min(1, z)))
+      // A pole target is straight up/down: the azimuth is undetermined by
+      // the direction (every azimuth points at the same place) and, near
+      // it, the arc's atan2 re-derivation is ill-conditioned — the source
+      // of the animation bump. Detected here so the transition can skip
+      // the arc and interpolate the angles directly through the pole.
+      const atPole = Math.hypot(x, y) < 1e-9
       // After a free tumble the current azimuth is arbitrary, so keeping
       // it would land the face rotated. Snap to the CANONICAL azimuth for
       // the pole instead (the same one viewFrom's top/bottom use), so the
       // face always arrives square and upright.
-      const targetAzimuth =
-        Math.hypot(x, y) < 1e-9 ? -Math.PI / 2 : Math.atan2(y, x)
+      const targetAzimuth = atPole ? -Math.PI / 2 : Math.atan2(y, x)
 
       if (immediate) {
         transition = null
         azimuth = targetAzimuth
         elevation = targetElevation
+        // Bottom's world-up is -Y; a half-turn brings its label upright,
+        // the same way the animated path below does.
+        roll = targetElevation < -Math.PI / 4 && atPole ? Math.PI : 0
         return
       }
 
-      // Free tumble can wind elevation past a full turn; bring the START
-      // into the canonical range so the transition interpolates the short
-      // way on BOTH angles, not the many turns a wound-up value implies.
+      // RECONCILE the tumbled pose into the canonical branch WITHOUT
+      // moving the camera. Free tumble winds elevation past ±π/2 into the
+      // "flipped" hemisphere, where cos(elevation) < 0 turns the frame
+      // over (see upVector). The transition machinery — and the target —
+      // live in the unflipped branch (elevation in [-π/2, π/2]), so if we
+      // eased from the raw wound value the first frame would snap to the
+      // unflipped equivalent, flipping the up vector visibly.
+      //
+      // Same view direction, expressed in the unflipped branch: bring
+      // elevation into [-π, π], and if it landed in the flipped half,
+      // reflect it back over the pole and carry the half-turn into azimuth
+      // and roll. The resulting (azimuth, elevation, roll) render to the
+      // identical frame — no jump — but now sit where the ease expects.
+      let normalizedElevation = Math.atan2(Math.sin(elevation), Math.cos(elevation))
+      if (normalizedElevation > Math.PI / 2) {
+        normalizedElevation = Math.PI - normalizedElevation
+        azimuth += Math.PI
+        roll += Math.PI
+      } else if (normalizedElevation < -Math.PI / 2) {
+        normalizedElevation = -Math.PI - normalizedElevation
+        azimuth += Math.PI
+        roll += Math.PI
+      }
       azimuth = ((azimuth % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)
-      elevation = Math.atan2(
-        Math.sin(elevation),
-        Math.cos(elevation),
-      )
+      roll = ((roll % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)
+      elevation = normalizedElevation
 
-      // Short way round, as viewFrom does: interpolating raw angles
-      // across the seam would spin the model most of the way the wrong
-      // direction.
+      // Short way round, as viewFrom does: interpolating raw angles across
+      // the seam would spin the model most of the way the wrong direction.
       let delta = targetAzimuth - azimuth
       while (delta > Math.PI) delta -= Math.PI * 2
       while (delta < -Math.PI) delta += Math.PI * 2
+
+      // Upright roll for the target.
+      //
+      // At the BOTTOM pole the derived world-up points -Y (because
+      // -sin(elevation) flips sign below the equator), the opposite screen
+      // direction from the Top pole's +Y — so a bottom view rolled to 0
+      // lands its label upside-down relative to top. A half-turn of roll
+      // brings screen-up back to +Y, so Bottom reads the same way up as
+      // Top. Every other face's world-up is already the right way up, so
+      // the target roll is 0.
+      const bottomPole = atPole && targetElevation < 0
+      const targetRoll = bottomPole ? Math.PI : 0
+
+      // Roll eases to that target the short way round.
+      let rollDelta = targetRoll - roll
+      while (rollDelta > Math.PI) rollDelta -= Math.PI * 2
+      while (rollDelta < -Math.PI) rollDelta += Math.PI * 2
 
       transition = {
         fromAzimuth: azimuth,
@@ -501,9 +544,16 @@ export function createCamera(): OrbitCamera {
         fromElevation: elevation,
         toElevation: targetElevation,
         elapsed: 0,
-        arc: arcBetween(azimuth, elevation, azimuth + delta, targetElevation),
+        // Skip the great-circle arc for a pole target: its atan2 azimuth
+        // re-derivation is ill-conditioned at the pole and produces the
+        // animation bump. Direct angle interpolation passes through the
+        // pole smoothly — the up vector's pole guard covers the singular
+        // instant — and lands dead-on ±π/2.
+        arc: atPole
+          ? undefined
+          : arcBetween(azimuth, elevation, azimuth + delta, targetElevation),
         fromRoll: roll,
-        toRoll: 0,
+        toRoll: roll + rollDelta,
       }
     },
 
