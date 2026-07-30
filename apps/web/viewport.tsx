@@ -301,7 +301,7 @@ export function Viewport(props: ViewportProps) {
           onClick={onClick}
           onLeave={onLeave}
           onDoubleClick={() => drawing() && props.onSketchFinish?.()}
-          onZoom={(delta) => scene?.camera.dolly(delta)}
+          onZoom={(delta, focal) => scene?.camera.dolly(delta, focal)}
         >
           {(gestures) => (
             <canvas

@@ -135,8 +135,10 @@ export interface GestureDetectorProps {
   /** The pointer left the surface: drop any hover state. */
   onLeave?: () => void
   onDoubleClick?: () => void
-  /** Wheel delta, already sign-corrected for zoom. */
-  onZoom?: (delta: number) => void
+  /** Wheel delta, already sign-corrected for zoom, plus the cursor's
+   *  position in CSS pixels relative to the surface CENTER (x right, y up),
+   *  so the zoom can pull toward the cursor. */
+  onZoom?: (delta: number, focal: readonly [number, number]) => void
   /** A drag started / ended, for a grabbing cursor or suppressed hover. */
   onDragStart?: (kind: "orbit" | "pan") => void
   onDragEnd?: () => void
@@ -327,7 +329,25 @@ export function GestureDetector(props: GestureDetectorProps) {
 
     onWheel(event) {
       event.preventDefault()
-      props.onZoom?.(event.deltaY)
+      // Cursor position relative to the surface center, expressed in units
+      // of HALF the visible HEIGHT — the camera's own vertical unit, so it
+      // can convert to world exactly and hold the point under the cursor.
+      // Both axes are divided by the same half-height: world-per-pixel is
+      // uniform (the projection is height-driven and the aspect matches the
+      // canvas), so a pixel is the same world distance either way. Y is
+      // flipped from the DOM's downward axis to the camera's screen-up.
+      const target = event.currentTarget as HTMLElement | null
+      let focalX = 0
+      let focalY = 0
+      if (target) {
+        const rect = target.getBoundingClientRect()
+        const halfHeight = rect.height / 2
+        if (halfHeight > 0) {
+          focalX = (event.clientX - rect.left - rect.width / 2) / halfHeight
+          focalY = (halfHeight - (event.clientY - rect.top)) / halfHeight
+        }
+      }
+      props.onZoom?.(event.deltaY, [focalX, focalY])
     },
 
     onContextMenu(event) {

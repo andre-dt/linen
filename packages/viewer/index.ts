@@ -218,7 +218,11 @@ export interface Camera {
 
   orbit(deltaAzimuth: number, deltaElevation: number): void
   pan(deltaX: number, deltaY: number): void
-  dolly(delta: number): void
+  /** Zooms by `delta`. `focal`, when given, is the cursor position in
+   *  screen pixels relative to the viewport CENTER (x right, y up), and the
+   *  world point under it stays fixed — zoom toward the cursor. Omitted ⇒
+   *  zoom toward the view center. */
+  dolly(delta: number, focal?: readonly [number, number]): void
   /** Frames the given bounds, or the whole scene when omitted.
    *  `coverage` is the fraction of the viewport HEIGHT the bounds should
    *  occupy — 0.6 by default, leaving room for the floating HUD. */
@@ -376,6 +380,18 @@ export interface HandleDrag {
 
 export { createBackend } from "./backend"
 export type { WebGpuBackend, WebGl2Backend } from "./backend"
+// The renderer abstraction: one API, two backends, selected by config.
+export {
+  createRenderer, hasWebGpu,
+  type Renderer, type RendererFactory,
+  type RendererKind, type RendererPreference,
+} from "./renderer"
+export {
+  DEFAULT_RENDERER, resolveRendererPreference,
+  createConfiguredRenderer, createConfiguredCubeScene,
+} from "./renderer-config"
+export { createWebGpuRenderer } from "./gpu-renderer"
+export { createWebGl2Renderer } from "./gl-renderer"
 export {
   checkViewportCapabilities, hasThreeDBackend, hasHtmlInCanvas,
   CAPABILITY_MESSAGE,

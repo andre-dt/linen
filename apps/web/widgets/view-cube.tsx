@@ -44,8 +44,8 @@
 
 import { createSignal, createEffect, onMount, onCleanup } from "solid-js"
 import {
-  createBackend, createCubeSceneGpu,
-  type CubeSceneGpu, type CubeRegion, type WebGpuBackend,
+  createConfiguredCubeScene,
+  type CubeScene, type CubeRegion,
 } from "@linen/viewer"
 
 /** A direction to look FROM, in the kernel's frame: X right, Y away at
@@ -119,9 +119,15 @@ export interface ViewCubeProps {
 }
 
 export function ViewCube(props: ViewCubeProps) {
-  const [position, setPosition] = createSignal<Position>(
-    readPosition() ?? defaultPosition(),
-  )
+  const stored = readPosition() ?? defaultPosition()
+  const [position, setPosition] = createSignal<Position>({
+    // Clamp on the FIRST read too, not only on resize: a position saved at
+    // one browser page-zoom is out of bounds at a higher one (200% halves
+    // the CSS viewport), which parked the control off-screen until the
+    // window happened to resize.
+    x: clamp(stored.x, window.innerWidth),
+    y: clamp(stored.y, window.innerHeight),
+  })
   const [dragging, setDragging] = createSignal(false)
 
   const onResize = (): void => {
@@ -131,8 +137,17 @@ export function ViewCube(props: ViewCubeProps) {
       y: clamp(current.y, window.innerHeight),
     })
   }
-  onMount(() => window.addEventListener("resize", onResize))
-  onCleanup(() => window.removeEventListener("resize", onResize))
+  onMount(() => {
+    window.addEventListener("resize", onResize)
+    // Browser PAGE zoom changes the visual viewport without always firing a
+    // window resize; visualViewport reports it so the control follows the
+    // shrinking viewport back into view.
+    window.visualViewport?.addEventListener("resize", onResize)
+  })
+  onCleanup(() => {
+    window.removeEventListener("resize", onResize)
+    window.visualViewport?.removeEventListener("resize", onResize)
+  })
 
   const onPointerDown = (event: PointerEvent): void => {
     if (event.button !== 0) return
@@ -174,38 +189,27 @@ export function ViewCube(props: ViewCubeProps) {
   // frame, and a signal would schedule DOM work for state no DOM node
   // shows.
   let canvas!: HTMLCanvasElement
-  let cube: CubeSceneGpu | null = null
+  let cube: CubeScene | null = null
   const [failed, setFailed] = createSignal(false)
 
   onMount(() => {
     let frame = 0
-    let backend: WebGpuBackend | null = null
     let cancelled = false
 
-    // WebGPU only — no WebGL fallback. Backend creation is async (adapter +
-    // device), so mount kicks it off and wires the loop once it lands.
+    // The backend is chosen by CONFIG (?renderer= / VITE_RENDERER / default
+    // 'auto'), not hard-coded. Both backends implement the same CubeScene,
+    // so the widget draws the cube identically whichever one it got.
+    // Backend creation is async (WebGPU device acquisition), so mount kicks
+    // it off and wires the loop once it lands.
     void (async () => {
-      let created: Awaited<ReturnType<typeof createBackend>>
       try {
-        created = await createBackend(canvas, "webgpu")
+        cube = await createConfiguredCubeScene(canvas)
       } catch {
         setFailed(true)
         return
       }
-      // createBackend falls through to WebGL2 when WebGPU is unavailable;
-      // the cube is WebGPU-only, so reject anything else rather than crash
-      // on a backend with no GPUDevice.
-      if (created.kind !== "webgpu") {
-        setFailed(true)
-        created.dispose()
-        return
-      }
-      backend = created as WebGpuBackend
-      if (cancelled) { backend.dispose(); return }
+      if (cancelled) { cube.dispose(); cube = null; return }
 
-      cube = createCubeSceneGpu(
-        canvas, backend.device, backend.context, backend.format,
-      )
       cube.resize(CUBE_SIZE, window.devicePixelRatio)
 
       const draw = (): void => {
@@ -224,7 +228,6 @@ export function ViewCube(props: ViewCubeProps) {
       cancelAnimationFrame(frame)
       cube?.dispose()
       cube = null
-      backend?.dispose()
     })
   })
 

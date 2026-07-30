@@ -42,8 +42,12 @@ const SAMPLE_COUNT = 4
 
 // Flat part colours (cube-spec.md §5), matching the WebGL cube.
 const FACE_COLOR: readonly [number, number, number] = [0.185, 0.240, 0.370]
-const CORNER_COLOR: readonly [number, number, number] = [0.290, 0.360, 0.520]
 const BACK_COLOR: readonly [number, number, number] = [0.145, 0.180, 0.265]
+/** The page background (--surface: #16181d). A corner disc is single-sided
+ *  and back-face culled, so only its OUTWARD (front) face is ever drawn;
+ *  painting it the page colour makes each disc read as a hole to the page
+ *  behind the cube. Nothing back-facing is drawn, so the back is unchanged. */
+const CORNER_FRONT_COLOR: readonly [number, number, number] = [0x16 / 255, 0x18 / 255, 0x1d / 255]
 
 /** Public interface — identical to the WebGL CubeScene so the widget does
  *  not care which backend drew the cube. */
@@ -331,7 +335,7 @@ export const createCubeSceneGpu: CreateCubeSceneGpu = (
     for (const batch of batches) {
       const base = batch.partOffset / 4
       const color =
-        batch.region.kind === "corner" ? CORNER_COLOR
+        batch.region.kind === "corner" ? CORNER_FRONT_COLOR
           : batch.region.kind === "back" ? BACK_COLOR
             : FACE_COLOR
       // WGSL layout: vec3<f32> has align 16 but SIZE 12, and a following

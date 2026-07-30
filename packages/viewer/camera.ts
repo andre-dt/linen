@@ -247,10 +247,22 @@ export function createCamera(): OrbitCamera {
       ]
     },
 
-    dolly(delta) {
+    dolly(delta, focal) {
       // Multiplicative: zooming feels linear to the user at every scale,
       // and distance can never cross zero and invert the view.
       const factor = Math.exp(delta * 0.001)
+
+      // Half the VISIBLE WORLD HEIGHT at the target plane, before the zoom.
+      // `focal` is measured in exactly this unit (half-heights from centre),
+      // so the cursor's world offset from the target is simply focal × this.
+      //   orthographic: the projection height IS the visible height.
+      //   perspective:  the frustum half-height at the target is
+      //                 distance · tan(fov/2).
+      const halfHeightBefore =
+        projection.kind === "orthographic"
+          ? projection.height / 2
+          : distance * Math.tan(fieldOfView / 2)
+
       distance = Math.max(0.01, distance * factor)
       // Under orthographic, distance does not affect apparent size — the
       // VISIBLE HEIGHT is what zoom means. Scaling it by the same factor
@@ -261,6 +273,29 @@ export function createCamera(): OrbitCamera {
           height: Math.max(0.01, projection.height * factor),
         }
       }
+
+      // Zoom TOWARD the cursor: the world point under it must not move. Its
+      // offset from the target is focal × halfHeight; the half-height shrank
+      // by the zoom, so the offset would shrink with it unless we shift the
+      // target by the exact difference. No fudge factor — this is the real
+      // pixel→world scale, so the point stays locked under the cursor.
+      if (!focal) return
+      const halfHeightAfter =
+        projection.kind === "orthographic"
+          ? projection.height / 2
+          : distance * Math.tan(fieldOfView / 2)
+      const scale = halfHeightBefore - halfHeightAfter
+      const right: Vector3 = [-Math.sin(azimuth), Math.cos(azimuth), 0]
+      const up: Vector3 = [
+        -Math.sin(elevation) * Math.cos(azimuth),
+        -Math.sin(elevation) * Math.sin(azimuth),
+        Math.cos(elevation),
+      ]
+      target = [
+        target[0] + (right[0] * focal[0] + up[0] * focal[1]) * scale,
+        target[1] + (right[1] * focal[0] + up[1] * focal[1]) * scale,
+        target[2] + (right[2] * focal[0] + up[2] * focal[1]) * scale,
+      ]
     },
 
     setProjection(kind) {
