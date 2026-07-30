@@ -232,9 +232,16 @@ export const createCubeSceneGpu: CreateCubeSceneGpu = (
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   })
 
+  // Smoothest sampling the API allows: trilinear (linear mag + min +
+  // mipmap) plus maximum anisotropy, so labels stay crisp when a panel is
+  // seen edge-on and shrinks along one axis. maxAnisotropy 16 is the ceiling
+  // every WebGPU implementation supports; it only takes effect with linear
+  // min+mipmap filtering, which is why all three are linear.
   const sampler = device.createSampler({
     magFilter: "linear",
     minFilter: "linear",
+    mipmapFilter: "linear",
+    maxAnisotropy: 16,
     addressModeU: "clamp-to-edge",
     addressModeV: "clamp-to-edge",
   })

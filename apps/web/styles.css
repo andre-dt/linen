@@ -1469,19 +1469,26 @@ table.point-list {
   background: transparent;
   color: var(--hud-text);
   font-family: var(--font-ui, system-ui, sans-serif);
-  /* Sized to fit the longest label ("BOTTOM") inside the 256px texture
+  /* Sized to fit the longest label ("Bottom") inside the 512px texture
      box with margin. The UV span maps this box across the whole panel, so
-     this is the only knob for how large the word lands. */
-  font-size: 40px;
+     this is the only knob for how large the word lands — 80px on a 512 box
+     is the same fraction as the old 40px on 256. */
+  font-size: 80px;
   font-weight: 600;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  padding: 0 12px;
+  letter-spacing: 2px;
+  /* Initial case — the label strings already arrive as "Front", "Top", …
+     so no text-transform; forcing uppercase was the only thing making them
+     all-caps. */
+  padding: 0 24px;
   box-sizing: border-box;
   text-align: center;
-  /* A whisper of glow so the light type holds its edge against the dark
-     panel without a hard outline. */
-  text-shadow: 0 0 8px rgba(0, 0, 0, 0.35);
+  /* Anti-aliasing / font smoothing at the maximum the platform exposes, so
+     the rasterised glyphs the texture copies are as crisp as possible:
+     grayscale AA (WebKit), light hinting-friendly smoothing (Firefox),
+     and optimizeLegibility for kerning/ligatures. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 .view-cube-slot {
