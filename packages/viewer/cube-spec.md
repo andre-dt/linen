@@ -109,18 +109,25 @@ orthographic camera scales it to the widget).
 | Constant | Meaning | Default |
 |---|---|---|
 | `HALF` | Distance from centre to each panel plane | `1.0` |
-| `PANEL_HALF` | Half-width of the small FRONT plate (straight run before arc) | `0.55` |
-| `PANEL_CORNER_RADIUS` | Rounding radius of the front plate's corners | `0.16` |
-| `BACK_PANEL_HALF` | Half-width of the BACK plate — sized so its corner reaches the disc CENTRE | `0.662` (derived) |
+| `PANEL_HALF` | Half-width the disc placement is anchored to (straight run before arc) | `0.55` |
+| `PANEL_CORNER_RADIUS` | Rounding radius of the front plate's corners | `0.22` |
+| `PANEL_DISC_GAP` | Gap the FRONT plate is pulled in by so it never touches the discs | `0.09` |
+| `FRONT_PANEL_HALF` | Half-width of the front plate AS DRAWN — `PANEL_HALF − PANEL_DISC_GAP` | `0.46` (derived) |
+| `BACK_PANEL_HALF` | Half-width of the BACK plate — sized so its rounded corner reaches the disc CENTRE line | `0.691` (derived) |
 | `BACK_PANEL_CORNER_RADIUS` | Rounding radius of the back plate's corners | `0.16` |
 | `PLATE_SEPARATION` | Depth gap between a face's front and back plates | `0.004` |
-| `CORNER_RADIUS` | Radius of a corner circle | `0.275` |
-| `CORNER_DISTANCE` | Distance from cube centre to the disc centre, along the body diagonal | `1.343` |
+| `CORNER_RADIUS` | Radius of a corner circle | `0.240` (derived) |
+| `CORNER_DISTANCE` | Distance from cube centre to the disc centre, along the body diagonal | `1.392` (derived) |
 | `CIRCLE_SEGMENTS` | Triangle fan segments per circle / rounded arc | `24` |
 
-A panel reaches `PANEL_HALF + PANEL_CORNER_RADIUS` ≈ `0.71` from the face centre
-along each in-plane axis. With `HALF = 1.0` that leaves a **visible void gap**
-of ≈ `0.29` on each side between adjacent panels — the detached-panel look.
+The disc placement is anchored to `PANEL_HALF`; the **drawn** front plate is
+`FRONT_PANEL_HALF = PANEL_HALF − PANEL_DISC_GAP`, so only the visible plate backs
+off from the discs while the discs stay put (cube-spec.md §2.1). The drawn front
+plate reaches `FRONT_PANEL_HALF + PANEL_CORNER_RADIUS` ≈ `0.68` from the face
+centre along each in-plane axis. With `HALF = 1.0` that leaves a **visible void
+gap** on each side between adjacent panels — the detached-panel look — and the
+larger back plate (reach ≈ `0.85`) shows through it, so a ray in the gap punches
+through to the opposite face's back plate.
 
 **Corner placement is solved, not guessed.** The disc must sit OUT AT THE CORNER
 (near `±HALF` on all three axes), not pulled into the hollow interior. Take the
@@ -128,12 +135,18 @@ three adjacent panels' nearest rounded-corner tips — for the +X+Y+Z corner the
 are `(HALF, c, c)`, `(c, HALF, c)`, `(c, c, HALF)` where
 `c = PANEL_HALF + PANEL_CORNER_RADIUS/√2`. The disc centre is their **centroid**
 (equidistant to all three), which lands on the body diagonal at distance
-`CORNER_DISTANCE ≈ 1.343`, and `CORNER_RADIUS ≈ 0.275` is the distance from that
+`CORNER_DISTANCE ≈ 1.392`, and `CORNER_RADIUS ≈ 0.240` is the distance from that
 centroid to each tip — so the disc's rim **touches all three panels**. If the
 panel constants change, these two are re-derived from that construction.
 
 These are **display** values, tuned by eye against the widget; they are not
 lengths in the model. They live as named constants and change here first.
+
+**These invariants are unit-tested** (`cube.test.ts`): the part inventory (§2),
+the void gap and single-sided punch-through picking (§4), and that the derived
+corner constants keep the disc rim on the three adjacent panel tips (this §). A
+constant change that broke the construction would fail a test rather than only
+look wrong in the widget.
 
 ## 4. Hollow behaviour & picking
 
@@ -188,10 +201,70 @@ This is the defining property. Because the cube is hollow with void edges:
 
 ## 6. Camera
 
-Unchanged from today: an **orthographic** camera that mirrors the model
-camera's **orientation** (azimuth, elevation, roll) but not its distance or
-target — the cube is always centred and the same size. Orthographic so the
-cube's size does not swell/shrink with turn.
+An **orthographic** camera that mirrors the model camera's **orientation**
+(azimuth, elevation, roll) but not its distance or target — the cube is always
+centred and the same size. Orthographic so the cube's size does not swell/shrink
+with turn.
+
+The cube does not own a camera; it is handed the model camera's three angles
+each frame and builds its own view matrix from them (`viewProjectionFor`). So
+whatever the model camera does, the cube shows — they cannot disagree.
+
+### 6.1 Free tumble
+
+Orbit is **unlimited** — the camera tumbles a full 360° in every direction,
+including up and over the poles. There is no turntable clamp on elevation.
+
+- Elevation accumulates freely; past ±90° the derived up vector's `cos(elevation)`
+  term goes negative and turns the frame over cleanly, so the view keeps rolling
+  instead of gimbal-flipping.
+- The single exact pole (`cos(elevation) = 0`) is degenerate — the derived up is
+  the zero vector there. A guard substitutes a defined screen-up
+  (`[−cos azimuth, −sin azimuth, 0]`) so `lookAt` never collapses. A continuous
+  drag only lands exactly on it with measure zero; the guard is for safety, not a
+  path the user feels.
+- `POLE_LIMIT` (π/2 − 0.01) still exists, but **only** governs orbit's need for a
+  defined up during a drag — it is NOT used to clamp a snap target (§6.2).
+
+The same free-tumble math runs in `camera.ts` (the model camera) and in the
+cube's own `viewProjectionFor`, including the exact-pole up guard, so the cube
+tumbles identically to the model.
+
+### 6.2 Click-to-face snap
+
+Clicking a face / corner / (formerly edge) region snaps the camera to look from
+that region's direction, animated over `VIEW_TRANSITION_SECONDS`. The snap lands
+the face **square and upright** from ANY tumbled start:
+
+- **Dead-on the pole.** Top and Bottom targets land on the EXACT pole (±π/2), not
+  a hair short at `POLE_LIMIT`. A fraction of a degree off-normal doubles a
+  plane's grid line and leaves a sliver on the cube; the exact pole is safe
+  because the up-vector guard covers the degenerate up it produces.
+- **Upright, and Bottom the same way up as Top.** At the bottom pole the derived
+  world-up points −Y (the `−sin(elevation)` term flips sign below the equator),
+  the opposite of the top pole's +Y — so a bottom view rolled to 0 would read
+  upside-down. The bottom-pole target carries a half-turn of roll (π) to bring
+  screen-up back to +Y, so "Bottom" reads the same way up as "Top". Every other
+  face's target roll is 0.
+- **Smooth — no jump, no bump.** Two things are handled so every quantity
+  progresses together over the one transition:
+  1. *No first-frame jump.* A free tumble can wind the camera into the flipped
+     hemisphere. Before the transition, the pose is RECONCILED into the canonical
+     (unflipped) branch **without moving the camera** — elevation is reflected
+     back over the pole and the half-turn is carried into azimuth and roll, which
+     render to the identical frame. So the ease starts from exactly where the
+     camera already is.
+  2. *No pole bump.* For a pole target the great-circle arc's `atan2` azimuth
+     re-derivation is ill-conditioned right at the pole. Pole snaps skip the arc
+     and interpolate the angles directly through the pole; the up-vector guard
+     covers the singular instant. The per-frame motion is then a smooth bell
+     curve (fastest at the pole crossing, by geometry) with no discontinuity.
+
+Azimuth, elevation and roll each ease the **short way** to the target. **These
+behaviours are unit-tested** (`camera.test.ts`): unlimited orbit, the up vector
+staying unit and defined across a full tumble, dead-on/upright landings for every
+face, Bottom reading upright, and the animation being continuous (no first-frame
+jump, no spike crossing the pole).
 
 ## 7. Open decisions
 

@@ -20,11 +20,11 @@ import {
   type DragGesture, type HoverGesture, type ClickGesture,
 } from "./gestures"
 import {
-  createBackend, createScene, PLANE_EXTENT,
+  createConfiguredRenderer, PLANE_EXTENT,
   checkViewportCapabilities, CAPABILITY_MESSAGE,
 } from "@linen/viewer"
 import type {
-  Backend, Scene, PlaneHit, DatumPlaneId, SketchFrame, SketchCurve, SketchPoint,
+  Renderer, Scene, PlaneHit, DatumPlaneId, SketchFrame, SketchCurve, SketchPoint,
   CapabilityReason,
 } from "@linen/viewer"
 
@@ -86,32 +86,28 @@ export function Viewport(props: ViewportProps) {
       return
     }
 
-    let device: Backend
+    // The renderer resolves the backend by config ('auto' = WebGPU when the
+    // browser has it, else WebGL2) and owns both the graphics context and
+    // the scene. Both backends now implement the main scene through the
+    // shared DrawEngine, so there is no need to pin WebGL2 here anymore.
+    let renderer: Renderer
     try {
-      // WebGL2 explicitly, NOT the default preference.
-      //
-      // createBackend prefers WebGPU, but createScene only implements
-      // WebGL2 — so on a machine that HAS a WebGPU adapter the two
-      // disagree and the viewport dies with "the WebGPU renderer is not
-      // implemented yet". Asking for what we can actually draw with is
-      // the fix; flip this back the moment the WebGPU path lands.
-      device = await createBackend(canvas, "webgl2")
-      setBackend(device.kind)
+      renderer = await createConfiguredRenderer(canvas)
+      setBackend(renderer.kind)
     } catch (error) {
       setFailure(error instanceof Error ? error.message : "no usable graphics backend")
       return
     }
 
-    // Inside the guard: createScene throws for an unimplemented backend
-    // and for any shader that fails to compile. Outside it, that throw
-    // escaped into an async onMount and vanished — leaving a blank canvas
-    // and no message, which is the hardest possible failure to diagnose.
+    // createScene can throw for a shader that fails to compile; catching it
+    // here surfaces a message instead of a blank canvas from an async
+    // onMount where the throw would otherwise vanish.
     let active: Scene
     try {
-      active = createScene(device)
+      active = renderer.createScene()
     } catch (error) {
       setFailure(error instanceof Error ? error.message : "could not create the scene")
-      device.dispose()
+      renderer.dispose()
       return
     }
     scene = active
@@ -159,8 +155,9 @@ export function Viewport(props: ViewportProps) {
     onCleanup(() => {
       cancelAnimationFrame(frame)
       observer.disconnect()
-      scene?.dispose()
-      device.dispose()
+      // The renderer owns the scene and the backend; disposing it releases
+      // both (and the engine underneath).
+      renderer.dispose()
       scene = null
       props.onScene?.(null)
     })

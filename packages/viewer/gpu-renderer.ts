@@ -6,14 +6,14 @@
 // native MSAA, compute-capable. It renders only where the browser exposes
 // WebGPU; the selector in renderer.ts decides when to reach for it.
 //
-// The cube has a complete WebGPU implementation (cube-scene-gpu.ts). The
-// main CAD scene's WebGPU renderer is the remaining port; until it lands,
-// createScene throws a clear, explicit error so a caller that selected
-// WebGPU for the main viewport learns exactly what is missing rather than
-// getting a blank canvas.
+// Both scenes are now complete on WebGPU: the cube (cube-scene-gpu.ts) and
+// the main CAD scene, the latter built on the backend-neutral DrawEngine
+// (engine/engine-gpu.ts) exactly as the WebGL2 renderer builds its own.
 // =====================================================================
 
 import { createBackend, type WebGpuBackend } from "./backend"
+import { createScene } from "./scene"
+import { createGpuEngine } from "./engine/engine-gpu"
 import { createCubeSceneGpu } from "./cube-scene-gpu"
 import type { Renderer, RendererFactory } from "./renderer"
 import type { Scene } from "./index"
@@ -33,17 +33,17 @@ export const createWebGpuRenderer: RendererFactory = async (canvas) => {
   }
 
   const cubeScenes: CubeScene[] = []
+  let scene: Scene | null = null
 
   const renderer: Renderer = {
     kind: "webgpu",
     createScene(): Scene {
-      // The WebGPU main-scene renderer is the next port. Explicit rather
-      // than silent: selecting WebGPU for the main viewport before this
-      // exists must say so, not paint nothing.
-      throw new Error(
-        "the WebGPU main-scene renderer is not implemented yet — " +
-        "select 'webgl2' or 'auto' for the main viewport",
-      )
+      if (!scene) {
+        scene = createScene(createGpuEngine(
+          backend.canvas, backend.device, backend.context, backend.format,
+        ))
+      }
+      return scene
     },
     createCubeScene(cubeCanvas: HTMLCanvasElement): CubeScene {
       const cube = createCubeSceneGpu(
@@ -53,6 +53,8 @@ export const createWebGpuRenderer: RendererFactory = async (canvas) => {
       return cube
     },
     dispose() {
+      scene?.dispose()
+      scene = null
       for (const cube of cubeScenes) cube.dispose()
       cubeScenes.length = 0
       backend.dispose()

@@ -11,9 +11,11 @@
 
 import { createBackend } from "./backend"
 import { createScene } from "./scene"
+import { createGlEngine } from "./engine/engine-gl"
 import { createCubeScene } from "./cube-scene"
 import type { Renderer, RendererFactory } from "./renderer"
 import type { Scene } from "./index"
+import type { WebGl2Backend } from "./backend"
 import type { CubeScene } from "./cube-scene"
 
 export const createWebGl2Renderer: RendererFactory = async (canvas) => {
@@ -33,7 +35,10 @@ export const createWebGl2Renderer: RendererFactory = async (canvas) => {
   const renderer: Renderer = {
     kind: "webgl2",
     createScene() {
-      if (!scene) scene = createScene(backend)
+      if (!scene) {
+        const gl = (backend as WebGl2Backend).gl
+        scene = createScene(createGlEngine(backend.canvas, gl))
+      }
       return scene
     },
     createCubeScene(cubeCanvas: HTMLCanvasElement): CubeScene {

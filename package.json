@@ -7,10 +7,13 @@
     "predev": "node scripts/free-ports.mjs",
     "dev": "pnpm --parallel --filter @linen/web --filter @linen/kernel dev",
     "build": "pnpm --recursive build",
-    "typecheck": "pnpm --recursive typecheck"
+    "typecheck": "pnpm --recursive typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
+    "@types/node": "catalog:",
     "typescript": "catalog:",
-    "@types/node": "catalog:"
+    "vitest": "catalog:"
   }
 }

@@ -1455,41 +1455,11 @@ table.point-list {
    The stage owns the perspective; the body owns the rotation; the faces
    are six planes pushed out from a shared centre. Arrows sit OUTSIDE the
    3D context so they stay square to the screen. */
-/* The HTML face label uploaded onto each cube panel via HTML-in-Canvas
-   (texElementImage2D). The panel's dark recess colour comes from the GL
-   shader tint; this element supplies ONLY the glyphs, over a transparent
-   ground, so the two composite the same way the baked bitmap used to —
-   but drawn by the browser's text engine, at device resolution, and fully
-   styleable here. The box is square (matches FACE_TEXTURE_SIZE); the flex
-   centring places the label in the middle of the panel. */
-.cube-face-label {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  color: var(--hud-text);
-  font-family: var(--font-ui, system-ui, sans-serif);
-  /* Sized to fit the longest label ("Bottom") inside the 512px texture
-     box with margin. The UV span maps this box across the whole panel, so
-     this is the only knob for how large the word lands — 80px on a 512 box
-     is the same fraction as the old 40px on 256. */
-  font-size: 80px;
-  font-weight: 600;
-  letter-spacing: 2px;
-  /* Initial case — the label strings already arrive as "Front", "Top", …
-     so no text-transform; forcing uppercase was the only thing making them
-     all-caps. */
-  padding: 0 24px;
-  box-sizing: border-box;
-  text-align: center;
-  /* Anti-aliasing / font smoothing at the maximum the platform exposes, so
-     the rasterised glyphs the texture copies are as crisp as possible:
-     grayscale AA (WebKit), light hinting-friendly smoothing (Firefox),
-     and optimizeLegibility for kerning/ligatures. */
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
-}
+/* The HTML-in-Canvas label styling (cube faces AND datum-plane names) now
+   lives in the viewer's DrawEngine, not here: see
+   packages/viewer/engine/label-style.ts, which writes the element's CSS
+   inline from a style token. Kept out of this sheet so the label look has a
+   single owner shared by both rendering backends. */
 
 .view-cube-slot {
   position: fixed;
