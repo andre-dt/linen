@@ -245,7 +245,38 @@ export function ViewCube(props: ViewCubeProps) {
     return [event.clientX - bounds.left, event.clientY - bounds.top]
   }
 
+  // The cube floats OVER the CAD viewport, so it is the topmost hit target
+  // and swallows every event in its square — including the right-drag that
+  // ORBITS the camera and the wheel that zooms. Those are the viewport's, not
+  // the cube's: only the LEFT button belongs to the cube (hover + snap-to-
+  // view). So any non-left camera gesture is forwarded to the viewport canvas
+  // underneath by re-dispatching a clone of the event there. The cube and the
+  // viewport are siblings (the cube is position:fixed), so nothing bubbles
+  // between them on its own.
+  const viewportBeneath = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>("canvas.viewport")
+
+  const forwardToViewport = (event: PointerEvent | WheelEvent | MouseEvent): void => {
+    const target = viewportBeneath()
+    if (!target) return
+    // Clone with the SAME kind and coordinates so the viewport's gesture
+    // detector reads the identical button/position it would from a direct
+    // event. PointerEvent for pointer*, WheelEvent for wheel, MouseEvent for
+    // contextmenu.
+    const Ctor = event.constructor as {
+      new (type: string, init: unknown): Event
+    }
+    target.dispatchEvent(new Ctor(event.type, event))
+  }
+
   const onCubeMove = (event: PointerEvent): void => {
+    // A right/middle drag over the cube is the camera moving; keep feeding it
+    // to the viewport and do not light facets.
+    if (event.buttons > 1 || (event.buttons & 2) !== 0) {
+      if (cube) cube.hovered = null
+      forwardToViewport(event)
+      return
+    }
     if (!cube) return
     // Nothing lit while dragging: the cursor is moving the control, not
     // aiming at a facet.
@@ -261,9 +292,32 @@ export function ViewCube(props: ViewCubeProps) {
     if (cube) cube.hovered = null
   }
 
+  const onCubeDown = (event: PointerEvent): void => {
+    // Non-left press starts a camera gesture: hand it to the viewport.
+    if (event.button !== 0) {
+      forwardToViewport(event)
+    }
+  }
+
+  const onCubeUp = (event: PointerEvent): void => {
+    if (event.button !== 0) forwardToViewport(event)
+  }
+
+  const onCubeWheel = (event: WheelEvent): void => {
+    // Zoom belongs to the camera even when the pointer is over the cube.
+    forwardToViewport(event)
+  }
+
+  const onCubeContextMenu = (event: MouseEvent): void => {
+    // The right button orbits; its native menu must not appear over the cube
+    // any more than over the viewport.
+    event.preventDefault()
+  }
+
   const onCubeClick = (event: MouseEvent): void => {
-    // A release that merely ends a drag is not a click.
-    if (dragging() || !cube) return
+    // Only the LEFT button snaps a view. A release that merely ends a drag,
+    // or a non-left click, is not a snap.
+    if (event.button !== 0 || dragging() || !cube) return
     const [x, y] = localPoint(event)
     const region = cube.pick(x, y)
     if (region) props.onPick?.(region.direction)
@@ -280,8 +334,12 @@ export function ViewCube(props: ViewCubeProps) {
         class="view-cube-canvas"
         classList={{ failed: failed() }}
         style={{ width: `${CUBE_SIZE}px`, height: `${CUBE_SIZE}px` }}
+        onPointerDown={onCubeDown}
         onPointerMove={onCubeMove}
+        onPointerUp={onCubeUp}
         onPointerLeave={onCubeLeave}
+        onWheel={onCubeWheel}
+        onContextMenu={onCubeContextMenu}
         onClick={onCubeClick}
       />
       {/* Visible reason when WebGPU is unavailable, instead of the cube

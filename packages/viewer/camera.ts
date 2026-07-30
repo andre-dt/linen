@@ -188,13 +188,26 @@ export function createCamera(): OrbitCamera {
    * case is unchanged.
    */
   const upVector = (): Vector3 => {
-    if (roll === 0) return [0, 0, 1]
     const forward = directionOf(azimuth, elevation)
-    const worldUp: Vector3 = [
+    // The up vector that stays perpendicular to the view direction at ANY
+    // elevation — including past the poles, where its Z term (cos) goes
+    // negative and turns the frame over so free tumble reads right. Built
+    // for every elevation, not just when rolled, because at the pole a
+    // fixed [0,0,1] would be PARALLEL to the view direction and collapse
+    // lookAt.
+    let worldUp: Vector3 = [
       -Math.sin(elevation) * Math.cos(azimuth),
       -Math.sin(elevation) * Math.sin(azimuth),
       Math.cos(elevation),
     ]
+    // Exactly on a pole the view direction is ±Z and worldUp is the zero
+    // vector; nudge to a defined screen-up so lookAt stays well-formed.
+    // A continuous drag only lands here with measure zero, so this is a
+    // guard, not a path the user feels.
+    if (Math.hypot(worldUp[0], worldUp[1], worldUp[2]) < 1e-9) {
+      worldUp = [-Math.cos(azimuth), -Math.sin(azimuth), 0]
+    }
+    if (roll === 0) return worldUp
     return rotateAbout(worldUp, forward, roll)
   }
 
@@ -227,7 +240,14 @@ export function createCamera(): OrbitCamera {
       // fighting them for control of the camera is the worst outcome.
       transition = null
       azimuth += deltaAzimuth
-      elevation = Math.max(-POLE_LIMIT, Math.min(POLE_LIMIT, elevation + deltaElevation))
+      // FREE TUMBLE: elevation is NOT clamped at the poles. The derived
+      // up vector (see upVector) is built from the same elevation, so it
+      // stays perpendicular to the view direction as elevation carries on
+      // past ±90° and the frame turns over cleanly instead of flipping.
+      // Only the single exact pole (cos(elevation) === 0) is degenerate,
+      // and a continuous drag crosses it with measure zero; upVector
+      // nudges off it if a frame lands exactly there.
+      elevation += deltaElevation
     },
 
     pan(deltaX, deltaY) {
@@ -443,11 +463,14 @@ export function createCamera(): OrbitCamera {
         -POLE_LIMIT,
         Math.min(POLE_LIMIT, Math.asin(Math.max(-1, Math.min(1, z)))),
       )
-      // Straight up or down leaves the azimuth undetermined — every
-      // value points at the same place. Keeping the current one avoids a
-      // pointless spin on the way to Top or Bottom.
+      // Straight up or down (Top/Bottom) leaves the azimuth undetermined
+      // by the direction alone — every azimuth points at the same place.
+      // After a free tumble the current azimuth is arbitrary, so keeping
+      // it would land the face rotated. Snap to the CANONICAL azimuth for
+      // the pole instead (the same one viewFrom's top/bottom use), so the
+      // face always arrives square and upright.
       const targetAzimuth =
-        Math.hypot(x, y) < 1e-9 ? azimuth : Math.atan2(y, x)
+        Math.hypot(x, y) < 1e-9 ? -Math.PI / 2 : Math.atan2(y, x)
 
       if (immediate) {
         transition = null
@@ -455,6 +478,15 @@ export function createCamera(): OrbitCamera {
         elevation = targetElevation
         return
       }
+
+      // Free tumble can wind elevation past a full turn; bring the START
+      // into the canonical range so the transition interpolates the short
+      // way on BOTH angles, not the many turns a wound-up value implies.
+      azimuth = ((azimuth % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)
+      elevation = Math.atan2(
+        Math.sin(elevation),
+        Math.cos(elevation),
+      )
 
       // Short way round, as viewFrom does: interpolating raw angles
       // across the seam would spin the model most of the way the wrong

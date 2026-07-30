@@ -310,11 +310,17 @@ export const createCubeScene = (canvas: HTMLCanvasElement): CubeScene => {
     // Up, turned by the roll about the view axis — so the cube leans
     // exactly as the model does.
     const forward: Vector3 = [-eye[0] / 4, -eye[1] / 4, -eye[2] / 4]
-    const worldUp: Vector3 = [
+    let worldUp: Vector3 = [
       -Math.sin(elevation) * Math.cos(azimuth),
       -Math.sin(elevation) * Math.sin(azimuth),
       Math.cos(elevation),
     ]
+    // Exactly on a pole worldUp collapses to zero and is parallel to the
+    // view direction; nudge to a defined screen-up so lookAt holds while
+    // the cube tumbles freely over the pole. Mirrors camera.ts.
+    if (Math.hypot(worldUp[0], worldUp[1], worldUp[2]) < 1e-9) {
+      worldUp = [-Math.cos(azimuth), -Math.sin(azimuth), 0]
+    }
     const cosRoll = Math.cos(roll)
     const sinRoll = Math.sin(roll)
     const dot =
