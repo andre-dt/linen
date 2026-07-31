@@ -2,7 +2,15 @@
 // apps/web/screens/project.tsx — the project workspace at /project/:id.
 //
 // A full-bleed canvas with HUD panels floating over it, in the shape the
-// editor will grow into. What has data today is live:
+// editor will grow into.
+//
+// The screen has TWO modes, told apart by the :artifactId route param:
+// with no part selected it is a CHOOSER (panels over an empty field, no
+// 3D at all — no canvas, no view cube, no graphics context), and with a
+// part selected it is the EDITOR. The 3D world belongs to a part, so it
+// mounts and unmounts with one.
+//
+// What has data today is live:
 //
 //   - breadcrumb (top-left): Dashboard › <project>, navigates back
 //   - artifacts (left): the project's parts & modules — real parts list
@@ -247,17 +255,28 @@ export function Project(props: { auth: Auth }) {
           <CameraProvider>
             <InitialFraming />
 
-            {/* The canvas backdrop, plus the interaction overlay over it. */}
-            <div class="hud-canvas project-canvas">
-              <div class="viewport-stack">
-                <SceneCanvas />
-                <Viewport
-                  pickingPlane={planeField() !== null}
-                  selectedPlane={selectedPlaneId()}
-                  onPickPlane={acceptPlanePick}
-                />
+            {/* The canvas backdrop, plus the interaction overlay over it.
+                The 3D world belongs to a PART: with no part selected the
+                project screen is a chooser, and there is nothing to draw.
+                Gating the canvas slot (rather than the provider tree) is
+                what actually matters — RenderingCanvas builds no backend
+                until a <SceneCanvas> hands it an element, so no WebGL/WebGPU
+                context exists while the chooser is up. */}
+            <Show
+              when={selectedPart()}
+              fallback={<div class="hud-canvas project-canvas" />}
+            >
+              <div class="hud-canvas project-canvas">
+                <div class="viewport-stack">
+                  <SceneCanvas />
+                  <Viewport
+                    pickingPlane={planeField() !== null}
+                    selectedPlane={selectedPlaneId()}
+                    onPickPlane={acceptPlanePick}
+                  />
+                </div>
               </div>
-            </div>
+            </Show>
 
       {/* TOP-LEFT: breadcrumb back to the dashboard */}
       <div class="hud-slot hud-top-left">
@@ -414,11 +433,15 @@ export function Project(props: { auth: Auth }) {
         </Show>
       </div>
 
-      {/* The view cube is ALWAYS visible — a floating, freely draggable
-          control (fixed position, user-dragged, persisted), independent of
-          whether a part is selected. It rides above the HUD, so it is never
-          covered by a panel. */}
-      <ViewCube />
+      {/* The view cube is a control over the 3D camera, so it lives and dies
+          with the canvas: visible whenever a part is open, absent on the
+          project chooser where there is no view to orient. Within a part it
+          is always up — a floating, freely draggable control (fixed
+          position, user-dragged, persisted) riding above the HUD, so it is
+          never covered by a panel. */}
+      <Show when={selectedPart()}>
+        <ViewCube />
+      </Show>
 
       {/* THE DESIGNER: the selected element's input HUD. Entirely
           derived from the command's metadata — the plane picker, the
