@@ -51,7 +51,7 @@ export interface CubeScene {
 /** The BODY colour: one tone for the whole solid (cube-spec.md §5). */
 const BODY: Vector3 = [0.185, 0.240, 0.370]
 const FACE_COLOR: Vector3 = BODY
-const CORNER_COLOR: Vector3 = [0.290, 0.360, 0.520]
+const CORNER_COLOR: Vector3 = BODY
 const BACK_COLOR: Vector3 = [0.145, 0.180, 0.265]
 
 interface Batch {
