@@ -959,7 +959,25 @@ table.point-list {
 
 /* Slots pin panels to viewport edges. Absolute, so panels float over the
    canvas without any of them affecting another's box. */
-.hud-slot { position: absolute; z-index: var(--z-hud); }
+/* A slot is a POSITIONING FRAME, not a surface. Several are sized to the
+   band they could fill rather than to what they currently hold — the info
+   column is 260px wide and half the viewport tall even when its panel is
+   collapsed to a 28px icon button. Left hit-testable, that leftover air is
+   an invisible pane over the viewport: right-drag there never reaches the
+   interaction overlay, so the camera does not orbit and the browser's own
+   context menu opens instead.
+
+   So the frame itself takes no pointer, and the panels inside take it back
+   (.hud-panel, and the buttons a collapsed panel renders). Same split the
+   view cube uses for the air around its canvas. */
+.hud-slot {
+  position: absolute;
+  z-index: var(--z-hud);
+  pointer-events: none;
+}
+.hud-slot > *,
+.hud-slot .hud-panel,
+.hud-slot .ui-button { pointer-events: auto; }
 /* The toast slot rides the toast plane — above tooltips, dialogs, HUD. */
 .hud-slot.hud-bottom { z-index: var(--z-toast); }
 .hud-top-left { top: var(--hud-gap); left: var(--hud-gap); }

@@ -245,12 +245,23 @@ export function ViewCube() {
   // and swallows every event in its square — including the right-drag that
   // ORBITS the camera and the wheel that zooms. Those are the viewport's, not
   // the cube's: only the LEFT button belongs to the cube (hover + snap-to-
-  // view). So any non-left camera gesture is forwarded to the viewport canvas
+  // view). So any non-left camera gesture is forwarded to the viewport
   // underneath by re-dispatching a clone of the event there. The cube and the
   // viewport are siblings (the cube is position:fixed), so nothing bubbles
   // between them on its own.
+  //
+  // The target is the INTERACTION OVERLAY, not `canvas.viewport`. The canvas
+  // carries only pixels; every pointer handler lives on the transparent
+  // `div.viewport-interaction` coincident with it (see viewport.tsx). Aimed
+  // at the canvas, a forwarded right-drag lands on an element with no
+  // listeners and vanishes — the cube reads as a dead region for orbit and
+  // pan, and the release surfaces the browser's own context menu.
+  //
+  // Only the opening pointerdown needs forwarding: the overlay calls
+  // setPointerCapture for camera gestures, so the browser routes the rest of
+  // the drag straight to it, cube or no cube.
   const viewportBeneath = (): HTMLElement | null =>
-    document.querySelector<HTMLElement>("canvas.viewport")
+    document.querySelector<HTMLElement>(".viewport-interaction")
 
   const forwardToViewport = (event: PointerEvent | WheelEvent | MouseEvent): void => {
     const target = viewportBeneath()
