@@ -136,3 +136,86 @@ describe("camera — the snap animates smoothly", () => {
     expect(camera.up[1]).toBeCloseTo(1, 4)      // upright
   })
 })
+
+describe("camera — pan tracks the cursor", () => {
+  // The deltas are in half-heights of the visible frame, y screen-up, so a
+  // drag of +1 in y must move the world by exactly one half-height UP the
+  // screen. Both regressions this pins were user-visible: the vertical axis
+  // was inverted, and the scale ignored viewport size and projection.
+
+  it("drags the model WITH the cursor, not against it", () => {
+    // From the default view, looking down -Z with +Y up the screen.
+    const camera = createCamera()
+    camera.lookFrom([0, 0, 1])
+    playSnap(camera)
+    const before = [...camera.target] as Vector3
+
+    // Drag "up the screen": the model must follow, so the target moves
+    // DOWN in world terms — the camera looks at a lower part of the model.
+    camera.pan(0, 0.5)
+    expect(camera.target[1]).toBeLessThan(before[1])
+
+    // And back down again returns it, so the axis is symmetric.
+    camera.pan(0, -0.5)
+    expect(camera.target[1]).toBeCloseTo(before[1], 6)
+  })
+
+  it("is linear: two half-drags equal one whole drag", () => {
+    const once = createCamera()
+    const twice = createCamera()
+    once.pan(0.4, 0.6)
+    twice.pan(0.2, 0.3)
+    twice.pan(0.2, 0.3)
+    for (let axis = 0; axis < 3; axis += 1) {
+      expect(twice.target[axis]).toBeCloseTo(once.target[axis]!, 9)
+    }
+  })
+
+  it("moves exactly one half-height of world per unit of drag", () => {
+    // Orthographic makes the expected distance exact and independent of
+    // `distance`: the visible height IS the projection height.
+    const camera = createCamera()
+    camera.setProjection("orthographic")
+    const halfHeight = camera.projection.kind === "orthographic"
+      ? camera.projection.height / 2
+      : 0
+    expect(halfHeight).toBeGreaterThan(0)
+
+    const before = [...camera.target] as Vector3
+    camera.pan(1, 0)
+    const moved = Math.hypot(
+      camera.target[0] - before[0],
+      camera.target[1] - before[1],
+      camera.target[2] - before[2],
+    )
+    expect(moved).toBeCloseTo(halfHeight, 6)
+  })
+
+  it("keeps the same drag feeling the same after a zoom", () => {
+    // Under orthographic a zoom changes the visible height, so the world
+    // distance per unit of drag MUST change with it — that is what makes
+    // the model stay under the cursor. The ratio is what stays fixed.
+    const camera = createCamera()
+    camera.setProjection("orthographic")
+
+    const dragDistance = (): number => {
+      const before = [...camera.target] as Vector3
+      camera.pan(1, 0)
+      const moved = Math.hypot(
+        camera.target[0] - before[0],
+        camera.target[1] - before[1],
+        camera.target[2] - before[2],
+      )
+      camera.pan(-1, 0)
+      return moved
+    }
+
+    const heightOf = (): number =>
+      camera.projection.kind === "orthographic" ? camera.projection.height : 0
+
+    const beforeRatio = dragDistance() / heightOf()
+    camera.dolly(-400)                       // zoom in
+    expect(heightOf()).toBeLessThan(240)     // the zoom really happened
+    expect(dragDistance() / heightOf()).toBeCloseTo(beforeRatio, 9)
+  })
+})

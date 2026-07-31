@@ -52,9 +52,16 @@ export type GestureKind = "orbit" | "pan" | "select"
 /** A drag in progress, reported per move. */
 export interface DragGesture {
   readonly kind: "orbit" | "pan"
-  /** Movement since the last report, in CSS pixels. */
+  /** Movement since the last report, in CSS pixels, on the DOM's axes —
+   *  deltaY counts DOWNWARD. A consumer converting to a screen-up unit
+   *  has to flip it; see the pan branch of Viewport's onDrag. */
   readonly deltaX: number
   readonly deltaY: number
+  /** The surface's height in CSS pixels, for consumers that need to
+   *  express the drag as a fraction of the visible frame rather than in
+   *  raw pixels. Measured here because this is the layer that owns the
+   *  element; 0 if it could not be measured. */
+  readonly surfaceHeight: number
 }
 
 /** A click that did not drag: a selection, at a canvas-relative point. */
@@ -288,7 +295,13 @@ export function GestureDetector(props: GestureDetectorProps) {
         else reportX = 0
       }
 
-      props.onDrag?.({ kind: active, deltaX: reportX, deltaY: reportY })
+      const surface = event.currentTarget as HTMLElement | null
+      props.onDrag?.({
+        kind: active,
+        deltaX: reportX,
+        deltaY: reportY,
+        surfaceHeight: surface?.getBoundingClientRect().height ?? 0,
+      })
     },
 
     onPointerUp(event) {

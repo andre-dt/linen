@@ -124,40 +124,65 @@ void main() {
   fragColor = vec4(shade, 1.0);
 }`
 
+// The origin sprite. aPosition is a unit corner offset, not a world point:
+// the quad is placed in screen space around the projected origin, so it
+// keeps a fixed pixel size and always faces the viewer.
 const ORIGIN_VS = `#version 300 es
 in vec3 aPosition;
-in vec3 aNormal;
+in vec2 aTexCoord;
 uniform mat4 uViewProjection;
 uniform vec2 uViewport;
 uniform float uPixelRadius;
-out vec3 vNormal;
+out vec2 vTexCoord;
 void main() {
-  vNormal = aNormal;
+  vTexCoord = aTexCoord;
   vec4 anchor = uViewProjection * vec4(0.0, 0.0, 0.0, 1.0);
   vec2 offset = aPosition.xy * uPixelRadius * 2.0 / uViewport * anchor.w;
   gl_Position = vec4(anchor.xy + offset, anchor.zw);
 }`
 
+// A target reticle cut out of the quad: a solid centre dot, a gap, and a
+// thin ring at the rim. No lighting — the origin has no surface to catch
+// any, and shading it would read as a ball sitting in the scene.
+//
+// The dot marks the point; the ring is what makes it read as a TARGET,
+// and it earns its place beyond decoration: the gap keeps the ring from
+// swallowing the dot at small sizes, so the exact point stays legible
+// while the ring draws the eye to it from across the viewport.
+//
+// Radii are fractions of the sprite's half-extent, so the reticle scales
+// with uPixelRadius and its proportions hold at every DPR. Coverage is a
+// band function — 1 inside the shape, feathered to 0 across one pixel on
+// each edge. Dot and ring are combined with max(), not added: where they
+// ever overlap, the alpha stays 1 instead of doubling into a bright seam.
 const ORIGIN_FS = `#version 300 es
 precision highp float;
-in vec3 vNormal;
-uniform vec3 uLightDirection;
-#define ORIGIN_MERIDIAN_COUNT 4.0
-const vec3 ORIGIN_CHECKER_LIGHT = vec3(1.0, 1.0, 1.0);
-const vec3 ORIGIN_CHECKER_DARK = vec3(0.55, 0.57, 0.60);
-const float PI = 3.14159265359;
+in vec2 vTexCoord;
+uniform vec3 uColor;
+uniform float uOpacity;
+uniform float uPixelRadius;
+#define ORIGIN_DOT_RADIUS 0.26
+#define ORIGIN_RING_RADIUS 0.82
+#define ORIGIN_RING_WIDTH 0.13
 out vec4 fragColor;
 void main() {
-  vec3 normal = normalize(vNormal);
-  vec3 light = normalize(uLightDirection);
-  float diffuse = max(dot(normal, light) * 0.5 + 0.5, 0.0);
-  float hemisphere = step(0.0, normal.z);
-  float azimuth = atan(normal.y, normal.x) / (2.0 * PI) + 0.5;
-  float wedge = floor(azimuth * ORIGIN_MERIDIAN_COUNT);
-  float parity = mod(hemisphere + wedge, 2.0);
-  vec3 base = mix(ORIGIN_CHECKER_LIGHT, ORIGIN_CHECKER_DARK, parity);
-  vec3 shaded = base * (0.78 + diffuse * 0.22);
-  fragColor = vec4(shaded, 1.0);
+  float distance = length(vTexCoord);
+  // One pixel, expressed in the same units as distance.
+  float feather = 1.0 / max(uPixelRadius, 1.0);
+
+  float centre = 1.0 - smoothstep(
+    ORIGIN_DOT_RADIUS - feather, ORIGIN_DOT_RADIUS + feather, distance);
+
+  float halfWidth = ORIGIN_RING_WIDTH * 0.5;
+  float ring =
+    smoothstep(ORIGIN_RING_RADIUS - halfWidth - feather,
+               ORIGIN_RING_RADIUS - halfWidth + feather, distance) *
+    (1.0 - smoothstep(ORIGIN_RING_RADIUS + halfWidth - feather,
+                      ORIGIN_RING_RADIUS + halfWidth + feather, distance));
+
+  float coverage = max(centre, ring);
+  if (coverage <= 0.0) discard;
+  fragColor = vec4(uColor, uOpacity * coverage);
 }`
 
 // =====================================================================
@@ -205,9 +230,9 @@ const PIPELINES: Record<Pipeline, GlPipelineState> = {
     blend: true, textured: true,
   },
   "origin-billboard": {
-    vertex: ORIGIN_VS, fragment: ORIGIN_FS, layout: "position-normal",
-    primitive: "triangles", depthTest: true, depthWrite: true, cull: false,
-    blend: false, textured: false,
+    vertex: ORIGIN_VS, fragment: ORIGIN_FS, layout: "position-uv",
+    primitive: "triangles", depthTest: true, depthWrite: false, cull: false,
+    blend: true, textured: false,
   },
   "cube-face": {
     vertex: CUBE_VS, fragment: CUBE_FS, layout: "position-uv",

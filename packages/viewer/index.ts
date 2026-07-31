@@ -217,6 +217,12 @@ export interface Camera {
   readonly projection: Projection
 
   orbit(deltaAzimuth: number, deltaElevation: number): void
+  /** Slides the view. The deltas are the drag measured in units of HALF
+   *  the visible HEIGHT (x right, y up) — the same unit as `dolly`'s
+   *  `focal`, and for the same reason: it is the camera's own vertical
+   *  unit, so the conversion to world distance is exact at any zoom,
+   *  projection and viewport size. The point under the cursor stays under
+   *  it for the whole drag. */
   pan(deltaX: number, deltaY: number): void
   /** Zooms by `delta`. `focal`, when given, is the cursor position in
    *  screen pixels relative to the viewport CENTER (x right, y up), and the

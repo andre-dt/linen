@@ -105,7 +105,18 @@ export function Viewport(props: ViewportProps) {
     if (gesture.kind === "orbit") {
       view.orbit(-gesture.deltaX * 0.008, gesture.deltaY * 0.008)
     } else {
-      view.pan(gesture.deltaX, gesture.deltaY)
+      // Pixels -> half-heights of the visible frame, the unit the camera
+      // converts to world exactly (see Camera.pan). Dividing by the SAME
+      // half-height on both axes is deliberate: the projection is
+      // height-driven and the aspect matches the canvas, so a pixel is the
+      // same world distance horizontally and vertically.
+      //
+      // Y is NEGATED: the DOM counts pixels downward, the camera's screen
+      // frame counts up. Without the flip the model slides the wrong way
+      // vertically. Same convention as the wheel's focal point.
+      const halfHeight = gesture.surfaceHeight / 2
+      if (halfHeight <= 0) return
+      view.pan(gesture.deltaX / halfHeight, -gesture.deltaY / halfHeight)
     }
   }
 

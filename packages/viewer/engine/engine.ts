@@ -125,9 +125,11 @@ export const FLOATS_PER_VERTEX: Record<VertexLayout, number> = {
  *   label            — text quads stamped into a surface. Depth test, NO
  *                      write, alpha blend, no cull, samples a label
  *                      texture. Layout position-uv, triangles.
- *   origin-billboard — the origin marker. A screen-space-sized shaded
- *                      sphere: depth test + write, opaque, triangles.
- *                      Layout position-normal.
+ *   origin-billboard — the origin marker. A screen-space-sized flat
+ *                      sprite (one quad, a target reticle cut out of it,
+ *                      unlit):
+ *                      depth test, NO write, alpha blend, triangles.
+ *                      Layout position-uv.
  *   cube-face        — a view-cube plate. Depth test + write, cull back,
  *                      opaque, samples a label texture, tintable/hoverable.
  *                      Layout position-uv, triangles.
@@ -161,7 +163,7 @@ export interface DrawUniforms {
   readonly color?: readonly [number, number, number]
   /** Blend/coverage opacity for flat and label pipelines. */
   readonly opacity?: number
-  /** Directional light, for lit-mesh and origin-billboard. */
+  /** Directional light, for lit-mesh. */
   readonly lightDirection?: readonly [number, number, number]
   /** Drawing-buffer size in physical pixels, for the origin billboard's
    *  screen-space sizing. */

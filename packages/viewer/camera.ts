@@ -251,19 +251,43 @@ export function createCamera(): OrbitCamera {
     },
 
     pan(deltaX, deltaY) {
-      // Pan in screen space, scaled by distance so the model tracks the
-      // cursor at any zoom level.
-      const scaleFactor = distance * 0.001
+      // A drag cancels any animation, for the same reason orbit does.
+      transition = null
+
+      // The deltas arrive in HALF-HEIGHTS of the visible frame, y screen-up
+      // — the same unit dolly's `focal` uses. That unit is what makes the
+      // conversion to world exact rather than approximate: multiply by the
+      // visible half-height at the target plane and the result IS the world
+      // distance the cursor travelled.
+      //
+      //   orthographic: apparent size is the projection height; distance
+      //                 does not affect it at all.
+      //   perspective:  the frustum half-height at the target is
+      //                 distance · tan(fov/2).
+      //
+      // Scaling by `distance` alone (the old approach) was right only under
+      // perspective, and only at one viewport size — so the model slid out
+      // from under the cursor as soon as either changed.
+      const halfHeight =
+        projection.kind === "orthographic"
+          ? projection.height / 2
+          : distance * Math.tan(fieldOfView / 2)
+
       const right: Vector3 = [-Math.sin(azimuth), Math.cos(azimuth), 0]
       const up: Vector3 = [
         -Math.sin(elevation) * Math.cos(azimuth),
         -Math.sin(elevation) * Math.sin(azimuth),
         Math.cos(elevation),
       ]
+
+      // Move the target AGAINST the drag: the user drags the model, not the
+      // camera, so the world must follow the cursor.
+      const worldX = deltaX * halfHeight
+      const worldY = deltaY * halfHeight
       target = [
-        target[0] - (right[0] * deltaX + up[0] * deltaY) * scaleFactor,
-        target[1] - (right[1] * deltaX + up[1] * deltaY) * scaleFactor,
-        target[2] - (right[2] * deltaX + up[2] * deltaY) * scaleFactor,
+        target[0] - (right[0] * worldX + up[0] * worldY),
+        target[1] - (right[1] * worldX + up[1] * worldY),
+        target[2] - (right[2] * worldX + up[2] * worldY),
       ]
     },
 

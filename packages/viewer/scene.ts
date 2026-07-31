@@ -36,7 +36,7 @@ import { createCamera } from "./camera"
 import { invert, type Matrix } from "./math"
 import {
   DATUM_PLANES, PLANE_EXTENT, planeQuad, planeOutline, planeLabelQuad,
-  originSphere, pickPlane, rayThrough,
+  originSprite, pickPlane, rayThrough,
   type DatumPlaneId,
 } from "./planes"
 
@@ -159,7 +159,7 @@ export const createScene: CreateScene = (engine) => {
   )
 
   // The origin marker, shared by all three planes.
-  const originMesh = engine.createMesh(originSphere(), "position-normal")
+  const originMesh = engine.createMesh(originSprite(), "position-uv")
 
   const planes: PlaneLayer = {
     visible: true,
@@ -307,13 +307,15 @@ export const createScene: CreateScene = (engine) => {
       })
     }
 
-    // The origin marker, opaque and screen-space-sized.
+    // The origin marker: a flat sprite, screen-space-sized. No light — it
+    // has no surface to catch any.
     draws.push({
       mesh: originMesh,
       pipeline: "origin-billboard",
       uniforms: {
         viewProjection,
-        lightDirection: [0.4, 0.6, 0.7],
+        color: ORIGIN_COLOR,
+        opacity: 1,
         viewport: [
           Math.max(1, Math.round(width * devicePixelRatio)),
           Math.max(1, Math.round(height * devicePixelRatio)),
@@ -474,5 +476,11 @@ const SKETCH_PENDING_COLOR: readonly [number, number, number] = [0.44, 0.7, 1]
 const SKETCH_CURSOR_COLOR: readonly [number, number, number] = [0.7, 0.75, 0.82]
 const SKETCH_SNAP_COLOR: readonly [number, number, number] = [1, 0.75, 0.28]
 
-/** The origin marker's on-screen radius, in CSS pixels (scaled by DPR). */
-const ORIGIN_PIXEL_RADIUS = 4.5
+/** The origin marker's on-screen radius, in CSS pixels (scaled by DPR).
+ *  The reticle needs more room than the plain dot did: below about 7px the
+ *  ring, the gap and the centre dot stop resolving as three separate
+ *  things and smear into one blob. */
+const ORIGIN_PIXEL_RADIUS = 8
+
+/** The origin marker's colour — flat, unlit, one value across the disc. */
+const ORIGIN_COLOR: readonly [number, number, number] = [0.96, 0.97, 1]

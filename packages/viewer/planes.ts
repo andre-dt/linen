@@ -317,64 +317,44 @@ export const planeOutline = (
 }
 
 /**
- * The origin marker: a small solid sphere drawn AT (0,0,0).
+ * The origin marker: a flat 2D sprite drawn AT (0,0,0).
  *
- * Onshape draws a dot there, and it earns its place — it is the one point
- * every coordinate in the model is measured from, and without it the eye
- * has nothing to fix on where the planes intersect.
+ * Drawn as a target reticle — a centre dot ringed at a distance — because
+ * it earns its place: this is the one point every coordinate in the model
+ * is measured from, and without it the eye has nothing to fix on where the
+ * planes intersect. The reticle shape is entirely the fragment shader's;
+ * the geometry here is just the quad it is cut out of.
  *
- * The origin itself is an infinitely small location in 3D space: it has no
- * size. So this is NOT a world-space sphere that zooms with the model — it
- * is a UNIT sphere whose positions the origin shader reads as SCREEN-SPACE
- * offsets, billboarded around the projected origin at a fixed pixel radius.
- * The marker stays the same size on screen at every zoom, like Onshape. The
- * default radius is therefore 1 (a unit sphere), scaled to pixels in the
- * shader, not a length in millimetres.
+ * The origin is a singularity: an infinitesimal location in space with no
+ * extent, no volume and no mass. Drawing it as a solid — a shaded sphere
+ * with a lit side and a dark side — is a lie about what it is: a sphere
+ * has a radius, and the origin does not. So this is a SPRITE: one quad,
+ * two triangles, no normals, no lighting. Nothing about it suggests a
+ * body occupying space.
  *
- * A UV sphere rather than an icosphere: at this size the difference is
- * invisible, and the parameterisation is four lines instead of a
- * subdivision routine. Returned as a triangle list — no index buffer,
- * since a couple of hundred vertices is not worth the second binding.
+ * The quad's corners are UNIT offsets that the origin shader reads as
+ * SCREEN-SPACE displacements around the projected origin, at a fixed
+ * pixel radius — so the marker never zooms with the model, and never
+ * turns to present a different profile as the camera orbits. It faces
+ * the viewer always, because a point has no orientation to show.
+ *
+ * Interleaved x,y,z,u,v — the "position-uv" layout. The uv is a centred
+ * [-1,1] coordinate rather than [0,1]: the fragment shader wants the
+ * distance from the centre to cut the reticle out of the quad, and
+ * getting it in that form saves the remap per fragment.
  */
-export const originSphere = (
-  radius = ORIGIN_RADIUS,
-  segments = 16,
-  rings = 12,
-): Float32Array => {
-  const at = (ring: number, segment: number): readonly number[] => {
-    // Polar angle from +Z, azimuth around it.
-    const phi = (ring / rings) * Math.PI
-    const theta = (segment / segments) * Math.PI * 2
-    return [
-      radius * Math.sin(phi) * Math.cos(theta),
-      radius * Math.sin(phi) * Math.sin(theta),
-      radius * Math.cos(phi),
-    ]
-  }
-
-  // Interleaved x,y,z,nx,ny,nz. On a sphere centred at the origin the
-  // surface normal IS the normalised position, so it costs one divide
-  // rather than a second pass.
+export const originSprite = (radius = ORIGIN_RADIUS): Float32Array => {
+  // Two triangles: (a, b, c) and (a, c, d), counter-clockwise.
+  const corners: readonly (readonly [number, number])[] = [
+    [-1, -1], [1, -1], [1, 1], [-1, 1],
+  ]
   const out: number[] = []
-  const push = (point: readonly number[]): void => {
-    out.push(
-      point[0]!, point[1]!, point[2]!,
-      point[0]! / radius, point[1]! / radius, point[2]! / radius,
-    )
+  const push = (index: number): void => {
+    const [u, v] = corners[index]!
+    out.push(u * radius, v * radius, 0, u, v)
   }
-
-  for (let ring = 0; ring < rings; ring++) {
-    for (let segment = 0; segment < segments; segment++) {
-      const a = at(ring, segment)
-      const b = at(ring + 1, segment)
-      const c = at(ring + 1, segment + 1)
-      const d = at(ring, segment + 1)
-      // Two triangles per quad. The poles degenerate to slivers, which
-      // cost nothing and save special-casing the first and last ring.
-      push(a); push(b); push(c)
-      push(a); push(c); push(d)
-    }
-  }
+  push(0); push(1); push(2)
+  push(0); push(2); push(3)
   return new Float32Array(out)
 }
 
@@ -382,10 +362,9 @@ export const originSphere = (
  *  scaled to a fixed pixel radius, so this is a shape, not a length. */
 export const ORIGIN_RADIUS = 1
 
-/** Vertex count for a sphere of the given tessellation — what the draw
- *  call needs, kept here so the caller never recomputes it wrongly. */
-export const originSphereVertexCount = (segments = 16, rings = 12): number =>
-  segments * rings * 6
+/** Vertex count of the sprite — one quad as a triangle list. Kept here so
+ *  the caller never recomputes it wrongly. */
+export const ORIGIN_SPRITE_VERTEX_COUNT = 6
 
 /**
  * A quad for a plane's name label, lying IN the plane at its top-left

@@ -116,28 +116,45 @@ struct VSOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> }
 }
 `
 
+// The origin sprite: one quad, placed in screen space around the projected
+// origin so it holds a fixed pixel size and always faces the viewer. The
+// fragment cuts a flat disc out of it — unlit, because the origin is a
+// point with no surface. See originSprite in planes.ts.
 const ORIGIN_SHADER = /* wgsl */ `
 ${UNIFORM_STRUCT}
-struct VSOut { @builtin(position) pos : vec4<f32>, @location(0) normal : vec3<f32> };
-@vertex fn vs(@location(0) position : vec3<f32>, @location(1) normal : vec3<f32>) -> VSOut {
+struct VSOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) position : vec3<f32>, @location(1) uv : vec2<f32>) -> VSOut {
   var out : VSOut;
-  out.normal = normal;
+  out.uv = uv;
   let anchor = draw.viewProjection * vec4<f32>(0.0, 0.0, 0.0, 1.0);
   let offset = position.xy * draw.pixelRadius * 2.0 / draw.viewport * anchor.w;
   out.pos = vec4<f32>(anchor.xy + offset, anchor.zw);
   return out;
 }
-const PI = 3.14159265359;
+// A solid centre dot, a gap, then a thin ring at the rim — see the
+// matching ORIGIN_FS in engine-gl.ts for why the reticle is shaped this
+// way. Radii are fractions of the sprite's half-extent; dot and ring
+// combine with max() so an overlap never doubles into a bright seam.
+const ORIGIN_DOT_RADIUS = 0.26;
+const ORIGIN_RING_RADIUS = 0.82;
+const ORIGIN_RING_WIDTH = 0.13;
 @fragment fn fs(in : VSOut) -> @location(0) vec4<f32> {
-  let n = normalize(in.normal);
-  let l = normalize(draw.lightDirection);
-  let diffuse = max(dot(n, l) * 0.5 + 0.5, 0.0);
-  let hemisphere = step(0.0, n.z);
-  let azimuth = atan2(n.y, n.x) / (2.0 * PI) + 0.5;
-  let wedge = floor(azimuth * 4.0);
-  let parity = (hemisphere + wedge) % 2.0;
-  let base = mix(vec3<f32>(1.0, 1.0, 1.0), vec3<f32>(0.55, 0.57, 0.60), parity);
-  return vec4<f32>(base * (0.78 + diffuse * 0.22), 1.0);
+  let distance = length(in.uv);
+  let feather = 1.0 / max(draw.pixelRadius, 1.0);
+
+  let centre = 1.0 - smoothstep(
+    ORIGIN_DOT_RADIUS - feather, ORIGIN_DOT_RADIUS + feather, distance);
+
+  let halfWidth = ORIGIN_RING_WIDTH * 0.5;
+  let ring =
+    smoothstep(ORIGIN_RING_RADIUS - halfWidth - feather,
+               ORIGIN_RING_RADIUS - halfWidth + feather, distance) *
+    (1.0 - smoothstep(ORIGIN_RING_RADIUS + halfWidth - feather,
+                      ORIGIN_RING_RADIUS + halfWidth + feather, distance));
+
+  let coverage = max(centre, ring);
+  if (coverage <= 0.0) { discard; }
+  return vec4<f32>(draw.color, draw.opacity * coverage);
 }
 `
 
@@ -218,8 +235,8 @@ const PIPELINES: Record<Pipeline, GpuPipelineState> = {
     textured: true,
   },
   "origin-billboard": {
-    shader: ORIGIN_SHADER, layout: "position-normal", topology: "triangle-list",
-    depthWrite: true, depthCompare: "less", cull: "none", blend: false,
+    shader: ORIGIN_SHADER, layout: "position-uv", topology: "triangle-list",
+    depthWrite: false, depthCompare: "less", cull: "none", blend: true,
     textured: false,
   },
   "cube-face": {
