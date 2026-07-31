@@ -47,6 +47,8 @@ import {
   createConfiguredCubeScene,
   type CubeScene, type CubeRegion,
 } from "@linen/viewer"
+import { useCamera } from "../render/camera-provider"
+import { useRenderTick } from "../render/render-loop"
 
 /** A direction to look FROM, in the kernel's frame: X right, Y away at
  *  the Front view, Z up. */
@@ -109,16 +111,12 @@ const defaultPosition = (): Position => ({
   y: 104,
 })
 
-export interface ViewCubeProps {
-  /** A face, edge or corner was clicked: look from this direction. */
-  onPick?: (direction: ViewDirection) => void
-  /** The camera's orientation, so the cube can mirror it. Radians. */
-  azimuth?: number
-  elevation?: number
-  rollAngle?: number
-}
-
-export function ViewCube(props: ViewCubeProps) {
+// The cube takes NO props for its data: it reads the live camera from
+// context (useCamera) to mirror its orientation, and drives that same
+// camera on a click (camera.lookFrom). The only thing left that could be a
+// prop — where it floats — it owns itself (dragged + persisted). So it is
+// a self-contained behaviour: mount it under <CameraProvider> and it works.
+export function ViewCube() {
   const stored = readPosition() ?? defaultPosition()
   const [position, setPosition] = createSignal<Position>({
     // Clamp on the FIRST read too, not only on resize: a position saved at
@@ -191,16 +189,16 @@ export function ViewCube(props: ViewCubeProps) {
   let canvas!: HTMLCanvasElement
   let cube: CubeScene | null = null
   const [failed, setFailed] = createSignal(false)
+  const camera = useCamera()
 
   onMount(() => {
-    let frame = 0
     let cancelled = false
 
     // The backend is chosen by CONFIG (?renderer= / VITE_RENDERER / default
     // 'auto'), not hard-coded. Both backends implement the same CubeScene,
     // so the widget draws the cube identically whichever one it got.
     // Backend creation is async (WebGPU device acquisition), so mount kicks
-    // it off and wires the loop once it lands.
+    // it off and the shared render loop draws it once it lands.
     void (async () => {
       try {
         cube = await createConfiguredCubeScene(canvas)
@@ -209,26 +207,24 @@ export function ViewCube(props: ViewCubeProps) {
         return
       }
       if (cancelled) { cube.dispose(); cube = null; return }
-
       cube.resize(CUBE_SIZE, window.devicePixelRatio)
-
-      const draw = (): void => {
-        cube?.render(
-          props.azimuth ?? 0,
-          props.elevation ?? 0,
-          props.rollAngle ?? 0,
-        )
-        frame = requestAnimationFrame(draw)
-      }
-      frame = requestAnimationFrame(draw)
     })()
 
     onCleanup(() => {
       cancelled = true
-      cancelAnimationFrame(frame)
       cube?.dispose()
       cube = null
     })
+  })
+
+  // Draw on the SHARED render loop, reading the LIVE camera the model just
+  // advanced this same frame — so the cube can never lag the view the way
+  // the old poll-into-a-signal bridge could. No camera yet (scene still
+  // starting) or no cube yet (backend still loading) simply skips the frame.
+  useRenderTick(() => {
+    const view = camera()
+    if (!cube || !view) return
+    cube.render(view.azimuth, view.elevation, view.rollAngle)
   })
 
   // Device pixel ratio can change when a window moves between displays;
@@ -320,7 +316,10 @@ export function ViewCube(props: ViewCubeProps) {
     if (event.button !== 0 || dragging() || !cube) return
     const [x, y] = localPoint(event)
     const region = cube.pick(x, y)
-    if (region) props.onPick?.(region.direction)
+    // Straight to the camera from context: the cube's regions are poses
+    // (faces, corners), and lookFrom resolves any of them. No callback up
+    // to the screen and back — the cube owns this interaction end to end.
+    if (region) camera()?.lookFrom(region.direction)
   }
 
   return (

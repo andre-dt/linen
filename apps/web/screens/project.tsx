@@ -22,10 +22,10 @@
 // it later is filling a box — not rebuilding the layout.
 // =====================================================================
 
-import { createSignal, createMemo, For, Show, onMount, onCleanup } from "solid-js"
+import { createSignal, createMemo, For, Show, onMount } from "solid-js"
 import { useNavigate, useParams } from "@solidjs/router"
 import { standardPreset, setField, type CommandDefinition } from "@linen/cad/features"
-import type { PlaneHit, Scene as SceneHandle, StandardView } from "@linen/viewer"
+import type { PlaneHit } from "@linen/viewer"
 import type { Auth } from "../auth"
 import {
   getProject, listParts, createPart,
@@ -35,11 +35,15 @@ import { appendElement, elementsOf, removeElement, updateElement } from "../elem
 import { Drawer } from "../widgets/drawer"
 import { SplitButton } from "../widgets/split-button"
 import { FeatureToolbar } from "../widgets/feature-toolbar"
-import { ViewCube, type ViewDirection } from "../widgets/view-cube"
+import { ViewCube } from "../widgets/view-cube"
 import { CollapsiblePanel } from "../widgets/collapsible-panel"
 import { LucideIcon } from "../widgets/lucide-icon"
 import { CommandPanel } from "../panels/command-panel"
 import { Viewport } from "../viewport"
+import { RenderLoop } from "../render/render-loop"
+import { RenderingCanvas, SceneCanvas } from "../render/rendering-canvas"
+import { CameraProvider } from "../render/camera-provider"
+import { InitialFraming } from "../render/initial-framing"
 import { X } from "../icons"
 
 /** Every command from every registered feature, flattened once. The
@@ -155,55 +159,11 @@ export function Project(props: { auth: Auth }) {
     }))
   }
 
-  /**
-   * The view cube moves the camera.
-   *
-   * Held outside the reactive graph, like everything else that touches
-   * the scene: this is an imperative jump, not a piece of state the DOM
-   * renders. The cube's four corner cells map onto four distinct
-   * isometric views rather than collapsing to one.
-   */
-  let sceneRef: SceneHandle | null = null
-
-  /**
-   * The camera's orientation, mirrored into the reactive graph so the
-   * view cube can turn with it.
-   *
-   * Polled on an animation frame rather than pushed from the render
-   * loop: the loop lives inside Viewport and publishing from there would
-   * make every frame a reactive write. Three numbers compared per frame
-   * is cheap, and the signal only fires when one actually changes — so a
-   * still camera costs nothing downstream.
-   */
-  const [cameraAngles, setCameraAngles] = createSignal(
-    { azimuth: 0, elevation: 0, roll: 0 },
-    { equals: (a, b) =>
-        a.azimuth === b.azimuth && a.elevation === b.elevation && a.roll === b.roll },
-  )
-
-  onMount(() => {
-    let frame = 0
-    const sample = (): void => {
-      const camera = sceneRef?.camera
-      if (camera) {
-        setCameraAngles({
-          azimuth: camera.azimuth,
-          elevation: camera.elevation,
-          roll: camera.rollAngle,
-        })
-      }
-      frame = requestAnimationFrame(sample)
-    }
-    frame = requestAnimationFrame(sample)
-    onCleanup(() => cancelAnimationFrame(frame))
-  })
-
-  const applyView = (direction: ViewDirection): void => {
-    // Straight through as a vector: the cube's faces, edges and corners
-    // are twenty-six poses, and the camera resolves any of them without
-    // a lookup table here that could fall out of step with the widget.
-    sceneRef?.camera.lookFrom(direction)
-  }
+  // The camera↔cube bridge is GONE. The cube reads the live camera from
+  // context (useCamera) to mirror it and calls camera.lookFrom itself on a
+  // click — so there is no scene handle to hold here, no per-frame poll of
+  // the camera's angles into a signal, and no applyView callback. The
+  // provider tree in the markup is what wires them.
 
   const discardElement = (elementId: string): void => {
     const part = selectedPart()
@@ -276,16 +236,28 @@ export function Project(props: { auth: Auth }) {
 
   return (
     <div class="hud-scene project-scene">
-      {/* The 3D viewport. It owns the canvas outright: no signal reads
-          anything it writes, and it publishes picks back as intent. */}
-      <div class="hud-canvas project-canvas">
-        <Viewport
-          pickingPlane={planeField() !== null}
-          selectedPlane={selectedPlaneId()}
-          onPickPlane={acceptPlanePick}
-          onScene={(scene) => { sceneRef = scene }}
-        />
-      </div>
+      {/* The 3D world as a provider tree. One RenderLoop (a single rAF), a
+          RenderingCanvas owning the backend+scene, and a CameraProvider
+          re-exposing the scene's camera. Everything under here — the
+          viewport interaction, the initial framing, and the floating cube
+          far below — shares one camera through context, so there is no
+          scene handle threaded between them and no per-frame poll. */}
+      <RenderLoop>
+        <RenderingCanvas>
+          <CameraProvider>
+            <InitialFraming />
+
+            {/* The canvas backdrop, plus the interaction overlay over it. */}
+            <div class="hud-canvas project-canvas">
+              <div class="viewport-stack">
+                <SceneCanvas />
+                <Viewport
+                  pickingPlane={planeField() !== null}
+                  selectedPlane={selectedPlaneId()}
+                  onPickPlane={acceptPlanePick}
+                />
+              </div>
+            </div>
 
       {/* TOP-LEFT: breadcrumb back to the dashboard */}
       <div class="hud-slot hud-top-left">
@@ -446,12 +418,7 @@ export function Project(props: { auth: Auth }) {
           control (fixed position, user-dragged, persisted), independent of
           whether a part is selected. It rides above the HUD, so it is never
           covered by a panel. */}
-      <ViewCube
-        onPick={applyView}
-        azimuth={cameraAngles().azimuth}
-        elevation={cameraAngles().elevation}
-        rollAngle={cameraAngles().roll}
-      />
+      <ViewCube />
 
       {/* THE DESIGNER: the selected element's input HUD. Entirely
           derived from the command's metadata — the plane picker, the
@@ -532,6 +499,9 @@ export function Project(props: { auth: Auth }) {
           />
         </label>
       </Drawer>
+          </CameraProvider>
+        </RenderingCanvas>
+      </RenderLoop>
     </div>
   )
 }

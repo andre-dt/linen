@@ -25,6 +25,12 @@ catalog:
 
   # --- test -----------------------------------------------------------
   vitest: ^4.1.10
+  # Component tests render Solid into a DOM (happy-dom) and drive it with
+  # the testing library, the same stack the reference project uses.
+  "@solidjs/testing-library": ^0.8.10
+  "@testing-library/jest-dom": ^6.9.1
+  "@testing-library/user-event": ^14.6.1
+  happy-dom: ^20.10.6
 
   # --- server ---------------------------------------------------------
   ws: ^8.18.0

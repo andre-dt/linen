@@ -1566,4 +1566,17 @@ table.point-list {
   position: relative;
   width: 100%;
   height: 100%;
+}
+
+/* The transparent gesture surface over the canvas. The canvas draws; this
+   takes the pointer. touch-action: none so the browser does not claim pan
+   and orbit as scroll/zoom gestures — it lives here now rather than on the
+   canvas, since the pointer handlers moved to this overlay. */
+.viewport-interaction {
+  touch-action: none;
+}
+
+.viewport-interaction[data-drawing="true"] {
+  cursor: crosshair;
+}
 

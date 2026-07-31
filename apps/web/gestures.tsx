@@ -99,7 +99,11 @@ export const ONSHAPE_BINDING: GestureBinding = {
   clickSlop: 4,
 }
 
-const GestureContext = createContext<Accessor<GestureBinding>>(() => ONSHAPE_BINDING)
+// No default value: a detector with no provider above it is a wiring
+// mistake, and useGestureBinding throws rather than silently falling back
+// to a binding nobody chose. The app mounts one GestureProvider at its
+// root, so every detector is covered.
+const GestureContext = createContext<Accessor<GestureBinding>>()
 
 /**
  * Supplies the binding to every detector beneath it. Swapping in a
@@ -118,8 +122,13 @@ export function GestureProvider(props: {
   )
 }
 
-export const useGestureBinding = (): Accessor<GestureBinding> =>
-  useContext(GestureContext)
+export const useGestureBinding = (): Accessor<GestureBinding> => {
+  const binding = useContext(GestureContext)
+  if (!binding) {
+    throw new Error("useGestureBinding must be used inside <GestureProvider>")
+  }
+  return binding
+}
 
 // =====================================================================
 // 3. DETECTOR
