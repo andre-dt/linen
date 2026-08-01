@@ -169,9 +169,6 @@ export interface CommandStep {
   /** User choices. Empty means terminal: the command can be built. */
   readonly transitions: readonly StepTransition[]
   readonly optional: boolean
-  /** Once filled, advance without an explicit click. Good for
-   *  mutually exclusive choices. */
-  readonly autoAdvance: boolean
 }
 
 export interface StepTransition {
@@ -185,6 +182,53 @@ export interface StepTransition {
   /** The union variant this transition produces, if any. Ties the
    *  user's choice to the `kind` of the persisted input. */
   readonly variant: string | null
+  /**
+   * When the DATA alone should fire this transition, with no click.
+   *
+   * Picking a plane and then pressing "Draw" is one gesture too many:
+   * the value the step wanted has arrived, so the step is over. Most
+   * steps that gather exactly one thing are like this.
+   *
+   * Absent (null) means the transition is a genuine CHOICE and only a
+   * click fires it — the draft's tool hub, where "line" and "circle"
+   * leave from the same complete state and only the user knows which.
+   *
+   * The guard is checked after every field write, on a step with no
+   * outstanding required fields.
+   *
+   * A step should carry at most ONE guard that can pass in a given state:
+   * with two, which fires depends on array order, and that is a metadata
+   * bug rather than a design. The machine picks the first match rather
+   * than refusing, so a command still works; `validateFeature` is where
+   * that check belongs once it exists.
+   */
+  readonly when: TransitionGuard | null
+}
+
+/**
+ * Decides whether a transition fires on its own.
+ *
+ * Two forms, because two things are being expressed. A PREDICATE answers
+ * a question about the values ("are there at least three points?"). A
+ * SCHEMA answers whether the values have taken a shape — parsing IS the
+ * test, so the shape is declared once instead of being written as a
+ * schema and re-checked as a predicate.
+ */
+export type TransitionGuard =
+  | { readonly kind: "predicate"; readonly test: TransitionPredicate }
+  | { readonly kind: "schema"; readonly schema: ParsableSchema }
+
+export type TransitionPredicate = (values: ReadonlyMap<string, unknown>) => boolean
+
+/**
+ * The slice of a zod schema this needs: something that reports whether a
+ * value parses. Structural, not `import type { ZodType }` — the contract
+ * is "can you parse this", and tying the feature metadata to one
+ * validation library's types would make swapping it a change to every
+ * feature file rather than to this line.
+ */
+export interface ParsableSchema {
+  readonly safeParse: (value: unknown) => { readonly success: boolean }
 }
 
 // =====================================================================

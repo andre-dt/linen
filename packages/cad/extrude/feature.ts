@@ -30,7 +30,6 @@ const steps: readonly CommandStep[] = [
     label: "Profile",
     help: null,
     optional: false,
-    autoAdvance: true,
     fields: [
       {
         kind: "reference", name: "profile", label: "Profile", of: "draft",
@@ -39,7 +38,7 @@ const steps: readonly CommandStep[] = [
       },
     ],
     transitions: [
-      { id: "next", label: "Extent", to: "extent", icon: null, preview: false, variant: null },
+      { id: "next", label: "Extent", to: "extent", icon: null, preview: false, variant: null, when: null },
     ],
   },
   {
@@ -47,17 +46,16 @@ const steps: readonly CommandStep[] = [
     label: "Extent",
     help: null,
     optional: false,
-    autoAdvance: false,
     fields: [],
     // Each transition is one variant of the `ExtrudeExtent` union, and
     // `variant` ties the user's choice to the persisted `kind`. This is
     // what replaces the four conditional optionals.
     transitions: [
-      { id: "distance", label: "Distance", to: "extent.distance", icon: "arrow-up", preview: true, variant: "distance" },
-      { id: "symmetric", label: "Symmetric", to: "extent.symmetric", icon: "arrows-vertical", preview: true, variant: "symmetric" },
-      { id: "two-sided", label: "Two sided", to: "extent.two-sided", icon: "arrows-split", preview: true, variant: "two-sided" },
-      { id: "up-to-face", label: "Up to face", to: "extent.up-to-face", icon: "target", preview: true, variant: "up-to-face" },
-      { id: "through", label: "Through all", to: "combine", icon: "arrow-through", preview: true, variant: "through" },
+      { id: "distance", label: "Distance", to: "extent.distance", icon: "arrow-up", preview: true, variant: "distance", when: null },
+      { id: "symmetric", label: "Symmetric", to: "extent.symmetric", icon: "arrows-vertical", preview: true, variant: "symmetric", when: null },
+      { id: "two-sided", label: "Two sided", to: "extent.two-sided", icon: "arrows-split", preview: true, variant: "two-sided", when: null },
+      { id: "up-to-face", label: "Up to face", to: "extent.up-to-face", icon: "target", preview: true, variant: "up-to-face", when: null },
+      { id: "through", label: "Through all", to: "combine", icon: "arrow-through", preview: true, variant: "through", when: null },
     ],
   },
   {
@@ -65,7 +63,6 @@ const steps: readonly CommandStep[] = [
     label: "Distance",
     help: null,
     optional: false,
-    autoAdvance: false,
     fields: [
       {
         kind: "expression", name: "value", label: "Distance", dimension: "length",
@@ -82,7 +79,7 @@ const steps: readonly CommandStep[] = [
       },
     ],
     transitions: [
-      { id: "next", label: "Combine", to: "combine", icon: null, preview: false, variant: null },
+      { id: "next", label: "Combine", to: "combine", icon: null, preview: false, variant: null, when: null },
     ],
   },
   {
@@ -90,7 +87,6 @@ const steps: readonly CommandStep[] = [
     label: "Symmetric",
     help: "Half the length on each side of the plane.",
     optional: false,
-    autoAdvance: false,
     fields: [
       {
         kind: "expression", name: "total", label: "Total length", dimension: "length",
@@ -104,7 +100,7 @@ const steps: readonly CommandStep[] = [
       },
     ],
     transitions: [
-      { id: "next", label: "Combine", to: "combine", icon: null, preview: false, variant: null },
+      { id: "next", label: "Combine", to: "combine", icon: null, preview: false, variant: null, when: null },
     ],
   },
   {
@@ -112,7 +108,6 @@ const steps: readonly CommandStep[] = [
     label: "Two sided",
     help: null,
     optional: false,
-    autoAdvance: false,
     fields: [
       {
         kind: "expression", name: "forward", label: "Forward", dimension: "length",
@@ -126,7 +121,7 @@ const steps: readonly CommandStep[] = [
       },
     ],
     transitions: [
-      { id: "next", label: "Combine", to: "combine", icon: null, preview: false, variant: null },
+      { id: "next", label: "Combine", to: "combine", icon: null, preview: false, variant: null, when: null },
     ],
   },
   {
@@ -134,7 +129,6 @@ const steps: readonly CommandStep[] = [
     label: "Up to face",
     help: null,
     optional: false,
-    autoAdvance: false,
     fields: [
       {
         kind: "selector", name: "face", label: "Target face",
@@ -151,7 +145,7 @@ const steps: readonly CommandStep[] = [
       // not exist in this step, exactly as in ExtrudeStepUpToFace.
     ],
     transitions: [
-      { id: "next", label: "Combine", to: "combine", icon: null, preview: false, variant: null },
+      { id: "next", label: "Combine", to: "combine", icon: null, preview: false, variant: null, when: null },
     ],
   },
   {
@@ -159,7 +153,6 @@ const steps: readonly CommandStep[] = [
     label: "Combine",
     help: null,
     optional: false,
-    autoAdvance: true,
     fields: [
       {
         kind: "selector", name: "target", label: "Target body",
@@ -168,10 +161,10 @@ const steps: readonly CommandStep[] = [
       },
     ],
     transitions: [
-      { id: "new", label: "New body", to: "", icon: "cube-plus", preview: true, variant: "new" },
-      { id: "add", label: "Add", to: "", icon: "union", preview: true, variant: "add" },
-      { id: "subtract", label: "Subtract", to: "", icon: "difference", preview: true, variant: "subtract" },
-      { id: "intersect", label: "Intersect", to: "", icon: "intersect", preview: true, variant: "intersect" },
+      { id: "new", label: "New body", to: "", icon: "cube-plus", preview: true, variant: "new", when: null },
+      { id: "add", label: "Add", to: "", icon: "union", preview: true, variant: "add", when: null },
+      { id: "subtract", label: "Subtract", to: "", icon: "difference", preview: true, variant: "subtract", when: null },
+      { id: "intersect", label: "Intersect", to: "", icon: "intersect", preview: true, variant: "intersect", when: null },
     ],
   },
 ]

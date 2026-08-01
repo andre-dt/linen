@@ -14,6 +14,7 @@
 // for it — which is the point of deriving the panel from data.
 // =====================================================================
 
+import { z } from "zod"
 import type { SketchId, Validator } from "../common/kernel"
 import type { PlaneReference } from "../common/api"
 import type {
@@ -27,13 +28,31 @@ import type { DraftInput, DraftStepCurves, DraftApi } from "./api"
 // STEPS
 // =====================================================================
 
+/**
+ * The shape a chosen sketch plane takes. Both ways in produce one of
+ * these: a datum plane clicked in the canvas, or a planar face.
+ *
+ * Its job is to fire the step's transition — parsing IS the test, so the
+ * step ends the moment the value is well-formed rather than when the user
+ * confirms it.
+ */
+const PLANE_CHOSEN = z.object({
+  plane: z.union([
+    z.object({
+      kind: z.literal("datum"),
+      plane: z.string().min(1),
+      axes: z.enum(["XY", "XZ", "YZ"]),
+    }),
+    z.object({ kind: z.literal("face"), face: z.string().min(1) }),
+  ]),
+})
+
 const steps: readonly CommandStep[] = [
   {
     id: "plane",
     label: "Plane",
-    help: "Pick a standard plane or a planar face.",
+    help: "Select a plane or planar face in the canvas.",
     optional: false,
-    autoAdvance: true,
     fields: [
       {
         kind: "plane", name: "plane", label: "Sketch plane",
@@ -41,8 +60,20 @@ const steps: readonly CommandStep[] = [
         optional: false, help: null,
       },
     ],
+    // DATA-DRIVEN: choosing a plane ends the step. There is nothing else
+    // this step gathers and nowhere else it could go, so a "Draw" button
+    // would only ask the user to confirm what they just did.
+    //
+    // Expressed as a SCHEMA rather than a predicate because the test is
+    // about SHAPE — the value is a datum reference or a face reference —
+    // and a schema says that once instead of saying it as a hand-written
+    // check that then drifts from the shape it was checking.
     transitions: [
-      { id: "next", label: "Draw", to: "tools", icon: null, preview: false, variant: null },
+      {
+        id: "next", label: "Draw", to: "tools",
+        icon: null, preview: false, variant: null,
+        when: { kind: "schema", schema: PLANE_CHOSEN },
+      },
     ],
   },
   {
@@ -50,7 +81,6 @@ const steps: readonly CommandStep[] = [
     label: "Draw",
     help: null,
     optional: false,
-    autoAdvance: false,
     fields: [
       {
         kind: "boolean", name: "construction", label: "Construction",
@@ -61,13 +91,13 @@ const steps: readonly CommandStep[] = [
     ],
     // The hub. Each tool draws, then returns here.
     transitions: [
-      { id: "line", label: "Line", to: "draw.line", icon: "line", preview: true, variant: "line" },
-      { id: "rectangle", label: "Rectangle", to: "draw.rectangle", icon: "rectangle", preview: true, variant: "rectangle" },
-      { id: "circle", label: "Circle", to: "draw.circle", icon: "circle", preview: true, variant: "circle" },
-      { id: "arc", label: "Arc", to: "draw.arc", icon: "arc", preview: true, variant: "arc" },
-      { id: "spline", label: "Spline", to: "draw.spline", icon: "spline", preview: true, variant: "spline" },
-      { id: "polygon", label: "Polygon", to: "draw.polygon", icon: "polygon", preview: true, variant: "polygon" },
-      { id: "finish", label: "Finish", to: "", icon: "check", preview: false, variant: null },
+      { id: "line", label: "Line", to: "draw.line", icon: "line", preview: true, variant: "line", when: null },
+      { id: "rectangle", label: "Rectangle", to: "draw.rectangle", icon: "rectangle", preview: true, variant: "rectangle", when: null },
+      { id: "circle", label: "Circle", to: "draw.circle", icon: "circle", preview: true, variant: "circle", when: null },
+      { id: "arc", label: "Arc", to: "draw.arc", icon: "arc", preview: true, variant: "arc", when: null },
+      { id: "spline", label: "Spline", to: "draw.spline", icon: "spline", preview: true, variant: "spline", when: null },
+      { id: "polygon", label: "Polygon", to: "draw.polygon", icon: "polygon", preview: true, variant: "polygon", when: null },
+      { id: "finish", label: "Finish", to: "", icon: "check", preview: false, variant: null, when: null },
     ],
   },
   {
@@ -75,7 +105,6 @@ const steps: readonly CommandStep[] = [
     label: "Line",
     help: "Click the start and end points.",
     optional: false,
-    autoAdvance: true,
     fields: [
       {
         kind: "point-list", name: "points", label: "Points",
@@ -84,7 +113,7 @@ const steps: readonly CommandStep[] = [
       },
     ],
     transitions: [
-      { id: "continue", label: "Keep drawing", to: "tools", icon: null, preview: false, variant: null },
+      { id: "continue", label: "Keep drawing", to: "tools", icon: null, preview: false, variant: null, when: null },
     ],
   },
   {
@@ -92,7 +121,6 @@ const steps: readonly CommandStep[] = [
     label: "Rectangle",
     help: "Click two opposite corners.",
     optional: false,
-    autoAdvance: true,
     fields: [
       {
         kind: "point-list", name: "corners", label: "Corners",
@@ -101,7 +129,7 @@ const steps: readonly CommandStep[] = [
       },
     ],
     transitions: [
-      { id: "continue", label: "Keep drawing", to: "tools", icon: null, preview: false, variant: null },
+      { id: "continue", label: "Keep drawing", to: "tools", icon: null, preview: false, variant: null, when: null },
     ],
   },
   {
@@ -109,7 +137,6 @@ const steps: readonly CommandStep[] = [
     label: "Circle",
     help: null,
     optional: false,
-    autoAdvance: false,
     fields: [
       {
         kind: "point-list", name: "center", label: "Center",
@@ -124,7 +151,7 @@ const steps: readonly CommandStep[] = [
       },
     ],
     transitions: [
-      { id: "continue", label: "Keep drawing", to: "tools", icon: null, preview: false, variant: null },
+      { id: "continue", label: "Keep drawing", to: "tools", icon: null, preview: false, variant: null, when: null },
     ],
   },
   {
@@ -132,7 +159,6 @@ const steps: readonly CommandStep[] = [
     label: "Arc",
     help: "Click start, end, then a point on the arc.",
     optional: false,
-    autoAdvance: true,
     fields: [
       {
         kind: "point-list", name: "points", label: "Points",
@@ -141,7 +167,7 @@ const steps: readonly CommandStep[] = [
       },
     ],
     transitions: [
-      { id: "continue", label: "Keep drawing", to: "tools", icon: null, preview: false, variant: null },
+      { id: "continue", label: "Keep drawing", to: "tools", icon: null, preview: false, variant: null, when: null },
     ],
   },
   {
@@ -149,7 +175,6 @@ const steps: readonly CommandStep[] = [
     label: "Spline",
     help: "Click control points; double-click to end.",
     optional: false,
-    autoAdvance: false,
     fields: [
       {
         kind: "point-list", name: "points", label: "Control points",
@@ -162,7 +187,7 @@ const steps: readonly CommandStep[] = [
       },
     ],
     transitions: [
-      { id: "continue", label: "Keep drawing", to: "tools", icon: null, preview: false, variant: null },
+      { id: "continue", label: "Keep drawing", to: "tools", icon: null, preview: false, variant: null, when: null },
     ],
   },
   {
@@ -170,7 +195,6 @@ const steps: readonly CommandStep[] = [
     label: "Polygon",
     help: null,
     optional: false,
-    autoAdvance: false,
     fields: [
       {
         kind: "point-list", name: "center", label: "Center",
@@ -197,7 +221,7 @@ const steps: readonly CommandStep[] = [
       },
     ],
     transitions: [
-      { id: "continue", label: "Keep drawing", to: "tools", icon: null, preview: false, variant: null },
+      { id: "continue", label: "Keep drawing", to: "tools", icon: null, preview: false, variant: null, when: null },
     ],
   },
 ]

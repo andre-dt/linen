@@ -18,6 +18,7 @@ import { Match, Switch, onMount } from "solid-js"
 import { Router, Route } from "@solidjs/router"
 import { createAuth, type Auth } from "./auth"
 import { GestureProvider } from "./gestures"
+import { ToastProvider } from "./toast"
 import { Login } from "./screens/login"
 import { Dashboard } from "./screens/dashboard"
 import { Project } from "./screens/project"
@@ -31,7 +32,12 @@ export function App() {
   // The gesture binding is app-wide: which button orbits is a property
   // of the application, not of one viewport. Mounted here so a future
   // preference ("SolidWorks controls") is one value, changed once.
+  //
+  // Toasts wrap everything INCLUDING the auth gate: a failed sign-in is
+  // exactly the kind of thing that needs to say so, and it happens before
+  // any screen exists to host a message of its own.
   return (
+    <ToastProvider>
     <GestureProvider>
     <Switch fallback={<Splash />}>
       <Match when={auth.status() === "loading"}>
@@ -63,6 +69,7 @@ export function App() {
       </Match>
     </Switch>
     </GestureProvider>
+    </ToastProvider>
   )
 }
 

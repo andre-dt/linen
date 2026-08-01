@@ -70,17 +70,25 @@ export function BaseButton(props: BaseButtonProps) {
 // says what the button IS instead of repeating variant/size props.
 // =====================================================================
 
-/** An icon button that labels itself with a tooltip. Shared by both roles
- *  below — it is the whole of what they have in common, so neither wrapper
- *  has to reach for Tooltip or for a variant. */
-function TooltipIconButton(
+/** An icon button that labels itself with a tooltip — the label IS the
+ *  accessible name and the tooltip text, so an icon-only control is never
+ *  unlabelled. Shared by the roles below, and by any icon-only control
+ *  whose meaning would otherwise have to be guessed from the glyph.
+ *
+ *  The variant defaults to the floating "hud-icon" look its first callers
+ *  wanted, but is overridable: a control INSIDE a panel must not carry the
+ *  panel fill and shadow, which would read as a panel on a panel. */
+export function TooltipIconButton(
   props: BaseButtonProps & { label: string; openDelay?: number; tooltip?: string },
 ) {
-  const [local, rest] = splitProps(props, ["label", "openDelay", "tooltip", "children"])
+  const [local, rest] = splitProps(props, ["label", "openDelay", "tooltip", "children", "variant"])
   return (
     <Tooltip.Root openDelay={local.openDelay ?? 200}>
       <Tooltip.Trigger asChild={(triggerProps) => (
-        <BaseButton {...triggerProps({ "aria-label": local.label, ...rest })} variant="hud-icon">
+        <BaseButton
+          {...triggerProps({ "aria-label": local.label, ...rest })}
+          variant={local.variant ?? "hud-icon"}
+        >
           {local.children}
         </BaseButton>
       )} />

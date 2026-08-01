@@ -39,7 +39,9 @@
 // -------------
 // The whole control is the drag handle. A press that moves less than a
 // few pixels before release is a click; anything more is a drag, and the
-// click that ends it is swallowed.
+// click that ends it is swallowed. That gesture — and remembering where
+// the control was left — lives in `createFloating`, shared with the
+// command panel.
 // =====================================================================
 
 import { createSignal, createEffect, onMount, onCleanup } from "solid-js"
@@ -47,6 +49,7 @@ import {
   createConfiguredCubeScene,
   type CubeScene, type CubeRegion,
 } from "@linen/viewer"
+import { createFloating } from "./floating"
 import { useCamera } from "../render/camera-provider"
 import { useRenderTick } from "../render/render-loop"
 
@@ -54,14 +57,7 @@ import { useRenderTick } from "../render/render-loop"
  *  the Front view, Z up. */
 export type ViewDirection = readonly [number, number, number]
 
-interface Position {
-  readonly x: number
-  readonly y: number
-}
-
 const STORAGE_KEY = "linen.view-cube.position"
-/** Movement past this (in px) turns a press into a drag, not a click. */
-const DRAG_THRESHOLD = 3
 /** The cube's edge length. Mirrors --cube-size in the stylesheet.
  *
  *  118, up from 68. At 68 the face labels were a few pixels tall and the
@@ -77,33 +73,7 @@ const CUBE_SIZE = 160
 const CUBE_MARGIN = 8
 const CONTROL_SIZE = CUBE_SIZE + CUBE_MARGIN * 2
 
-const readPosition = (): Position | null => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as Partial<Position>
-    if (typeof parsed.x !== "number" || typeof parsed.y !== "number") return null
-    return { x: parsed.x, y: parsed.y }
-  } catch {
-    // A corrupt or unavailable store is not worth failing over: fall
-    // back to the default corner.
-    return null
-  }
-}
-
-const writePosition = (position: Position): void => {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(position))
-  } catch {
-    // Private browsing, quota. The control still works; it just will not
-    // remember where it was put.
-  }
-}
-
-const clamp = (value: number, extent: number): number =>
-  Math.max(0, Math.min(value, extent - CONTROL_SIZE))
-
-const defaultPosition = (): Position => ({
+const defaultPosition = () => ({
   x: Math.max(0, window.innerWidth - CONTROL_SIZE - 16),
   // Below the account chip in the top row, not level with it. The roll
   // arrows sit at the control's very top edge, and at 72 they overlapped
@@ -117,70 +87,15 @@ const defaultPosition = (): Position => ({
 // prop — where it floats — it owns itself (dragged + persisted). So it is
 // a self-contained behaviour: mount it under <CameraProvider> and it works.
 export function ViewCube() {
-  const stored = readPosition() ?? defaultPosition()
-  const [position, setPosition] = createSignal<Position>({
-    // Clamp on the FIRST read too, not only on resize: a position saved at
-    // one browser page-zoom is out of bounds at a higher one (200% halves
-    // the CSS viewport), which parked the control off-screen until the
-    // window happened to resize.
-    x: clamp(stored.x, window.innerWidth),
-    y: clamp(stored.y, window.innerHeight),
+  // Placement is the shared floating behaviour: drag anywhere on the
+  // control, clamped to the viewport, remembered in localStorage.
+  const floating = createFloating({
+    storageKey: STORAGE_KEY,
+    initial: defaultPosition,
+    size: () => ({ width: CONTROL_SIZE, height: CONTROL_SIZE }),
   })
-  const [dragging, setDragging] = createSignal(false)
-
-  const onResize = (): void => {
-    const current = position()
-    setPosition({
-      x: clamp(current.x, window.innerWidth),
-      y: clamp(current.y, window.innerHeight),
-    })
-  }
-  onMount(() => {
-    window.addEventListener("resize", onResize)
-    // Browser PAGE zoom changes the visual viewport without always firing a
-    // window resize; visualViewport reports it so the control follows the
-    // shrinking viewport back into view.
-    window.visualViewport?.addEventListener("resize", onResize)
-  })
-  onCleanup(() => {
-    window.removeEventListener("resize", onResize)
-    window.visualViewport?.removeEventListener("resize", onResize)
-  })
-
-  const onPointerDown = (event: PointerEvent): void => {
-    if (event.button !== 0) return
-    const origin = position()
-    const startX = event.clientX
-    const startY = event.clientY
-    let moved = false
-
-    // Tracked on WINDOW rather than through setPointerCapture: a
-    // re-render mid-gesture can swap the node out, taking its capture
-    // and listeners with it, and the drag would die after one pixel.
-    const onMove = (move: PointerEvent): void => {
-      const deltaX = move.clientX - startX
-      const deltaY = move.clientY - startY
-      if (!moved && Math.hypot(deltaX, deltaY) < DRAG_THRESHOLD) return
-      moved = true
-      setDragging(true)
-      setPosition({
-        x: clamp(origin.x + deltaX, window.innerWidth),
-        y: clamp(origin.y + deltaY, window.innerHeight),
-      })
-    }
-    const onUp = (): void => {
-      window.removeEventListener("pointermove", onMove)
-      window.removeEventListener("pointerup", onUp)
-      if (moved) {
-        writePosition(position())
-        // Cleared AFTER the click event would fire, so the click that
-        // ends a drag is swallowed rather than changing the view.
-        setTimeout(() => setDragging(false), 0)
-      }
-    }
-    window.addEventListener("pointermove", onMove)
-    window.addEventListener("pointerup", onUp)
-  }
+  const position = floating.position
+  const dragging = floating.dragging
 
   // --- the GL cube -------------------------------------------------------
   // Held outside the reactive graph: it is redrawn from an animation
@@ -337,7 +252,7 @@ export function ViewCube() {
     <div
       class="view-cube-slot"
       style={{ left: `${position().x}px`, top: `${position().y}px` }}
-      onPointerDown={onPointerDown}
+      {...floating.handleProps}
     >
       <canvas
         ref={canvas}

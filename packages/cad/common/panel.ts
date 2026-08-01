@@ -19,6 +19,7 @@
 
 import type {
   CommandDefinition, CommandStep, FieldDefinition, PanelState, PanelFieldError,
+  TransitionGuard,
 } from "./feature"
 
 // =====================================================================
@@ -35,7 +36,10 @@ export const beginCommand = (command: CommandDefinition<never, never>): PanelSta
   const first = command.steps[0]
   const values = new Map<string, unknown>()
   if (first) seedDefaults(first, values)
-  return settle({
+  // Advanced on open too: a first step whose fields all carry defaults is
+  // already satisfied, and showing it for one frame before it vanishes
+  // would be a flicker the user cannot act on.
+  return advance(settle({
     command: command.id,
     currentStep: first?.id ?? "",
     path: [],
@@ -43,7 +47,7 @@ export const beginCommand = (command: CommandDefinition<never, never>): PanelSta
     canBuild: false,
     errors: [],
     passes: new Map(),
-  }, command)
+  }, command), command)
 }
 
 const seedDefaults = (step: CommandStep, into: Map<string, unknown>): void => {
@@ -84,7 +88,67 @@ export const setField = (
 
   const values = new Map(state.values)
   values.set(field, value)
-  return settle({ ...state, values }, command)
+  // Writing a value can COMPLETE the step. Advancing here rather than
+  // waiting for a click is what makes picking a plane one gesture
+  // instead of two.
+  return advance(settle({ ...state, values }, command), command)
+}
+
+/**
+ * Fires any data-driven transition whose guard now passes, repeatedly:
+ * one auto-advance can complete the next step too (a step whose fields
+ * all carry defaults), and stopping after one would leave the panel on a
+ * step it should already have left.
+ *
+ * Bounded by the number of steps. A metadata cycle where every step
+ * auto-advances would otherwise spin forever, and a hang in the panel is
+ * a far worse failure than parking on a step.
+ */
+const advance = (
+  state: PanelState,
+  command: CommandDefinition<never, never>,
+): PanelState => {
+  let current = state
+  for (let guard = 0; guard <= command.steps.length; guard += 1) {
+    const step = stepOf(command, current.currentStep)
+    if (!step) return current
+    // A step with outstanding required fields is not complete, whatever
+    // its guards say — the guard decides WHETHER to leave a complete
+    // step, never whether the step is complete.
+    if (current.errors.length > 0) return current
+
+    const ready = step.transitions.find(
+      (transition) => transition.when !== null && passes(transition.when, current.values),
+    )
+    if (!ready) return current
+
+    const next = applyTransition(current, ready.id, command)
+    // No movement means the transition refused (a dangling `to`);
+    // looping again would spin on the same refusal.
+    if (next === current || next.currentStep === current.currentStep) return next
+    current = next
+  }
+  return current
+}
+
+/**
+ * A guard is author-supplied code running on every keystroke, so a throw
+ * is treated as "does not fire" rather than allowed to escape. Every
+ * function in this file is total; a bad predicate must not take the panel
+ * down mid-command.
+ */
+const passes = (
+  guard: TransitionGuard,
+  values: ReadonlyMap<string, unknown>,
+): boolean => {
+  try {
+    if (guard.kind === "predicate") return guard.test(values)
+    // A schema tests the values as a plain object, which is the shape a
+    // feature author writes a schema against — not a Map.
+    return guard.schema.safeParse(Object.fromEntries(values)).success
+  } catch {
+    return false
+  }
 }
 
 // =====================================================================

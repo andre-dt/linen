@@ -20,10 +20,21 @@
 // through `onChange`, and the new state comes back as a prop. The
 // machine itself lives in @linen/cad (common/panel.ts), because the same
 // walk has to mean the same thing when a command is replayed from git.
+//
+// PLACEMENT
+// ---------
+// The panel FLOATS: dragged by its header, clamped to the viewport, and
+// remembered in localStorage — the same behaviour as the view cube, from
+// the same `createFloating` hook. A designer panel sits over the model
+// the user is trying to see, so where it sits is their call, and it would
+// be tiresome to make that call again on every reload.
 // =====================================================================
 
-import { For, Show, Switch, Match, createMemo } from "solid-js"
-import { X } from "../icons"
+import {
+  For, Show, Switch, Match, createMemo, createSignal, createEffect, on,
+} from "solid-js"
+import { createFloating } from "../widgets/floating"
+import { LucideIcon } from "../widgets/lucide-icon"
 import {
   setField, applyTransition, stepTo,
   type CommandDefinition, type CommandStep, type FieldDefinition,
@@ -48,20 +59,64 @@ interface CommandPanelProps {
   readonly onClose: () => void
 }
 
+/** Width of the panel. Mirrors --hud-panel-width in the stylesheet: the
+ *  drag clamp needs the footprint in numbers, and out of step the panel
+ *  would be allowed to hang off an edge. */
+const PANEL_WIDTH = 260
+/** Clamping height. The panel's real height varies with the step's field
+ *  count, so this is the amount kept on screen rather than a measurement
+ *  — enough that the header and the first field always stay reachable. */
+const PANEL_MIN_VISIBLE = 180
+
 export function CommandPanel(props: CommandPanelProps) {
   const step = createMemo<CommandStep | undefined>(() =>
     props.definition.steps.find((entry) => entry.id === props.panel.currentStep),
   )
 
+  // Dragged by the header, remembered across reloads. One key for every
+  // command: the user positions "the designer", not a panel per feature,
+  // and having extrude open somewhere else than draft would read as the
+  // panel jumping around on its own.
+  const floating = createFloating({
+    storageKey: "linen.command-panel.position",
+    initial: () => ({ x: Math.max(0, window.innerWidth - PANEL_WIDTH - 20), y: 104 }),
+    size: () => ({ width: PANEL_WIDTH, height: PANEL_MIN_VISIBLE }),
+  })
+
+  // Has the user tried to LEAVE the current step? Until they have, an
+  // unfilled field is simply unreached, and marking it red says nothing
+  // they do not already know.
+  //
+  // Reset per step rather than per command: arriving at a fresh step
+  // starts the same way, and carrying the flag forward would greet each
+  // new step with the errors of the one before it.
+  const [attempted, setAttempted] = createSignal(false)
+  createEffect(
+    on(
+      () => props.panel.currentStep,
+      () => setAttempted(false),
+      { defer: true },
+    ),
+  )
+
   return (
     <Show when={step()}>
       {(current) => (
-        <div class="command-panel">
-          <header class="command-panel-header">
-            <span class="command-panel-title">{props.definition.label}</span>
-            <button class="command-panel-close" onClick={props.onClose} aria-label="Close">
-              <X size={14} />
-            </button>
+        <div
+          class="hud-panel command-panel"
+          style={{ left: `${floating.position().x}px`, top: `${floating.position().y}px` }}
+        >
+          <header
+            class="hud-list-head command-panel-header"
+            classList={{ dragging: floating.dragging() }}
+            {...floating.handleProps}
+          >
+            <h2>{props.definition.label}</h2>
+            <div class="hud-head-actions">
+              <button class="hud-icon-button" onClick={props.onClose} aria-label="Close">
+                <LucideIcon name="x" size={14} />
+              </button>
+            </div>
           </header>
 
           {/* Breadcrumb of steps already walked. Clicking one goes back
@@ -92,7 +147,20 @@ export function CommandPanel(props: CommandPanelProps) {
                 <Field
                   field={field}
                   value={props.panel.values.get(field.name)}
-                  error={props.panel.errors.find((e) => e.field === field.name)?.message ?? null}
+                  // Errors are SHOWN only once the user has tried to leave
+                  // the step. A field that is empty because it has not been
+                  // reached yet is not a mistake, and greeting an untouched
+                  // panel with "Sketch plane is required" states the
+                  // obvious in the colour reserved for things going wrong.
+                  //
+                  // The machine still carries the error the whole time —
+                  // it is what blocks the transition. Only the display
+                  // waits.
+                  error={
+                    attempted()
+                      ? props.panel.errors.find((e) => e.field === field.name)?.message ?? null
+                      : null
+                  }
                   onChange={(value) =>
                     props.onChange(setField(props.panel, field.name, value, props.definition))
                   }
@@ -107,9 +175,10 @@ export function CommandPanel(props: CommandPanelProps) {
             // complete. The machine would refuse it anyway; disabling
             // says so before the click rather than after.
             blocked={props.panel.errors.length > 0}
-            onApply={(transition) =>
+            onApply={(transition) => {
+              setAttempted(true)
               props.onChange(applyTransition(props.panel, transition.id, props.definition))
-            }
+            }}
           />
         </div>
       )}

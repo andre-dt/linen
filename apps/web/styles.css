@@ -42,15 +42,17 @@
 
   /* Stacking planes, low to high. Every floating layer picks its z-index
      from here so the order is declared in one place, not scattered:
-       canvas < hud < drawers < dialogs < tooltips < toasts
+       canvas < floating < hud < drawers < dialogs < tooltips < toasts
      Tooltips sit above the HUD (a tooltip anchored to a panel must never
      be clipped behind another panel) and above dialogs; toasts win over
      everything, being the most urgent, momentary layer. */
   --z-canvas: 0;
-  --z-hud: 2;
-  /* A floating control that rides ABOVE the HUD panels (the draggable view
-     cube), so a panel never covers it — but still below drawers/tooltips. */
-  --z-floating: 5;
+  /* A freely draggable control over the canvas (the view cube). It rides
+     above the viewport but BELOW the HUD panels: a panel is where the user
+     is working and must never be covered, whereas the cube can be dragged
+     out from under one. */
+  --z-floating: 2;
+  --z-hud: 5;
   --z-drawer-backdrop: 10;
   --z-drawer: 11;
   --z-dialog: 20;
@@ -345,64 +347,70 @@ body {
    COMMAND PANEL
    ===================================================================== */
 
+/* The designer wears the SAME material as every other HUD panel — it
+   carries .hud-panel for the surface (squircle, --hud-panel, no border)
+   and only adds what is specific to it: free placement and the internal
+   rhythm of its sections. Anything about how a panel LOOKS belongs to
+   .hud-panel, so restyling the HUD restyles this too.
+
+   Fixed, not absolute: the panel is dragged in viewport coordinates and
+   must not be clipped by whatever ancestor happens to contain it. */
 .command-panel {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  width: 260px;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: var(--surface-overlay);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
-}
-
-.command-panel-header {
+  position: fixed;
+  width: var(--hud-panel-width);
+  /* Never taller than the viewport it floats in; the fields scroll. */
+  max-height: calc(100vh - var(--hud-gap) * 2);
   display: flex;
-  align-items: center;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
+  flex-direction: column;
 }
 
-.command-panel-title {
-  font-weight: 600;
+/* The drag handle. Padding matches .hud-collapsible's own header so the
+   title sits on the same baseline as every other panel's. */
+.command-panel-header {
+  padding: 12px 14px 8px;
+  cursor: grab;
+  /* The header is a handle, so a drag over it must not paint a text
+     selection across the title. */
+  user-select: none;
+  flex-shrink: 0;
 }
-
-.command-panel-close {
-  margin-left: auto;
-  border: none;
-  background: transparent;
-  color: var(--text-faint);
-  cursor: pointer;
-}
+.command-panel-header.dragging { cursor: grabbing; }
 
 .command-panel-path {
   display: flex;
   gap: 4px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border);
+  padding: 0 14px 6px;
   font-size: 11px;
-  color: var(--text-faint);
+  color: var(--hud-text-faint);
+  flex-shrink: 0;
 }
 
 .command-panel-help {
-  padding: 8px 10px 0;
+  padding: 0 14px;
   margin: 0;
-  color: var(--text-muted);
+  color: var(--hud-text-muted);
   font-size: 12px;
+  flex-shrink: 0;
 }
 
 .command-panel-fields {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 10px;
+  padding: 10px 14px;
+  /* The only part that scrolls: header, breadcrumb and the transition
+     buttons stay put, so the way out of a step is always in reach no
+     matter how many fields it declares. */
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
 
 .command-panel-transitions {
   display: flex;
   gap: 4px;
-  padding: 10px;
-  border-top: 1px solid var(--border);
+  padding: 8px 14px 12px;
+  flex-shrink: 0;
 }
 
 .command-panel-transitions[data-layout="buttons"] {
@@ -441,14 +449,14 @@ body {
    keeping everything entered — undo per step. */
 .command-panel-crumb {
   appearance: none; border: none; background: transparent;
-  color: var(--text-faint); font: inherit; font-size: 11px;
+  color: var(--hud-text-faint); font: inherit; font-size: 11px;
   padding: 0 2px; cursor: pointer;
 }
-.command-panel-crumb:hover { color: var(--text); text-decoration: underline; }
+.command-panel-crumb:hover { color: var(--hud-text); text-decoration: underline; }
 .command-panel-crumb + .command-panel-crumb::before {
-  content: "›"; margin-right: 4px; color: var(--text-faint);
+  content: "›"; margin-right: 4px; color: var(--hud-text-faint);
 }
-.command-panel-crumb.current { color: var(--text); cursor: default; }
+.command-panel-crumb.current { color: var(--hud-text); cursor: default; }
 
 /* =====================================================================
    WIDGETS
@@ -526,8 +534,7 @@ body {
 }
 
 .button-group-item,
-.direction-axis,
-.plane-standard {
+.direction-axis {
   flex: 1;
   padding: 4px 6px;
   border: 1px solid var(--border-strong);
@@ -539,17 +546,12 @@ body {
 }
 
 .button-group-item[data-selected="true"],
-.plane-standard[data-selected="true"],
 .plane-offset[data-selected="true"] {
   border-color: var(--accent);
   background: var(--accent-muted);
   color: var(--text);
 }
 
-/* A picker whose target does not exist yet — a face pick with no
-   viewport to pick in. Shown and disabled rather than hidden: the step
-   is real, only its input source is pending. */
-.plane-pick:disabled,
 .plane-offset:disabled {
   opacity: 0.35;
   cursor: default;
@@ -613,31 +615,61 @@ body {
   cursor: pointer;
 }
 
-.direction-row,
-.plane-row {
+.direction-row {
   display: flex;
   align-items: center;
   gap: 2px;
 }
 
-/* Six named planes in two rows of three, pairing each with its opposite:
-   Top/Bottom, Front/Back, Right/Left read as pairs because that is what
-   they are — the same geometric plane from either side. */
-.plane-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 2px;
-  margin-bottom: 4px;
-}
-.plane-hint {
-  flex: 1;
-  font-size: 10px;
-  font-style: italic;
-}
+/* =====================================================================
+   PLANE FIELD — an empty slot that states what it wants, then the chosen
+   reference once it has one. There is no list of planes to choose from:
+   the canvas is the list.
+   ===================================================================== */
 
+/* ONE ROW, both states: the mate button, then the slot. Same geometry
+   empty or filled, so choosing a plane does not resize the panel under
+   the cursor. */
+.plane-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.plane-row[data-filled="false"] { border-style: dashed; }
+.field[data-invalid="true"] .plane-row { border-color: var(--danger); }
+
+/* Icon only — "Mate connector" lives in the tooltip. Flat and square:
+   inside a panel it must not wear the panel's own material. */
+.plane-mate {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 6px;
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+.plane-mate:hover { color: var(--accent); background: var(--surface-overlay); }
+
+/* The slot: a prompt while empty, the chosen reference once filled. */
+.plane-slot {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.plane-slot.filled { color: var(--text); }
+
+.plane-clear,
+.plane-clear,
 .direction-pick,
 .direction-flip,
-.plane-pick,
 .plane-offset {
   display: grid;
   place-items: center;
@@ -922,6 +954,15 @@ table.point-list {
   --hud-active-stroke: rgba(79, 142, 247, 0.6);
   --hud-radius: 22px;
   --hud-gap: 20px;
+  /* Two shadows, two jobs. The tight one draws the edge — without it a
+     navy panel over another navy panel has no visible seam, since they
+     share a fill. The wide, soft one lifts the panel off the white page.
+     Declared once here because every floating HUD surface needs the same
+     depth: panels that never overlapped now do, the designer being freely
+     draggable over the side columns. */
+  --hud-shadow:
+    0 2px 8px -2px rgba(0, 0, 0, 0.3),
+    0 18px 40px -12px rgba(0, 0, 0, 0.55);
   /* One fixed width for every side HUD panel (artifacts, outline, info),
      so the left and right columns line up and never reflow with content.
      Collapsed panels are the exception: they shrink to the icon button. */
@@ -953,7 +994,9 @@ table.point-list {
   border: none;
   border-radius: var(--hud-radius);
   corner-shape: squircle;
-  box-shadow: none;
+  /* Depth, so panels stay legible when they overlap each other rather
+     than merging into one navy mass. See --hud-shadow. */
+  box-shadow: var(--hud-shadow);
   color: var(--hud-text);
 }
 
@@ -1010,6 +1053,13 @@ table.point-list {
   background: var(--hud-panel);
   color: var(--hud-text-muted);
   font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+  /* Every user of this variant is a FLOATING surface in its own right —
+     a collapsed panel, the view picker's trigger — not a control nested
+     inside a panel. Each carries the panel fill and sits directly over
+     the canvas, so each needs the panel's depth: without it, collapsing a
+     panel would flatten it against whatever it overlaps. Controls inside
+     a panel use .hud-icon-button, which stays flat. */
+  box-shadow: var(--hud-shadow);
 }
 .ui-button-hud-icon:hover { background: rgba(255, 255, 255, 0.16); color: var(--hud-text); }
 
@@ -1152,11 +1202,9 @@ table.point-list {
   border-radius: 12px;
   corner-shape: squircle;
   /* Contrast against the white page and the panel it may overlap: a
-     hairline plus a deep, soft drop shadow so it reads as a raised menu. */
+     hairline plus the shared HUD depth, so it reads as a raised menu. */
   border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow:
-    0 2px 8px -2px rgba(0, 0, 0, 0.3),
-    0 18px 40px -12px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--hud-shadow);
 }
 .hud-menu-item {
   display: block; width: 100%; text-align: left;
@@ -1170,6 +1218,88 @@ table.point-list {
 
 /* Error toast, centred at the bottom. */
 .hud-toast { padding: 9px 16px; color: var(--danger); font-size: 12px; }
+
+/* =====================================================================
+   TOASTS — transient messages, bottom right, stacked.
+
+   Newest at the BOTTOM: a burst pushes older messages up and away, so the
+   newest is always in the same spot rather than shifting down the pile.
+   The stack itself takes no pointer — only the toasts do — or an empty
+   column would sit over the corner of the canvas swallowing clicks.
+   ===================================================================== */
+
+.toast-stack {
+  position: fixed;
+  right: var(--hud-gap);
+  bottom: var(--hud-gap);
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* Wide enough for a sentence, capped so a long message wraps rather
+     than stretching across the viewport. */
+  max-width: min(380px, calc(100vw - var(--hud-gap) * 2));
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 14px;
+  appearance: none;
+  border: none;
+  background: var(--hud-panel);
+  color: var(--hud-text);
+  border-radius: 14px;
+  corner-shape: squircle;
+  box-shadow: var(--hud-shadow);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  /* The whole toast is the dismiss target. */
+  cursor: pointer;
+  animation: toast-in 160ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: background 100ms ease;
+}
+.toast:hover { background: color-mix(in srgb, var(--hud-panel) 88%, white); }
+
+/* Level tints the ICON only, never the text: a whole message in red is
+   harder to read, and the icon already carries the severity. */
+.toast[data-level="info"] .toast-icon { color: var(--hud-text-muted); }
+.toast[data-level="success"] .toast-icon { color: var(--success); }
+.toast[data-level="warning"] .toast-icon { color: var(--warning); }
+.toast[data-level="error"] .toast-icon { color: var(--danger); }
+
+/* Fixed square, so the row keeps its geometry while the icon module is
+   still loading and the text does not shift when the glyph arrives. */
+.toast-icon {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+}
+
+.toast-text { flex: 1; min-width: 0; line-height: 1.4; }
+
+/* The offer, not a button: the whole toast is already clickable, so a
+   nested button would be a smaller target for the identical result. */
+.toast-action {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 12px;
+  margin-top: 1px;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 
 /* Editor: the return-to-dashboard control at the top of the sidebar. */
 .editor-back { margin: 8px; width: calc(100% - 16px); text-align: left; }
@@ -1325,22 +1455,15 @@ table.point-list {
    where .hud-right-info begins, and scrolls internally rather than
    growing — a draft with many curve steps must not push itself off the
    screen. */
+/* The designer slot no longer PLACES anything: the panel inside is
+   position:fixed and owns its own coordinates (dragged, then persisted).
+   The slot survives only to put the panel on the HUD stacking plane, so
+   it is given no box of its own to fight the panel over — and takes no
+   pointer, or an invisible full-viewport pane would swallow every click
+   meant for the model underneath. */
 .hud-designer {
-  top: calc(var(--hud-gap) * 2 + var(--hud-top-row));
-  right: var(--hud-gap);
-  width: var(--hud-panel-width);
-  max-height: calc(50% - var(--hud-gap) * 3 - var(--hud-top-row));
-  display: flex;
-  justify-content: flex-end;
-  align-items: flex-start;
-}
-/* Inside a slot the panel is positioned BY the slot: the standalone
-   absolute placement .command-panel carries would fight it. */
-.hud-designer .command-panel {
-  position: static;
-  width: 100%;
-  max-height: 100%;
-  overflow-y: auto;
+  inset: 0;
+  pointer-events: none;
 }
 
 .hud-statusbar {
