@@ -1,0 +1,36 @@
+# Integer literals, at the edges where a lexer stops being careful.
+
+test "reads plain integers"
+  assert(0 == 0)
+  assert(7 == 7)
+  assert(1000000 == 1000000)
+
+test "underscores group digits without changing the value"
+  assert(1_000 == 1000)
+  assert(1_000_000 == 1000000)
+  assert(1_0 == 10)
+
+test "leading zeros are not octal"
+  # A language that quietly reads 010 as 8 is a language where a padded
+  # number means something else.
+  assert(010 == 10)
+  assert(007 == 7)
+
+test "the largest integer that fits"
+  assert(9223372036854775807 == 9223372036854775807)
+
+test "zero behaves"
+  assert(0 + 0 == 0)
+  assert(0 * 99 == 0)
+  assert(0 - 5 == -5)
+  assert(-0 == 0)
+
+test "division truncates toward zero"
+  assert(7 / 2 == 3)
+  assert(1 / 2 == 0)
+  assert(99 / 100 == 0)
+
+test "remainder"
+  assert(7 % 2 == 1)
+  assert(6 % 3 == 0)
+  assert(1 % 5 == 1)

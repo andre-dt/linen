@@ -1,0 +1,64 @@
+# Functions calling functions, and the shapes a call can take.
+
+fn identity(n i32) i32
+  return n
+
+fn double(n i32) i32
+  return n * 2
+
+fn add(a i32, b i32) i32
+  return a + b
+
+fn add_three(a i32, b i32, c i32) i32
+  return a + b + c
+
+fn constant() i32
+  return 42
+
+fn quadruple(n i32) i32
+  # A function calling another one declared above it.
+  return double(double(n))
+
+fn describe(n i32) i32
+  # Several statements, several bindings, one result.
+  let doubled = double(n)
+  let plus_one = doubled + 1
+  return plus_one
+
+test "no arguments"
+  assert(constant() == 42)
+
+test "one argument"
+  assert(identity(7) == 7)
+  assert(double(21) == 42)
+
+test "several arguments"
+  assert(add(20, 22) == 42)
+  assert(add_three(1, 2, 3) == 6)
+
+test "a call as an argument"
+  assert(double(double(3)) == 12)
+  assert(add(double(2), double(3)) == 10)
+
+test "a call inside arithmetic"
+  assert(double(3) + 1 == 7)
+  assert(1 + double(3) == 7)
+  assert(double(3) * double(2) == 24)
+
+test "a call inside a comparison"
+  assert(double(3) == 6)
+  assert(double(3) > 5)
+
+test "an expression as an argument"
+  assert(double(1 + 2) == 6)
+  assert(add(1 + 1, 2 * 2) == 6)
+
+test "a function that calls another"
+  assert(quadruple(3) == 12)
+
+test "a function with several statements"
+  assert(describe(5) == 11)
+
+test "arguments are evaluated in order they are written"
+  assert(add(1, 2) == 3)
+  assert(add(2, 1) == 3)

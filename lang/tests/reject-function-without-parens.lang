@@ -1,0 +1,3 @@
+#~ expected `(` after the function name
+fn double n i32
+  return n

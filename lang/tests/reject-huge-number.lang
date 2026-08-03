@@ -1,0 +1,3 @@
+#~ does not fit in a 64-bit integer
+test "t"
+  assert(99999999999999999999 == 0)

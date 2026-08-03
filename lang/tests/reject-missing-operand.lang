@@ -1,0 +1,3 @@
+test "t"
+  #~ expected a value
+  assert(1 +)

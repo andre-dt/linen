@@ -22,7 +22,15 @@ Checking only that compilation failed would let a wrong-but-failing
 message through. For a compiler error the message IS the product, so a bad
 one is a bug and the suite treats it as one.
 
+By convention a rejection case is named `reject-<what-is-wrong>.lang`, so
+the directory listing reads as a catalogue of what the compiler refuses.
+The name is convention only — the `#~` is what actually classifies.
+
 Run it two ways, and both walk this directory:
 
     linen test      the user-facing command
     cargo test      the compiler's own build, which this must not break
+
+`PENDING.md` lists errors the compiler does NOT catch yet. They are notes
+rather than failing tests: a suite that is red from day one teaches
+everyone to ignore red.

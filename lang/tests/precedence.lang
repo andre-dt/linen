@@ -1,0 +1,47 @@
+# Every operator against every other, in both orders. Precedence bugs
+# hide in the pairs nobody thought to write down.
+
+test "multiplication and division bind tighter than addition"
+  assert(2 + 3 * 4 == 14)
+  assert(3 * 4 + 2 == 14)
+  assert(2 + 12 / 4 == 5)
+  assert(12 / 4 + 2 == 5)
+
+test "remainder binds like multiplication"
+  assert(2 + 7 % 4 == 5)
+  assert(7 % 4 + 2 == 5)
+
+test "arithmetic binds tighter than comparison"
+  assert(1 + 1 == 2)
+  assert(2 == 1 + 1)
+  assert(2 * 3 > 5)
+  assert(5 < 2 * 3)
+  assert(10 - 5 != 4)
+
+test "same-precedence operators group to the left"
+  # The classic slip: right-associating these gives 9, 2 and 4.
+  assert(10 - 3 - 2 == 5)
+  assert(100 / 5 / 2 == 10)
+  assert(20 - 5 + 3 == 18)
+  assert(2 * 6 / 3 == 4)
+
+test "parentheses beat everything"
+  assert((2 + 3) * 4 == 20)
+  assert(2 * (3 + 4) == 14)
+  assert((10 - 3) - 2 == 5)
+  assert(10 - (3 - 2) == 9)
+
+test "nested parentheses"
+  assert(((1 + 2) * (3 + 4)) == 21)
+  assert((((7))) == 7)
+
+test "negation binds tighter than arithmetic"
+  assert(-5 + 1 == -4)
+  assert(-(5 + 1) == -6)
+  assert(-2 * 3 == -6)
+
+test "negation stacks"
+  assert(- -5 == 5)
+
+test "a long chain keeps its shape"
+  assert(1 + 2 * 3 - 4 / 2 == 5)

@@ -1,0 +1,40 @@
+# What a name means, and where.
+
+fn shadow_parameter(n i32) i32
+  # A binding may reuse a parameter's name. The binding wins from here
+  # on; the parameter is simply no longer reachable.
+  let n = n * 2
+  return n
+
+fn chain() i32
+  let a = 1
+  let b = a + 1
+  let c = b + 1
+  return c
+
+fn uses_parameter_twice(n i32) i32
+  return n + n
+
+test "a binding is visible to the ones after it"
+  let a = 2
+  let b = a * 3
+  let c = b + a
+  assert(c == 8)
+
+test "bindings in a test do not leak into a function"
+  let n = 99
+  assert(chain() == 3)
+
+test "a parameter can be shadowed"
+  assert(shadow_parameter(5) == 10)
+
+test "a parameter can be read more than once"
+  assert(uses_parameter_twice(4) == 8)
+
+test "each test has its own bindings"
+  let x = 1
+  assert(x == 1)
+
+test "so this x is unrelated to the one above"
+  let x = 2
+  assert(x == 2)

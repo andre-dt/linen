@@ -1,0 +1,3 @@
+test "t"
+  #~ expected `(` after `assert`
+  assert 1 == 1

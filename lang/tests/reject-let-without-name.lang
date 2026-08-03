@@ -1,0 +1,3 @@
+test "t"
+  #~ expected a name to bind
+  let = 5

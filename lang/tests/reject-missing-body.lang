@@ -1,0 +1,5 @@
+#~ expected an indented body
+test "t"
+
+test "u"
+  assert(1 == 1)

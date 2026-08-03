@@ -167,7 +167,8 @@ Feito:
 - **lexer** com indentação semântica — 17 testes
 - **parser** — `fn`, `test`, `let`, `return`, `assert`, expressões com
   precedência — 18 testes
-- **harness** — 10 arquivos em `tests/`: 3 que compilam, 7 rejeitados
+- **suíte** — 28 arquivos em `tests/`: 8 de linguagem (53 testes) e 20
+  rejeições, uma por mensagem de erro distinta
 - **CLI `linen`** — `build`/`test`/`clean`, erro com arquivo:linha:coluna
   e caret, relatório progressivo e sumário — 49 testes no total
 

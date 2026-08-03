@@ -1,0 +1,3 @@
+test "t"
+  #~ expected `=` after the name
+  let x 5

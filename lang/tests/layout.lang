@@ -1,0 +1,32 @@
+# INDENTATION IS SYNTAX, so its corners are the ones worth pinning.
+#
+# A layout rule that is almost right is worse than one that is obviously
+# wrong: it accepts code that reads one way and means another.
+
+test "a blank line does not close a block"
+
+  assert(1 == 1)
+
+  assert(2 == 2)
+
+test "a comment-only line does not close a block"
+  assert(1 == 1)
+# this comment sits at column zero
+  assert(2 == 2)
+
+test "trailing spaces on a blank line do not close a block"
+  assert(1 == 1)
+   
+  assert(2 == 2)
+
+test "a comment can follow code on the same line"
+  assert(1 == 1) # and is not part of it
+
+fn deep(n i32) i32
+  # A body can be indented by any width, as long as it keeps the one it
+  # opened with. The language does not mandate two or four spaces.
+      let doubled = n * 2
+      return doubled
+
+test "any consistent indent width works"
+  assert(deep(4) == 8)

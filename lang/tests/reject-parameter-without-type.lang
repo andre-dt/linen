@@ -1,0 +1,3 @@
+#~ expected a type
+fn double(n) i32
+  return n * 2
