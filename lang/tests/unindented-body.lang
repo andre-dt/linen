@@ -1,0 +1,3 @@
+test "a body that is not indented"
+#~ expected an indented body
+assert(1 == 1)

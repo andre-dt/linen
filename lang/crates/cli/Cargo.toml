@@ -1,0 +1,12 @@
+[package]
+name = "cli"
+edition.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "linen"
+path = "src/main.rs"
+
+[dependencies]
+syntax.workspace = true
+compile.workspace = true

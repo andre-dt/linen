@@ -1,0 +1,21 @@
+# `let` binds a name to a value. Nothing is ever reassigned.
+
+fn triple(n i32) i32
+  let doubled = n * 2
+  return doubled + n
+
+test "binds a value"
+  let x = 5
+  assert(x == 5)
+
+test "binds an expression"
+  let x = 2 + 3
+  assert(x == 5)
+
+test "a binding can read the ones before it"
+  let a = 2
+  let b = a * 3
+  assert(b == 6)
+
+test "bindings work inside a function"
+  assert(triple(4) == 12)

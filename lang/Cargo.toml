@@ -1,0 +1,26 @@
+# =====================================================================
+# lang/ — the compiler.
+#
+# Three crates, split along the one seam that matters: LLVM.
+#
+#   syntax   source text -> AST. Knows nothing about backends.
+#   compile  AST -> LLVM IR. The only crate that links LLVM.
+#   cli      the `lang` binary.
+#
+# The split is not ceremony. Linking LLVM is the slow part of every
+# build, and the parser is the part that changes every ten minutes —
+# keeping them apart means iterating on syntax costs a fast rebuild of a
+# small crate instead of a relink of the whole toolchain.
+# =====================================================================
+
+[workspace]
+resolver = "2"
+members = ["crates/syntax", "crates/compile", "crates/cli"]
+
+[workspace.package]
+edition = "2021"
+version = "0.0.0"
+
+[workspace.dependencies]
+syntax = { path = "crates/syntax" }
+compile = { path = "crates/compile" }

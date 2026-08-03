@@ -1,0 +1,36 @@
+# Arithmetic, precedence and grouping.
+#
+# The smallest program that exercises the whole compiler: lexer, parser,
+# checker, codegen. If this one fails, nothing else is worth reading.
+
+test "adds and subtracts"
+  assert(2 + 2 == 4)
+  assert(10 - 3 == 7)
+
+test "multiplication binds tighter than addition"
+  assert(2 + 3 * 4 == 14)
+  assert(2 * 3 + 4 == 10)
+
+test "parentheses override precedence"
+  assert((2 + 3) * 4 == 20)
+
+test "arithmetic groups to the left"
+  # 10 - 3 - 2 is 5, not 9. Right-associating subtraction is the classic
+  # slip in a precedence-climbing parser.
+  assert(10 - 3 - 2 == 5)
+  assert(100 / 5 / 2 == 10)
+
+test "compares"
+  assert(1 < 2)
+  assert(2 <= 2)
+  assert(3 > 2)
+  assert(3 >= 3)
+  assert(1 != 2)
+
+test "negates"
+  assert(-5 + 1 == -4)
+  assert(-(5 + 1) == -6)
+
+test "divides and takes remainders"
+  assert(7 / 2 == 3)
+  assert(7 % 2 == 1)

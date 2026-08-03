@@ -3,13 +3,16 @@
     {
       "target_name": "linen-occt",
 
+      # Only the boolean survives here. Sketch, extrude and tessellate were
+      # removed: they are being rebuilt in the new kernel, and keeping a
+      # second implementation of a feature that already moved is how the
+      # two drift apart. `session` and `errors` stay because they are not
+      # features — they are the registry the boolean stores bodies in and
+      # the error path it reports through.
       "sources": [
         "session.cpp",
         "errors.cpp",
-        "sketch.cpp",
-        "extrude.cpp",
-        "boolean.cpp",
-        "tessellate.cpp"
+        "boolean.cpp"
       ],
 
       "include_dirs": [

@@ -1,0 +1,9 @@
+[package]
+name = "compile"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+syntax.workspace = true
+# inkwell lands with the first codegen. Adding it before there is any IR
+# to emit would put an LLVM link into every build for nothing.

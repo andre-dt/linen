@@ -1,0 +1,5 @@
+# A tab is an error, not a silent 4 or 8. "It looks aligned but is not"
+# is the failure mode the whole layout design exists to avoid.
+test "indented with a tab"
+	#~ indent with spaces, not tabs
+	assert(1 == 1)

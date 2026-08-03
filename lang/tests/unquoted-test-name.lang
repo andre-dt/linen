@@ -1,0 +1,3 @@
+#~ a test is named with quoted text
+test arithmetic
+  assert(1 == 1)

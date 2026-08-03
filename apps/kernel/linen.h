@@ -99,79 +99,12 @@ typedef struct {
 void linen_string_free(char* message);
 
 // =====================================================================
-// SKETCH
-// =====================================================================
-// Curves arrive as one flat packed buffer rather than a struct array:
-// zero-copy from the Float64Array on the JavaScript side, and one
-// crossing instead of one per curve.
-//
-//   [kind, param_count, params...] repeated
-//
-//   kind 0 line     x1 y1 x2 y2
-//   kind 1 arc      x1 y1 x2 y2 bulge
-//   kind 2 circle   cx cy radius
-//   kind 3 ellipse  cx cy rx ry rotation
-//   kind 4 spline   count x1 y1 x2 y2 ...
-
-typedef struct {
-  const double* curves;
-  size_t curve_count;
-  double origin[3];
-  double normal[3];
-  double x_direction[3];
-} linen_sketch_input;
-
-linen_error linen_sketch_build(
-  const linen_sketch_input* input,
-  linen_shape* out_face);
-
-// =====================================================================
-// EXTRUDE
-// =====================================================================
-// Expressions are already resolved: the boundary only sees numbers.
-
-typedef struct {
-  linen_shape profile;
-  /// A zero vector means "use the sketch normal".
-  double direction[3];
-  double forward;
-  double backward;
-  double taper;
-} linen_extrude_input;
-
-typedef enum {
-  LINEN_ROLE_START = 0,
-  LINEN_ROLE_END = 1,
-  LINEN_ROLE_SIDE = 2,
-} linen_face_role;
-
-/**
- * Faces come back as parallel arrays in a DETERMINISTIC order.
- *
- * Stable ordering is what lets a stored selector survive a parameter
- * change. It is the problem CadQuery never solved: there, equality is
- * OCCT pointer identity and every boolean regenerates the shapes, so
- * `>Z[-2]` can silently pick a different face after an edit and yield
- * a solid that is valid and wrong, with no error anywhere.
- *
- * Both arrays are allocated here and released with linen_faces_free.
- */
-typedef struct {
-  linen_shape body;
-  linen_shape* faces;
-  uint8_t* roles; // one linen_face_role per entry
-  size_t face_count;
-} linen_extrude_output;
-
-linen_error linen_extrude(
-  const linen_extrude_input* input,
-  linen_extrude_output* out_result);
-
-void linen_faces_free(linen_extrude_output* result);
-
-// =====================================================================
 // BOOLEANS
 // =====================================================================
+// The only geometric operation still backed by OCCT. Sketch, extrude and
+// tessellate were removed with their implementations; the new kernel owns
+// them now, and a declaration with nothing behind it is a link error
+// waiting for whoever calls it first.
 
 typedef enum {
   LINEN_BOOLEAN_UNION = 0,
@@ -184,36 +117,6 @@ linen_error linen_boolean(
   linen_shape first,
   linen_shape second,
   linen_shape* out_body);
-
-// =====================================================================
-// TESSELLATION
-// =====================================================================
-// The largest payload in the system, so it is a SINGLE buffer laid out
-// exactly as src/common/kernel.ts documents. Those same bytes travel
-// to the socket and into the GPU buffer with no re-serialization: one
-// format, three consumers.
-//
-// `faces` and `face_ids` let the CALLER supply the identifier mapping,
-// rather than this layer inventing identifiers it has no way to keep
-// stable across regenerations.
-//
-// The buffer is allocated here and released with linen_mesh_free.
-
-typedef struct {
-  uint8_t* data;
-  size_t length;
-} linen_mesh;
-
-linen_error linen_tessellate(
-  linen_shape body,
-  const linen_shape* faces,
-  const uint32_t* face_ids,
-  size_t face_count,
-  double linear_tolerance,
-  double angular_tolerance,
-  linen_mesh* out_mesh);
-
-void linen_mesh_free(linen_mesh* mesh);
 
 #ifdef __cplusplus
 }

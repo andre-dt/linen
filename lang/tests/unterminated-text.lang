@@ -1,0 +1,3 @@
+#~ this text is missing its closing quote
+test "no closing quote
+  assert(1 == 1)

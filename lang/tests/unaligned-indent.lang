@@ -1,0 +1,4 @@
+test "indented to a level nobody opened"
+    assert(1 == 1)
+  #~ does not line up with any open block
+  assert(2 == 2)

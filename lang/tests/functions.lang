@@ -1,0 +1,25 @@
+# Functions: parameters, results, calls.
+
+fn double(n i32) i32
+  return n * 2
+
+fn add(a i32, b i32) i32
+  return a + b
+
+fn zero() i32
+  return 0
+
+test "calls a function"
+  assert(double(21) == 42)
+
+test "passes several arguments"
+  assert(add(20, 22) == 42)
+
+test "calls with no arguments"
+  assert(zero() == 0)
+
+test "nests calls"
+  assert(double(add(1, 2)) == 6)
+
+test "calls inside arithmetic"
+  assert(double(3) + add(1, 1) == 8)

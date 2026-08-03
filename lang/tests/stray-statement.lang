@@ -1,0 +1,2 @@
+#~ expected `fn` or `test` at the top level
+let x = 5
