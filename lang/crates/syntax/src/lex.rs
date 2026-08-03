@@ -250,6 +250,18 @@ impl<'a> Lexer<'a> {
             // two-character forms above, so `==` never lexes as two of
             // these.
             (b'=', _) => TokenKind::Equal,
+            (b'.', Some(b'.')) => {
+                self.at += 1;
+                TokenKind::DotDot
+            }
+            // A lone `.` has no meaning yet, and saying so beats
+            // "not part of the language" when the user meant a range.
+            (b'.', _) => {
+                return Err(LexError {
+                    message: "`.` is not an operator here; a range is written `..`".to_string(),
+                    span: Span::new(start, self.at),
+                });
+            }
             (other, _) => {
                 return Err(LexError {
                     message: format!("`{}` is not part of the language", other as char),

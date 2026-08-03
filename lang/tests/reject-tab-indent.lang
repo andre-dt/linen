@@ -2,4 +2,4 @@
 # is the failure mode the whole layout design exists to avoid.
 test "indented with a tab"
 	#~ indent with spaces, not tabs
-	assert(1 == 1)
+	throw "1 should be 1" unless 1 == 1

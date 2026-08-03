@@ -1,3 +1,0 @@
-test "an assert that is never closed"
-  #~ expected `)` to close the assert
-  assert(1 + 1

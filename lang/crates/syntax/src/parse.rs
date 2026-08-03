@@ -156,14 +156,89 @@ impl<'a> Parser<'a> {
     }
 
     fn statement(&mut self) -> Result<Statement, ParseError> {
+        // The block-bodied statements consume their own terminator — a
+        // block already ends on a Dedent — so they return early rather
+        // than falling through to the newline check below.
+        match self.peek_name() {
+            Some("if") => return self.if_statement(),
+            Some("while") => return self.while_statement(),
+            Some("for") => return self.for_statement(),
+            _ => {}
+        }
+
         let statement = match self.peek_name() {
             Some("let") => self.let_statement()?,
             Some("return") => self.return_statement()?,
-            Some("assert") => self.assert_statement()?,
-            _ => return Err(self.error_here("expected `let`, `return` or `assert`")),
+            Some("throw") => self.throw_statement()?,
+            _ => {
+                return Err(self.error_here(
+                    "expected `let`, `return`, `throw`, `if`, `while` or `for`",
+                ))
+            }
         };
         self.expect(&TokenKind::Newline, "a line break after the statement")?;
         Ok(statement)
+    }
+
+    /// `if condition <block>` with an optional `else`.
+    ///
+    /// The statement form. The expression form lives in `primary`, and
+    /// the two differ in exactly one way: there, `else` is required,
+    /// because a value has to exist on both paths.
+    fn if_statement(&mut self) -> Result<Statement, ParseError> {
+        let start = self.span_here();
+        self.advance(); // if
+        let condition = self.expression()?;
+        let then_branch = self.block()?;
+
+        let else_branch = if self.peek_name() == Some("else") {
+            self.advance();
+            Some(self.block()?)
+        } else {
+            None
+        };
+
+        let span = start.to(self.span_before());
+        Ok(Statement::If { condition, then_branch, else_branch, span })
+    }
+
+    fn while_statement(&mut self) -> Result<Statement, ParseError> {
+        let start = self.span_here();
+        self.advance(); // while
+        let condition = self.expression()?;
+        let body = self.block()?;
+        let span = start.to(self.span_before());
+        Ok(Statement::While { condition, body, span })
+    }
+
+    /// `for name in start .. end <block>`
+    ///
+    /// A half-open range: `0 .. 3` visits 0, 1 and 2. Half-open because
+    /// `0 .. n` then means "n times", which is the thing people write,
+    /// and because adjacent ranges meet without overlapping.
+    fn for_statement(&mut self) -> Result<Statement, ParseError> {
+        let start_span = self.span_here();
+        self.advance(); // for
+        // Checked before reading the name: `for in 0 .. 3` would
+        // otherwise take `in` AS the name and then complain that `in` is
+        // missing, which points at the wrong thing entirely.
+        if self.peek_name() == Some("in") {
+            return Err(self.error_here("expected a name for the loop variable"));
+        }
+        let name = self.name("a name for the loop variable")?;
+
+        if self.peek_name() != Some("in") {
+            return Err(self.error_here("expected `in` after the loop variable"));
+        }
+        self.advance();
+
+        let start = self.expression()?;
+        self.expect(&TokenKind::DotDot, "`..` between the start and end of the range")?;
+        let end = self.expression()?;
+        let body = self.block()?;
+
+        let span = start_span.to(self.span_before());
+        Ok(Statement::For { name, start, end, body, span })
     }
 
     fn let_statement(&mut self) -> Result<Statement, ParseError> {
@@ -190,14 +265,37 @@ impl<'a> Parser<'a> {
         Ok(Statement::Return { value, span })
     }
 
-    fn assert_statement(&mut self) -> Result<Statement, ParseError> {
+    fn throw_statement(&mut self) -> Result<Statement, ParseError> {
         let start = self.span_here();
-        self.advance(); // assert
-        self.expect(&TokenKind::LeftParen, "`(` after `assert`")?;
+        self.advance(); // throw
+
+        let message = match &self.peek().kind {
+            TokenKind::Text(text) => {
+                let text = text.clone();
+                self.advance();
+                text
+            }
+            _ => {
+                return Err(self.error_here(
+                    "expected the message to throw, as quoted text",
+                ))
+            }
+        };
+
+        let sense = match self.peek_name() {
+            Some("if") => ThrowSense::When,
+            Some("unless") => ThrowSense::Unless,
+            _ => {
+                return Err(self.error_here(
+                    "expected `if` or `unless` after the message",
+                ))
+            }
+        };
+        self.advance();
+
         let condition = self.expression()?;
-        self.expect(&TokenKind::RightParen, "`)` to close the assert")?;
-        let span = start.to(self.span_before());
-        Ok(Statement::Assert { condition, span })
+        let span = start.to(condition.span());
+        Ok(Statement::Throw { message, sense, condition, span })
     }
 
     // --- expressions ------------------------------------------------------
@@ -232,6 +330,17 @@ impl<'a> Parser<'a> {
     }
 
     fn unary(&mut self) -> Result<Expression, ParseError> {
+        if self.peek_name() == Some("not") {
+            let start = self.span_here();
+            self.advance();
+            let operand = self.unary()?;
+            let span = start.to(operand.span());
+            return Ok(Expression::Unary {
+                operator: UnaryOperator::Not,
+                operand: Box::new(operand),
+                span,
+            });
+        }
         if self.check(&TokenKind::Minus) {
             let start = self.span_here();
             self.advance();
@@ -259,6 +368,57 @@ impl<'a> Parser<'a> {
                 self.expect(&TokenKind::RightParen, "`)` to close the group")?;
                 Ok(inner)
             }
+            TokenKind::Name(name) if name == "true" || name == "false" => {
+                self.advance();
+                Ok(Expression::Boolean { value: name == "true", span })
+            }
+            // `if` used where a value is expected, written on ONE line:
+            //
+            //     let sign = if n < 0 then -1 else 1
+            //
+            // One line rather than an indented block, because an
+            // expression can appear mid-line — inside a call argument,
+            // on the right of a `let` — where opening a block would put
+            // the layout rule in conflict with itself. The multi-line
+            // shape is the STATEMENT form, which is where a body belongs.
+            //
+            // `then` separates the condition from the value. Without it,
+            // `if a - 1 else` would have to guess where the condition
+            // stops.
+            //
+            // `else` is required: an expression must have a value either
+            // way.
+            TokenKind::Name(name) if name == "if" => {
+                self.advance();
+                let condition = self.expression()?;
+                if self.peek_name() != Some("then") {
+                    return Err(self.error_here(
+                        "expected `then` after the condition of an `if` used as a value",
+                    ));
+                }
+                self.advance();
+                let then_value = self.expression()?;
+                if self.peek_name() != Some("else") {
+                    return Err(self.error_here(
+                        "an `if` used as a value needs an `else`, since it must have a value either way",
+                    ));
+                }
+                self.advance();
+                let else_value = self.expression()?;
+                let span = span.to(self.span_before());
+                Ok(Expression::If {
+                    condition: Box::new(condition),
+                    then_branch: vec![Statement::Return {
+                        value: Some(then_value),
+                        span,
+                    }],
+                    else_branch: vec![Statement::Return {
+                        value: Some(else_value),
+                        span,
+                    }],
+                    span,
+                })
+            }
             TokenKind::Name(name) => {
                 self.advance();
                 if self.take(&TokenKind::LeftParen) {
@@ -280,6 +440,13 @@ impl<'a> Parser<'a> {
     }
 
     fn peek_operator(&self) -> Option<BinaryOperator> {
+        // Written as words rather than `&&` and `||`: they read as what
+        // they are, and there is no bitwise pair to confuse them with.
+        match self.peek_name() {
+            Some("and") => return Some(BinaryOperator::And),
+            Some("or") => return Some(BinaryOperator::Or),
+            _ => {}
+        }
         Some(match self.peek().kind {
             TokenKind::Plus => BinaryOperator::Add,
             TokenKind::Minus => BinaryOperator::Subtract,

@@ -1,0 +1,61 @@
+# Recursion, which is how iteration is written when there is nothing to
+# mutate.
+
+fn countdown(n i32) i32
+  return if n == 0 then 0 else countdown(n - 1)
+
+fn sum_to(n i32) i32
+  return if n == 0 then 0 else n + sum_to(n - 1)
+
+fn factorial(n i32) i32
+  return if n <= 1 then 1 else n * factorial(n - 1)
+
+fn fibonacci(n i32) i32
+  return if n < 2 then n else fibonacci(n - 1) + fibonacci(n - 2)
+
+fn gcd(a i32, b i32) i32
+  return if b == 0 then a else gcd(b, a % b)
+
+fn power(base i32, exponent i32) i32
+  return if exponent == 0 then 1 else base * power(base, exponent - 1)
+
+fn is_even(n i32) bool
+  # Mutual recursion: each calls the other.
+  return if n == 0 then true else is_odd(n - 1)
+
+fn is_odd(n i32) bool
+  return if n == 0 then false else is_even(n - 1)
+
+test "a base case that returns immediately"
+  throw "countdown(0) should be 0" unless countdown(0) == 0
+
+test "recursion terminates"
+  throw "countdown(5) should be 0" unless countdown(5) == 0
+  throw "countdown(20) should be 0" unless countdown(20) == 0
+
+test "an accumulating recursion"
+  throw "sum_to(0) should be 0" unless sum_to(0) == 0
+  throw "sum_to(1) should be 1" unless sum_to(1) == 1
+  throw "sum_to(5) should be 15" unless sum_to(5) == 15
+  throw "sum_to(10) should be 55" unless sum_to(10) == 55
+
+test "factorial"
+  throw "factorial(0) should be 1" unless factorial(0) == 1
+  throw "factorial(1) should be 1" unless factorial(1) == 1
+  throw "factorial(5) should be 120" unless factorial(5) == 120
+
+test "a recursion that branches twice"
+  throw "fibonacci(0) should be 0" unless fibonacci(0) == 0
+  throw "fibonacci(1) should be 1" unless fibonacci(1) == 1
+  throw "fibonacci(7) should be 13" unless fibonacci(7) == 13
+
+test "recursion on two arguments"
+  throw "gcd(12, 8) should be 4" unless gcd(12, 8) == 4
+  throw "gcd(17, 5) should be 1" unless gcd(17, 5) == 1
+  throw "power(2, 8) should be 256" unless power(2, 8) == 256
+
+test "mutual recursion"
+  throw "is_even(0) should hold" unless is_even(0)
+  throw "is_odd(1) should hold" unless is_odd(1)
+  throw "is_even(10) should hold" unless is_even(10)
+  throw "is_even(7) should not hold" if is_even(7)

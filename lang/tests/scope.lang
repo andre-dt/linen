@@ -19,22 +19,22 @@ test "a binding is visible to the ones after it"
   let a = 2
   let b = a * 3
   let c = b + a
-  assert(c == 8)
+  throw "c should be 8" unless c == 8
 
 test "bindings in a test do not leak into a function"
   let n = 99
-  assert(chain() == 3)
+  throw "chain() should be 3" unless chain() == 3
 
 test "a parameter can be shadowed"
-  assert(shadow_parameter(5) == 10)
+  throw "shadow_parameter(5) should be 10" unless shadow_parameter(5) == 10
 
 test "a parameter can be read more than once"
-  assert(uses_parameter_twice(4) == 8)
+  throw "uses_parameter_twice(4) should be 8" unless uses_parameter_twice(4) == 8
 
 test "each test has its own bindings"
   let x = 1
-  assert(x == 1)
+  throw "x should be 1" unless x == 1
 
 test "so this x is unrelated to the one above"
   let x = 2
-  assert(x == 2)
+  throw "x should be 2" unless x == 2

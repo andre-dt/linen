@@ -74,22 +74,76 @@ pub enum Statement {
         value: Option<Expression>,
         span: Span,
     },
-    /// `assert(condition)`
+    /// `if condition <block>` with an optional `else`, as a STATEMENT —
+    /// for the early-return shape, where there is no value to produce.
+    If {
+        condition: Expression,
+        then_branch: Vec<Statement>,
+        else_branch: Option<Vec<Statement>>,
+        span: Span,
+    },
+    /// `while condition <block>`
+    While {
+        condition: Expression,
+        body: Vec<Statement>,
+        span: Span,
+    },
+    /// `for name in start .. end <block>`
+    For {
+        name: String,
+        start: Expression,
+        end: Expression,
+        body: Vec<Statement>,
+        span: Span,
+    },
+    /// `throw "message" if condition` / `throw "message" unless condition`
     ///
-    /// A statement rather than a call to an ordinary function: it needs
-    /// the SOURCE TEXT of its condition to report a useful failure
-    /// ("assert(2 + 2 == 5) failed"), and a normal call receives a value
-    /// with the text long gone.
-    Assert {
+    /// Always fatal: it ends the test where it stands. There is no catch,
+    /// so no function needs a failure path in its type and nothing needs
+    /// unwinding — the whole feature costs nothing until it fires.
+    ///
+    /// A statement rather than a call, because it needs the SOURCE TEXT
+    /// of its condition to say which one did not hold, and a normal call
+    /// receives a value with the text long gone.
+    Throw {
+        message: String,
+        /// `if` throws when the condition holds; `unless` throws when it
+        /// does not. Two words rather than one plus `not`, so a guard and
+        /// an assertion are each written the way they read.
+        sense: ThrowSense,
         condition: Expression,
         span: Span,
     },
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum ThrowSense {
+    /// `throw ... if cond` — the condition is what must NOT happen.
+    When,
+    /// `throw ... unless cond` — the condition is what must hold.
+    Unless,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Expression {
     Integer {
         value: i64,
+        span: Span,
+    },
+    Boolean {
+        value: bool,
+        span: Span,
+    },
+    /// `if condition <block> else <block>`, as a VALUE.
+    ///
+    /// The else is not optional here: an `if` used as a value has to have
+    /// one, or there would be nothing to evaluate to when the condition
+    /// is false. The statement form — where it may be omitted — is
+    /// `Statement::If`.
+    If {
+        condition: Box<Expression>,
+        then_branch: Vec<Statement>,
+        else_branch: Vec<Statement>,
         span: Span,
     },
     /// A name being read. Whether it is a local, a parameter or a
@@ -120,6 +174,8 @@ impl Expression {
     pub fn span(&self) -> Span {
         match self {
             Expression::Integer { span, .. }
+            | Expression::Boolean { span, .. }
+            | Expression::If { span, .. }
             | Expression::Name { span, .. }
             | Expression::Unary { span, .. }
             | Expression::Binary { span, .. }
@@ -131,6 +187,7 @@ impl Expression {
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum UnaryOperator {
     Negate,
+    Not,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -146,6 +203,8 @@ pub enum BinaryOperator {
     LessOrEqual,
     Greater,
     GreaterOrEqual,
+    And,
+    Or,
 }
 
 impl BinaryOperator {
@@ -154,14 +213,17 @@ impl BinaryOperator {
     /// reading it expects.
     pub fn precedence(self) -> u8 {
         match self {
+            // Loosest, so `a == b and c == d` groups the way it reads.
+            BinaryOperator::Or => 1,
+            BinaryOperator::And => 2,
             BinaryOperator::Equal
             | BinaryOperator::NotEqual
             | BinaryOperator::Less
             | BinaryOperator::LessOrEqual
             | BinaryOperator::Greater
-            | BinaryOperator::GreaterOrEqual => 1,
-            BinaryOperator::Add | BinaryOperator::Subtract => 2,
-            BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Remainder => 3,
+            | BinaryOperator::GreaterOrEqual => 3,
+            BinaryOperator::Add | BinaryOperator::Subtract => 4,
+            BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Remainder => 5,
         }
     }
 
@@ -178,6 +240,8 @@ impl BinaryOperator {
             BinaryOperator::LessOrEqual => "<=",
             BinaryOperator::Greater => ">",
             BinaryOperator::GreaterOrEqual => ">=",
+            BinaryOperator::And => "and",
+            BinaryOperator::Or => "or",
         }
     }
 }

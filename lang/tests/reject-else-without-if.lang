@@ -1,0 +1,4 @@
+test "t"
+  #~ expected `let`, `return`, `throw`, `if`, `while` or `for`
+  else
+    throw "true should not hold" if true

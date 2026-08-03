@@ -402,7 +402,7 @@ mod tests {
     #[test]
     fn reports_the_tests_a_file_declares() {
         let file = std::env::temp_dir().join("linen-outcome-test.lang");
-        fs::write(&file, "test \"first\"\n  assert(1 == 1)\n\ntest \"second\"\n  assert(2 == 2)\n")
+        fs::write(&file, "test \"first\"\n  throw \"m\" unless 1 == 1\n\ntest \"second\"\n  throw \"m\" unless 2 == 2\n")
             .expect("should write");
 
         let outcome = check(&file).expect("should compile");
@@ -414,7 +414,7 @@ mod tests {
     #[test]
     fn a_broken_file_reports_where() {
         let file = std::env::temp_dir().join("linen-broken-test.lang");
-        fs::write(&file, "test \"t\"\n  assert(1 + 1\n").expect("should write");
+        fs::write(&file, "test \"t\"\n  throw \"m\" unless 1 +\n").expect("should write");
 
         let report = check(&file).expect_err("should fail");
         assert!(report.text.contains(":2:"), "should name the line: {}", report.text);

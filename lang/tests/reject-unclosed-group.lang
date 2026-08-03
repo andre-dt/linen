@@ -1,3 +1,3 @@
 test "t"
-  #~ expected `)` to close the assert
-  assert((1 + 2)
+  #~ expected `)` to close the group
+  throw "((1 + 2) should hold" unless ((1 + 2)

@@ -5,22 +5,22 @@
 
 test "a blank line does not close a block"
 
-  assert(1 == 1)
+  throw "1 should be 1" unless 1 == 1
 
-  assert(2 == 2)
+  throw "2 should be 2" unless 2 == 2
 
 test "a comment-only line does not close a block"
-  assert(1 == 1)
+  throw "1 should be 1" unless 1 == 1
 # this comment sits at column zero
-  assert(2 == 2)
+  throw "2 should be 2" unless 2 == 2
 
 test "trailing spaces on a blank line do not close a block"
-  assert(1 == 1)
+  throw "1 should be 1" unless 1 == 1
    
-  assert(2 == 2)
+  throw "2 should be 2" unless 2 == 2
 
 test "a comment can follow code on the same line"
-  assert(1 == 1) # and is not part of it
+  throw "1 should equal 1 # and is not part of it" unless 1 == 1 # and is not part of it
 
 fn deep(n i32) i32
   # A body can be indented by any width, as long as it keeps the one it
@@ -29,4 +29,4 @@ fn deep(n i32) i32
       return doubled
 
 test "any consistent indent width works"
-  assert(deep(4) == 8)
+  throw "deep(4) should be 8" unless deep(4) == 8

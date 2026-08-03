@@ -1,0 +1,3 @@
+test "t"
+  #~ expected the message to throw, as quoted text
+  throw oops unless 1 == 1

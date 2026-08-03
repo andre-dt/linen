@@ -42,8 +42,13 @@ fn only_function(source: &str) -> Function {
 fn shape(expression: &Expression) -> String {
     match expression {
         Expression::Integer { value, .. } => value.to_string(),
+        Expression::Boolean { value, .. } => value.to_string(),
+        Expression::If { condition, .. } => format!("if({})", shape(condition)),
         Expression::Name { name, .. } => name.clone(),
-        Expression::Unary { operand, .. } => format!("(-{})", shape(operand)),
+        Expression::Unary { operator, operand, .. } => match operator {
+            UnaryOperator::Negate => format!("(-{})", shape(operand)),
+            UnaryOperator::Not => format!("(not {})", shape(operand)),
+        },
         Expression::Binary { operator, left, right, .. } => {
             format!("({} {} {})", shape(left), operator.symbol(), shape(right))
         }
@@ -54,12 +59,12 @@ fn shape(expression: &Expression) -> String {
     }
 }
 
-/// The condition of the first assert in a test, as a shape string.
-fn asserted(source: &str) -> String {
+/// The condition of the first `throw` in a test, as a shape string.
+fn thrown(source: &str) -> String {
     let test = only_test(source);
     match &test.body[0] {
-        Statement::Assert { condition, .. } => shape(condition),
-        other => panic!("expected an assert, got {other:?}"),
+        Statement::Throw { condition, .. } => shape(condition),
+        other => panic!("expected a throw, got {other:?}"),
     }
 }
 
@@ -67,7 +72,7 @@ fn asserted(source: &str) -> String {
 
 #[test]
 fn parses_a_test_with_an_assert() {
-    let test = only_test("test \"arithmetic\"\n  assert(2 + 2 == 4)\n");
+    let test = only_test("test \"arithmetic\"\n  throw \"m\" unless 2 + 2 == 4\n");
     assert_eq!(test.name, "arithmetic");
     assert_eq!(test.body.len(), 1);
 }
@@ -98,7 +103,7 @@ fn parses_several_parameters() {
 
 #[test]
 fn parses_a_let_binding() {
-    let test = only_test("test \"binding\"\n  let x = 5\n  assert(x == 5)\n");
+    let test = only_test("test \"binding\"\n  let x = 5\n  throw \"m\" unless x == 5\n");
     match &test.body[0] {
         Statement::Let { name, .. } => assert_eq!(name, "x"),
         other => panic!("expected a let, got {other:?}"),
@@ -107,17 +112,17 @@ fn parses_a_let_binding() {
 
 #[test]
 fn parses_a_call_with_arguments() {
-    assert_eq!(asserted("test \"t\"\n  assert(add(1, 2) == 3)\n"), "(add(1, 2) == 3)");
+    assert_eq!(thrown("test \"t\"\n  throw \"m\" unless add(1, 2) == 3\n"), "(add(1, 2) == 3)");
 }
 
 #[test]
 fn parses_a_call_with_no_arguments() {
-    assert_eq!(asserted("test \"t\"\n  assert(now() == 0)\n"), "(now() == 0)");
+    assert_eq!(thrown("test \"t\"\n  throw \"m\" unless now() == 0\n"), "(now() == 0)");
 }
 
 #[test]
 fn parses_several_items_in_one_file() {
-    let unit = tree("fn double(n i32) i32\n  return n * 2\n\ntest \"t\"\n  assert(double(2) == 4)\n");
+    let unit = tree("fn double(n i32) i32\n  return n * 2\n\ntest \"t\"\n  throw \"m\" unless double(2) == 4\n");
     assert_eq!(unit.items.len(), 2);
 }
 
@@ -125,7 +130,7 @@ fn parses_several_items_in_one_file() {
 
 #[test]
 fn multiplication_binds_tighter_than_addition() {
-    assert_eq!(asserted("test \"t\"\n  assert(2 + 3 * 4 == 14)\n"), "((2 + (3 * 4)) == 14)");
+    assert_eq!(thrown("test \"t\"\n  throw \"m\" unless 2 + 3 * 4 == 14\n"), "((2 + (3 * 4)) == 14)");
 }
 
 #[test]
@@ -133,25 +138,25 @@ fn comparison_binds_loosest() {
     // `a + b == c` has to group as `(a + b) == c` — the other reading
     // would compare `b` to `c` and add the result, which is nobody's
     // expectation.
-    assert_eq!(asserted("test \"t\"\n  assert(1 + 1 == 2)\n"), "((1 + 1) == 2)");
+    assert_eq!(thrown("test \"t\"\n  throw \"m\" unless 1 + 1 == 2\n"), "((1 + 1) == 2)");
 }
 
 #[test]
 fn arithmetic_is_left_associative() {
     // `10 - 3 - 2` is 5, not 9. Right-associating subtraction is the
     // classic precedence-climbing slip.
-    assert_eq!(asserted("test \"t\"\n  assert(10 - 3 - 2 == 5)\n"), "(((10 - 3) - 2) == 5)");
+    assert_eq!(thrown("test \"t\"\n  throw \"m\" unless 10 - 3 - 2 == 5\n"), "(((10 - 3) - 2) == 5)");
 }
 
 #[test]
 fn parentheses_override_precedence() {
-    assert_eq!(asserted("test \"t\"\n  assert((2 + 3) * 4 == 20)\n"), "(((2 + 3) * 4) == 20)");
+    assert_eq!(thrown("test \"t\"\n  throw \"m\" unless (2 + 3) * 4 == 20\n"), "(((2 + 3) * 4) == 20)");
 }
 
 #[test]
 fn negation_binds_tighter_than_arithmetic() {
     // `-5 + 1` is `(-5) + 1`, not `-(5 + 1)`.
-    assert_eq!(asserted("test \"t\"\n  assert(-5 + 1 == -4)\n"), "(((-5) + 1) == (-4))");
+    assert_eq!(thrown("test \"t\"\n  throw \"m\" unless -5 + 1 == -4\n"), "(((-5) + 1) == (-4))");
 }
 
 // --- errors ---------------------------------------------------------------
@@ -160,20 +165,20 @@ fn negation_binds_tighter_than_arithmetic() {
 fn names_what_was_found_not_only_what_was_wanted() {
     // "expected `)`" alone leaves the user hunting; saying what is there
     // instead points at the mistake.
-    let message = error("test \"t\"\n  assert(1 + 1\n");
+    let message = error("test \"t\"\n  throw \"m\" unless 1 +\n");
     assert!(message.contains("expected"), "got: {message}");
     assert!(message.contains("found"), "got: {message}");
 }
 
 #[test]
 fn rejects_a_test_named_without_quotes() {
-    let message = error("test arithmetic\n  assert(1 == 1)\n");
+    let message = error("test arithmetic\n  throw \"m\" unless 1 == 1\n");
     assert!(message.contains("quoted text"), "got: {message}");
 }
 
 #[test]
 fn rejects_a_body_that_is_not_indented() {
-    let message = error("test \"t\"\nassert(1 == 1)\n");
+    let message = error("test \"t\"\nthrow \"m\" unless 1 == 1\n");
     assert!(message.contains("indented"), "got: {message}");
 }
 

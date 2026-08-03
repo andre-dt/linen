@@ -6,16 +6,16 @@ fn triple(n i32) i32
 
 test "binds a value"
   let x = 5
-  assert(x == 5)
+  throw "x should be 5" unless x == 5
 
 test "binds an expression"
   let x = 2 + 3
-  assert(x == 5)
+  throw "x should be 5" unless x == 5
 
 test "a binding can read the ones before it"
   let a = 2
   let b = a * 3
-  assert(b == 6)
+  throw "b should be 6" unless b == 6
 
 test "bindings work inside a function"
-  assert(triple(4) == 12)
+  throw "triple(4) should be 12" unless triple(4) == 12

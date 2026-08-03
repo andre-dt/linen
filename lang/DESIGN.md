@@ -132,6 +132,41 @@ test "doubling"
   assert(double(21) == 42)
 ```
 
+### Condicionais, nos dois papéis
+
+`if` existe como **statement** e como **expressão**, e a diferença é uma
+só: a expressão exige `else`, porque tem que ter valor dos dois lados.
+
+```
+fn sign(n i32) i32          # statement: else é opcional
+  if n < 0
+    return -1
+  return 1
+
+fn abs(n i32) i32           # expressão: uma linha, else obrigatório
+  return if n < 0 then -n else n
+```
+
+A forma de expressão cabe **numa linha** de propósito. Uma expressão pode
+aparecer no meio da linha — dentro de um argumento, à direita de um `let`
+— e abrir bloco indentado ali poria a regra de layout em conflito consigo
+mesma. `then` separa a condição do valor; sem ele, `if a - 1 else` teria
+que adivinhar onde a condição termina.
+
+### Iteração
+
+`while` e `for`, os dois statements. O range do `for` é **meio-aberto**:
+`0 .. 3` visita 0, 1 e 2 — assim `0 .. n` quer dizer "n vezes", e dois
+ranges adjacentes se encontram sem se sobrepor.
+
+```
+for i in 0 .. 3
+  assert(i < 3)
+```
+
+Recursão também funciona, e é a forma que sobra quando não há o que
+mutar.
+
 ## Como se sabe que o compilador está são
 
 `cargo test`. Verde é são; qualquer coisa a menos não é.
@@ -167,7 +202,10 @@ Feito:
 - **lexer** com indentação semântica — 17 testes
 - **parser** — `fn`, `test`, `let`, `return`, `assert`, expressões com
   precedência — 18 testes
-- **suíte** — 28 arquivos em `tests/`: 8 de linguagem (53 testes) e 20
+- **bool** — `true`/`false`, `and`/`or`/`not`, `bool` como tipo
+- **`if`** — statement e expressão
+- **`while`**, **`for`** com range meio-aberto, e recursão
+- **suíte** — 41 arquivos em `tests/`: 12 de linguagem (91 testes) e 29
   rejeições, uma por mensagem de erro distinta
 - **CLI `linen`** — `build`/`test`/`clean`, erro com arquivo:linha:coluna
   e caret, relatório progressivo e sumário — 49 testes no total

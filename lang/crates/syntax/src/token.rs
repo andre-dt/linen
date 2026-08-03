@@ -67,6 +67,8 @@ pub enum TokenKind {
     LeftParen,
     RightParen,
     Comma,
+    /// `..`, the range in a `for`.
+    DotDot,
 
     // --- layout -----------------------------------------------------------
     // Indentation is syntax, so it arrives as tokens rather than as a
@@ -107,6 +109,7 @@ impl TokenKind {
             TokenKind::LeftParen => "`(`".to_string(),
             TokenKind::RightParen => "`)`".to_string(),
             TokenKind::Comma => "`,`".to_string(),
+            TokenKind::DotDot => "`..`".to_string(),
             TokenKind::Newline => "the end of the line".to_string(),
             TokenKind::Indent => "an indented block".to_string(),
             TokenKind::Dedent => "the end of a block".to_string(),

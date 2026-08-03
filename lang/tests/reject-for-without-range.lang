@@ -1,0 +1,4 @@
+test "t"
+  #~ expected `..` between the start and end of the range
+  for i in 0 3
+    throw "1 should be 1" unless 1 == 1

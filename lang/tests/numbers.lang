@@ -1,36 +1,36 @@
 # Integer literals, at the edges where a lexer stops being careful.
 
 test "reads plain integers"
-  assert(0 == 0)
-  assert(7 == 7)
-  assert(1000000 == 1000000)
+  throw "0 should be 0" unless 0 == 0
+  throw "7 should be 7" unless 7 == 7
+  throw "1000000 should be 1000000" unless 1000000 == 1000000
 
 test "underscores group digits without changing the value"
-  assert(1_000 == 1000)
-  assert(1_000_000 == 1000000)
-  assert(1_0 == 10)
+  throw "1_000 should be 1000" unless 1_000 == 1000
+  throw "1_000_000 should be 1000000" unless 1_000_000 == 1000000
+  throw "1_0 should be 10" unless 1_0 == 10
 
 test "leading zeros are not octal"
   # A language that quietly reads 010 as 8 is a language where a padded
   # number means something else.
-  assert(010 == 10)
-  assert(007 == 7)
+  throw "010 should be 10" unless 010 == 10
+  throw "007 should be 7" unless 007 == 7
 
 test "the largest integer that fits"
-  assert(9223372036854775807 == 9223372036854775807)
+  throw "9223372036854775807 should be 9223372036854775807" unless 9223372036854775807 == 9223372036854775807
 
 test "zero behaves"
-  assert(0 + 0 == 0)
-  assert(0 * 99 == 0)
-  assert(0 - 5 == -5)
-  assert(-0 == 0)
+  throw "0 + 0 should be 0" unless 0 + 0 == 0
+  throw "0 * 99 should be 0" unless 0 * 99 == 0
+  throw "0 - 5 should be -5" unless 0 - 5 == -5
+  throw "-0 should be 0" unless -0 == 0
 
 test "division truncates toward zero"
-  assert(7 / 2 == 3)
-  assert(1 / 2 == 0)
-  assert(99 / 100 == 0)
+  throw "7 / 2 should be 3" unless 7 / 2 == 3
+  throw "1 / 2 should be 0" unless 1 / 2 == 0
+  throw "99 / 100 should be 0" unless 99 / 100 == 0
 
 test "remainder"
-  assert(7 % 2 == 1)
-  assert(6 % 3 == 0)
-  assert(1 % 5 == 1)
+  throw "7 % 2 should be 1" unless 7 % 2 == 1
+  throw "6 % 3 should be 0" unless 6 % 3 == 0
+  throw "1 % 5 should be 1" unless 1 % 5 == 1

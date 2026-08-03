@@ -1,5 +1,4 @@
-#~ expected an indented body
 test "t"
-
-test "u"
+  #~ expected an indented body
+  if true
   throw "1 should be 1" unless 1 == 1

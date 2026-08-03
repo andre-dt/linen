@@ -1,0 +1,3 @@
+test "t"
+  #~ expected `if` or `unless` after the message
+  throw "oops" 1 == 1

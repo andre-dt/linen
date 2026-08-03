@@ -1,4 +1,4 @@
 test "indented to a level nobody opened"
-    assert(1 == 1)
+    throw "1 should be 1" unless 1 == 1
   #~ does not line up with any open block
-  assert(2 == 2)
+  throw "2 should be 2" unless 2 == 2
