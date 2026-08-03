@@ -482,17 +482,6 @@ export function Project(props: { auth: Auth }) {
             <p class="hud-empty">Selection & measurements — pending.</p>
           </CollapsiblePanel>
         </div>
-
-        {/* BOTTOM: a status bar */}
-        <div class="hud-slot hud-statusbar">
-          <div class="hud-panel hud-status">
-            <span>{project()?.name ?? "…"}</span>
-            <span class="hud-status-sep">·</span>
-            <span>{selectedPart()!.name}</span>
-            <span class="hud-status-spacer" />
-            <span class="hud-status-muted">ready</span>
-          </div>
-        </div>
       </Show>
 
       <Show when={error()}>

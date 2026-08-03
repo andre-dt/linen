@@ -29,7 +29,7 @@ import type { DraftInput, DraftStepCurves, DraftApi } from "./api"
 // =====================================================================
 
 /**
- * The shape a chosen sketch plane takes. Both ways in produce one of
+ * The shape a chosen plane takes. Both ways in produce one of
  * these: a datum plane clicked in the canvas, or a planar face.
  *
  * Its job is to fire the step's transition — parsing IS the test, so the
@@ -55,7 +55,7 @@ const steps: readonly CommandStep[] = [
     optional: false,
     fields: [
       {
-        kind: "plane", name: "plane", label: "Sketch plane",
+        kind: "plane", name: "plane", label: "Plane",
         allowFace: true, allowOffset: true,
         optional: false, help: null,
       },

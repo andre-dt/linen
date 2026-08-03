@@ -30,13 +30,12 @@ import {
   createContext, createSignal, useContext, onCleanup, For, Show,
   type JSX,
 } from "solid-js"
-import { LucideIcon } from "./widgets/lucide-icon"
 
 // =====================================================================
 // 1. WHAT A TOAST IS
 // =====================================================================
 
-/** How loud the message is. Drives colour and icon, nothing else — the
+/** How loud the message is. Drives colour, nothing else — the
  *  behaviour of a toast is set by `persistent`, not by its level. */
 export type ToastLevel = "info" | "success" | "warning" | "error"
 
@@ -157,17 +156,6 @@ export function ToastProvider(props: { children: JSX.Element }) {
 // older ones UP and away from the corner the eye returns to, and the
 // newest is always in the same place.
 
-// Lucide's CURRENT names. The older aliases (check-circle,
-// alert-triangle, alert-circle) no longer resolve, and LucideIcon renders
-// nothing for a name it cannot load — so a wrong name here is a silently
-// missing icon rather than an error.
-const ICONS: Record<ToastLevel, string> = {
-  info: "info",
-  success: "circle-check",
-  warning: "triangle-alert",
-  error: "circle-alert",
-}
-
 function ToastStack(props: {
   readonly toasts: readonly Toast[]
   readonly onDismiss: (id: number) => void
@@ -191,14 +179,6 @@ function ToastStack(props: {
                 props.onDismiss(toast.id)
               }}
             >
-              {/* Wrapped rather than styled directly: the icon module
-                  loads async, and until it lands LucideIcon renders a
-                  placeholder span instead. The wrapper keeps the row's
-                  geometry identical either way, so the text does not
-                  shift when the glyph arrives. */}
-              <span class="toast-icon">
-                <LucideIcon name={ICONS[toast.level]} size={15} />
-              </span>
               <span class="toast-text">{toast.text}</span>
               <Show when={toast.action}>
                 {(action) => <span class="toast-action">{action().label}</span>}

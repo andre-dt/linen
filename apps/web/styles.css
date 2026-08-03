@@ -38,7 +38,6 @@
   --radius: 4px;
   --toolbar-height: 44px;
   --sidebar-width: 260px;
-  --status-height: 24px;
 
   /* Stacking planes, low to high. Every floating layer picks its z-index
      from here so the order is declared in one place, not scattered:
@@ -86,7 +85,7 @@ body {
 
 .app {
   display: grid;
-  grid-template-rows: var(--toolbar-height) 1fr var(--status-height);
+  grid-template-rows: var(--toolbar-height) 1fr;
   height: 100%;
 }
 
@@ -459,6 +458,322 @@ body {
 .command-panel-crumb.current { color: var(--hud-text); cursor: default; }
 
 /* =====================================================================
+   FIELD PARTS — the one shape every command-panel field takes.
+
+     [leading] control            [✕] [⋯] [⌄]      the BOX
+                    ↓ opens
+     [buttons] ─────────────────────────────       panel HEADER
+     whatever this field needs                     panel CONTENT
+
+   Sizes and gaps are declared HERE and nowhere else: a field decides what
+   its control and buttons are, never how they are spaced. See
+   widgets/field-parts.tsx.
+   ===================================================================== */
+
+:root {
+  /* One row height for every field, so a column of them reads as a grid
+     rather than as a stack of slightly different boxes. */
+  --field-height: 30px;
+  --field-radius: 15px;
+  /* Control → first decorator. Wider than the gap BETWEEN decorators, so
+     the buttons read as one cluster set apart from the value. */
+  --field-control-gap: 8px;
+  --field-decorator-gap: 2px;
+  --field-inset: 4px;
+  --field-icon-size: 22px;
+}
+
+.field-box {
+  display: flex;
+  align-items: center;
+  gap: var(--field-control-gap);
+  /* Stated twice on purpose: `height` alone loses to a flex parent, and a
+     field that collapses is worse than one that overflows. */
+  height: var(--field-height);
+  min-height: var(--field-height);
+  min-width: 0;
+  padding: 0 var(--field-inset) 0 10px;
+  border-radius: var(--field-radius);
+  corner-shape: squircle;
+  /* A faint wash of the panel's own tint: white on a dark panel, black on
+     a light one, so the box reads as a raised slot on either without a
+     rule per material. Focus lightens it further. */
+  background: color-mix(in srgb, var(--hud-tint) calc(8% * var(--hud-tint-boost)), transparent);
+  /* At REST the value sits well back from full strength, so a column of
+     six fields reads as a list rather than six things shouting. 54% of
+     the ink — still 4.63:1 on the resting fill, so it reads easily, but
+     dim enough that the focused field is obviously the live one. */
+  color: color-mix(in srgb, var(--hud-ink) 54%, var(--hud-panel));
+  transition: background 100ms ease, color 100ms ease;
+}
+/* FOCUS is the HUD's own blue, not another step of the wash. A field
+   being edited is the one thing on the panel the user is acting on, and
+   the blue says that at a glance where a slightly paler grey did not.
+
+   The blue is a RING, not a fill. Filling the box with solid accent turns
+   the field into a button — it shouts, and every decorator inside it
+   (which is a muted grey by design) lands on blue and stops reading.
+   Around the edge, the same colour says "this one is live" without
+   changing what the field IS.
+
+   The fill only steps up a little, and the text goes to full ink. */
+.field-box:focus-within {
+  background: color-mix(in srgb, var(--hud-tint) calc(14% * var(--hud-tint-boost)), transparent);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+  color: var(--hud-ink);
+}
+.field-box.invalid { box-shadow: inset 0 0 0 1px var(--danger); }
+
+.field-control {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  appearance: none;
+  border: none;
+  background: transparent;
+  /* INHERITED, not set: the box decides how strong the value reads at
+     rest and on focus, and a colour of its own here would override that
+     for every field whose control is an input. */
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.field-control::placeholder { color: var(--hud-text-faint); }
+
+/* A control whose value comes from somewhere else — a canvas click, a
+   picker — but which is still a field like any other: it focuses, blinks
+   a caret and tabs in turn. Only typing is off.
+
+   Deliberately NOT styled as disabled. Greying it out would say the field
+   is unavailable, when in fact it is perfectly editable — just not from
+   the keyboard.
+
+   `readonly` alone gives no caret: the browser suppresses it, since there
+   is nothing to type. But the caret is what says "this field is the live
+   one, and a click in the canvas lands HERE" while a pick is armed — so
+   it is drawn back, as a real blinking bar rather than a static mark. */
+.field-control[readonly] {
+  /* A text cursor even though nothing is typed: the box behaves like a
+     text field — it focuses and blinks — and a default arrow here would
+     say otherwise. */
+  cursor: text;
+  caret-color: transparent;
+}
+.field-control[readonly]:focus {
+  caret-color: var(--hud-ink);
+}
+/* The blink. A caret drawn by the browser blinks on its own; this one is
+   ours, so the rhythm has to be too. Matches the platform's roughly
+   1.06s cycle closely enough to read as a system caret rather than as an
+   animation. */
+@keyframes field-caret-blink {
+  0%, 49% { caret-color: var(--hud-ink); }
+  50%, 100% { caret-color: transparent; }
+}
+.field-control[readonly]:focus {
+  animation: field-caret-blink 1.06s steps(1, end) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* A blinking bar is exactly the kind of motion this setting is for.
+     Steady, so the focus cue survives without the flicker. */
+  .field-control[readonly]:focus { animation: none; caret-color: var(--hud-ink); }
+}
+
+/* A control that is not an input — a name, a prompt. Same metrics as one,
+   so the two kinds of field line up. */
+.field-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.field-value.empty { color: var(--hud-text-faint); }
+
+.field-decorators {
+  display: flex;
+  align-items: center;
+  gap: var(--field-decorator-gap);
+  flex-shrink: 0;
+}
+
+.field-icon-button {
+  display: grid;
+  place-items: center;
+  width: var(--field-icon-size);
+  height: var(--field-icon-size);
+  /* Load-bearing: a <button>'s UA padding is not square, and centring
+     inside it puts the glyph a pixel off. */
+  padding: 0;
+  appearance: none;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--hud-text-faint);
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease;
+}
+.field-icon-button:hover {
+  background: color-mix(in srgb, var(--hud-tint) calc(12% * var(--hud-tint-boost)), transparent);
+  color: var(--hud-text);
+}
+/* Open or pressed reads bright whatever its resting state: a dimmed glyph
+   on an active control would contradict the state it is showing. */
+.field-icon-button.active,
+.field-icon-button[data-state="open"] {
+  background: color-mix(in srgb, var(--hud-tint) calc(16% * var(--hud-tint-boost)), transparent);
+  color: var(--hud-text);
+}
+
+/* --- the panel ------------------------------------------------------- */
+
+.field-panel {
+  /* Material: see the shared derivation above — this popover is one of
+     the two surfaces that owns one. */
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 200px;
+  padding: 12px;
+  border-radius: 16px;
+  corner-shape: squircle;
+  background: var(--hud-panel);
+  color: var(--hud-text);
+  box-shadow: var(--hud-shadow);
+  outline: none;
+  /* Above the panel it drops from, which is itself on the HUD plane. */
+  z-index: var(--z-tooltip);
+}
+
+.field-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--field-decorator-gap);
+}
+
+.field-panel-rule {
+  height: 1px;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--hud-tint) calc(10% * var(--hud-tint-boost)), transparent);
+}
+
+/* A select's whole box IS the trigger, so it carries the box look while
+   behaving as one button. See widgets/dropdown.tsx for why it cannot use
+   the composed parts. */
+.field-box-trigger {
+  width: 100%;
+  appearance: none;
+  border: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* A panel that is a LIST of values rather than a set of controls: it
+   matches the field's width and its rows are the whole content. */
+.field-panel-list {
+  min-width: 0;
+  padding: 4px;
+  gap: 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.field-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  corner-shape: squircle;
+  font-size: 12px;
+  cursor: pointer;
+}
+.field-option[data-highlighted] { background: color-mix(in srgb, var(--hud-tint) calc(10% * var(--hud-tint-boost)), transparent); }
+.field-option[data-state="checked"] { background: color-mix(in srgb, var(--hud-tint) calc(16% * var(--hud-tint-boost)), transparent); }
+.field-option-check { display: grid; place-items: center; color: var(--accent); }
+
+/* The unit that belongs to a value, inside the box beside it. Not a
+   decorator: it is part of reading the number, not a control. */
+.field-unit {
+  flex-shrink: 0;
+  color: var(--hud-text-faint);
+  font-size: 11px;
+}
+
+/* A row of small toggles inside a panel — the direction axes. */
+.field-chip-row { display: flex; gap: 4px; }
+
+.field-chip {
+  flex: 1;
+  padding: 5px 10px;
+  appearance: none;
+  border: none;
+  border-radius: 9px;
+  corner-shape: squircle;
+  background: color-mix(in srgb, var(--hud-tint) calc(8% * var(--hud-tint-boost)), transparent);
+  color: var(--hud-text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease;
+}
+.field-chip:hover { background: color-mix(in srgb, var(--hud-tint) calc(14% * var(--hud-tint-boost)), transparent); color: var(--hud-text); }
+.field-chip[data-selected="true"] {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* A list of picked things inside a panel — selected faces, referenced
+   features. Scrolls rather than growing without bound: thirty faces must
+   not push the panel off the screen. */
+.field-panel-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.field-panel-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 8px;
+  border-radius: 9px;
+  corner-shape: squircle;
+}
+.field-panel-item:hover { background: color-mix(in srgb, var(--hud-tint) calc(6% * var(--hud-tint-boost)), transparent); }
+
+.field-panel-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* Read-only facts about a value: unit, range, what a formula evaluates
+   to. A definition list because that is what it is. */
+.field-panel-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 11px;
+}
+.field-panel-facts dt { color: var(--hud-text-faint); }
+.field-panel-facts dd { margin: 0; color: var(--hud-text); }
+
+/* =====================================================================
    WIDGETS
    ===================================================================== */
 
@@ -471,12 +786,6 @@ body {
 .widget-label {
   color: var(--text-muted);
   font-size: 11px;
-}
-
-.widget-input-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
 }
 
 .widget-input,
@@ -533,8 +842,7 @@ body {
   gap: 2px;
 }
 
-.button-group-item,
-.direction-axis {
+.button-group-item {
   flex: 1;
   padding: 4px 6px;
   border: 1px solid var(--border-strong);
@@ -545,50 +853,28 @@ body {
   cursor: pointer;
 }
 
-.button-group-item[data-selected="true"],
-.plane-offset[data-selected="true"] {
+.button-group-item[data-selected="true"] {
   border-color: var(--accent);
   background: var(--accent-muted);
   color: var(--text);
 }
 
-.plane-offset:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-
-.plane-offset-row {
+/* A labelled row inside a field panel: label, control, unit. */
+.field-panel-row {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 6px;
+}
+.field-panel-empty {
+  margin: 0;
+  color: var(--hud-text-faint);
+  font-size: 12px;
 }
 .widget-sublabel {
   font-size: 11px;
   color: var(--text-faint);
 }
 
-.picker-target {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--text-muted);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.widget-picker[data-active="true"] .picker-target {
-  border-color: var(--accent);
-  border-style: solid;
-  color: var(--text);
-}
-
-.picker-items,
-.feature-list,
 .point-list {
   list-style: none;
   margin: 0;
@@ -596,88 +882,11 @@ body {
   font-size: 12px;
 }
 
-.picker-item,
-.feature-list-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 2px 4px;
-  font-family: var(--font-mono);
-}
-
-.picker-item button,
-.feature-list-item button,
 .point-list button,
 .grid button {
   border: none;
   background: transparent;
   color: var(--text-faint);
-  cursor: pointer;
-}
-
-.direction-row {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-/* =====================================================================
-   PLANE FIELD — an empty slot that states what it wants, then the chosen
-   reference once it has one. There is no list of planes to choose from:
-   the canvas is the list.
-   ===================================================================== */
-
-/* ONE ROW, both states: the mate button, then the slot. Same geometry
-   empty or filled, so choosing a plane does not resize the panel under
-   the cursor. */
-.plane-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 4px 3px 3px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--surface);
-}
-.plane-row[data-filled="false"] { border-style: dashed; }
-.field[data-invalid="true"] .plane-row { border-color: var(--danger); }
-
-/* Icon only — "Mate connector" lives in the tooltip. Flat and square:
-   inside a panel it must not wear the panel's own material. */
-.plane-mate {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border-radius: 6px;
-  flex-shrink: 0;
-  color: var(--text-faint);
-}
-.plane-mate:hover { color: var(--accent); background: var(--surface-overlay); }
-
-/* The slot: a prompt while empty, the chosen reference once filled. */
-.plane-slot {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-faint);
-  font-size: 12px;
-}
-.plane-slot.filled { color: var(--text); }
-
-.plane-clear,
-.plane-clear,
-.direction-pick,
-.direction-flip,
-.plane-offset {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--text-muted);
   cursor: pointer;
 }
 
@@ -752,72 +961,6 @@ table.point-list {
   gap: 6px;
 }
 
-.dropdown-trigger {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 4px 6px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.dropdown-content {
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--surface-overlay);
-  padding: 2px;
-}
-
-.dropdown-item {
-  padding: 4px 8px;
-  border-radius: var(--radius);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.dropdown-item[data-highlighted] {
-  background: var(--accent-muted);
-}
-
-/* =====================================================================
-   STATUS BAR
-   ===================================================================== */
-
-.status-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 10px;
-  border-top: 1px solid var(--border);
-  background: var(--surface-raised);
-  color: var(--text-faint);
-  font-size: 11px;
-}
-
-.status-connection,
-.status-errors,
-.status-warnings,
-.status-timing {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.status-connection[data-state="open"] { color: var(--success); }
-.status-connection[data-state="reconnecting"] { color: var(--warning); }
-.status-connection[data-state="closed"] { color: var(--danger); }
-
-.status-errors { color: var(--danger); }
-.status-warnings { color: var(--warning); }
-
-.status-timing[data-slow="true"] { color: var(--warning); }
-
-.status-spacer { flex: 1; }
-
 /* =====================================================================
    GLASS — the Apple "liquid glass" language, shared by the login screen,
    the dashboard and the floating editor chrome. A frosted, translucent
@@ -828,8 +971,8 @@ table.point-list {
   /* Glass is built from translucency, so it needs its own tokens on top
      of the opaque surface palette. */
   --glass-fill: rgba(30, 33, 40, 0.55);
-  --glass-stroke: rgba(255, 255, 255, 0.10);
-  --glass-highlight: rgba(255, 255, 255, 0.18);
+  --glass-stroke: color-mix(in srgb, var(--hud-tint) calc(10% * var(--hud-tint-boost)), transparent);
+  --glass-highlight: color-mix(in srgb, var(--hud-tint) calc(18% * var(--hud-tint-boost)), transparent);
   --glass-shadow: rgba(0, 0, 0, 0.45);
   --glass-blur: 22px;
 
@@ -855,7 +998,7 @@ table.point-list {
 .glass-button {
   appearance: none;
   border: 1px solid var(--glass-stroke);
-  background: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--hud-tint) calc(8% * var(--hud-tint-boost)), transparent);
   color: var(--text);
   font-family: var(--font);
   font-size: 13px;
@@ -866,7 +1009,7 @@ table.point-list {
   transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
 }
 .glass-button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.14);
+  background: color-mix(in srgb, var(--hud-tint) calc(14% * var(--hud-tint-boost)), transparent);
   border-color: var(--glass-highlight);
 }
 .glass-button:active:not(:disabled) { transform: translateY(1px); }
@@ -876,7 +1019,7 @@ table.point-list {
   color: var(--text-muted);
   padding: 6px 10px;
 }
-.glass-button.subtle:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
+.glass-button.subtle:hover { color: var(--text); background: color-mix(in srgb, var(--hud-tint) calc(8% * var(--hud-tint-boost)), transparent); }
 
 /* =====================================================================
    SPLASH — the brief moment while /auth/me resolves.
@@ -943,13 +1086,41 @@ table.point-list {
 
 :root {
   /* The page is plain white; the HUD panels sit on it as a SOLID deep
-     navy — no blur, no frosting. Their contents are light. */
+     navy — no blur, no frosting.
+
+     The ink is DERIVED from the panel rather than declared beside it —
+     see "THE MATERIAL, DERIVED" below. These are only the fallbacks, for
+     HUD-styled things that sit outside a panel entirely. */
   --hud-text: #eef1f6;
   --hud-text-muted: #aab2c2;
   --hud-text-faint: #7c8598;
+
+  /* TWO panel materials, so a panel can be told apart from the panel it
+     sits on or beside.
+
+     PRIMARY is the deep navy every HUD panel has always worn. SECONDARY
+     is a near-white off-grey. They are INVERSES of each other, not two
+     shades of one colour, and they separate by 15:1 — a panel wearing one
+     over a panel wearing the other reads instantly, with no border and no
+     shadow needed to find the seam.
+
+     That impact is the point, and it costs something: a light panel
+     cannot carry light text. So the material is not a background alone —
+     it is the background AND the ink AND the overlays, which is why
+     `.hud-panel-secondary` re-binds all of them together rather than
+     setting one colour. A panel switches material as a unit or not at
+     all; setting `background` by hand would leave white text on white.
+
+     Which one a panel wears is an EDITORIAL choice, not an automatic
+     one: nesting does not pick it. A panel that must stand out from its
+     neighbours asks for it by carrying `.hud-panel-secondary`. */
   --hud-panel: #101c34;
-  --hud-stroke: rgba(255, 255, 255, 0.1);
-  --hud-sheen: rgba(255, 255, 255, 0.16);
+
+  /* Fallback wash, likewise: inside a panel this is derived. */
+  --hud-tint: #ffffff;
+
+  --hud-stroke: color-mix(in srgb, var(--hud-tint) calc(10% * var(--hud-tint-boost)), transparent);
+  --hud-sheen: color-mix(in srgb, var(--hud-tint) calc(16% * var(--hud-tint-boost)), transparent);
   --hud-active: rgba(79, 142, 247, 0.28);
   --hud-active-stroke: rgba(79, 142, 247, 0.6);
   --hud-radius: 22px;
@@ -971,6 +1142,46 @@ table.point-list {
      side columns can start exactly --hud-gap below it — the same gap that
      separates every other pair of panels. */
   --hud-top-row: 40px;
+}
+
+/* =====================================================================
+   THE MATERIAL, DERIVED.
+
+   One colour in, a whole material out. `contrast-color()` picks black or
+   white against whatever --hud-panel holds; the muted and faint steps are
+   that same ink mixed back toward the panel; and --hud-tint — the wash
+   behind every field box, hover and chip — is the ink again. So changing
+   ONE colour re-inks the text, re-tints the controls, and nothing below
+   has to know or ask which material it landed on.
+
+   Listed here rather than on :root because a custom property inherits its
+   RESOLVED value: computed once at the root, the ink would stay white
+   inside a panel that had re-bound --hud-panel to near-white. Each
+   surface that can OWN a material recomputes its own.
+
+   Two selectors, because there are exactly two surfaces that can own a
+   material: a HUD panel, and a field's popover — which is portalled to
+   <body> and so inherits nothing from the panel that opened it. Anything
+   else nested inside them simply inherits and needs no rule at all. */
+.hud-panel,
+.field-panel {
+  --hud-ink: contrast-color(var(--hud-panel));
+  --hud-text: var(--hud-ink);
+  --hud-text-muted: color-mix(in srgb, var(--hud-ink) 72%, var(--hud-panel));
+  --hud-text-faint: color-mix(in srgb, var(--hud-ink) 50%, var(--hud-panel));
+  --hud-tint: var(--hud-ink);
+  /* How hard the wash is pushed. Every use is
+     `calc(N% * var(--hud-tint-boost))`, so the N stays a single number
+     describing the STEP — 8% is a resting surface, 16% is pressed —
+     while this says how much of it the material needs.
+
+     1 on a dark panel. Light panels override it, because a dark wash on
+     a light surface reads weaker than a light wash on a dark one at the
+     same alpha: measured, 8% white on the navy gives 1.25:1 but 8% black
+     on the near-white gives only 1.19:1, and the gap widens as the step
+     grows. Without this the inputs come out too subtle on the light
+     material — which is exactly what happened. */
+  --hud-tint-boost: 1;
 }
 
 .hud-scene {
@@ -997,6 +1208,28 @@ table.point-list {
   /* Depth, so panels stay legible when they overlap each other rather
      than merging into one navy mass. See --hud-shadow. */
   box-shadow: var(--hud-shadow);
+  color: var(--hud-text);
+}
+
+/* The light material. Added to a panel that must read as distinct from
+   the ones around it — the designer, which floats over the side columns
+   and is where the user is actually working.
+
+   A MODIFIER rather than a separate class, so a secondary panel is still
+   a `.hud-panel` and picks up every change to the shape and depth
+   without restating them.
+
+   The colour is the only thing declared. The ink and the wash derive from
+   it, so re-binding it re-inks the text, re-tints every field box and
+   hover inside, and no widget needs to know which material it landed on.
+
+   The boost is the one thing that cannot be derived from the colour: it
+   is a fact about DARK-ON-LIGHT rather than about this particular light,
+   so any light material wants the same 1.8. See --hud-tint-boost. */
+.hud-panel-secondary {
+  --hud-panel: #eef1f6;
+  --hud-tint-boost: 1.8;
+  background: var(--hud-panel);
   color: var(--hud-text);
 }
 
@@ -1061,15 +1294,15 @@ table.point-list {
      a panel use .hud-icon-button, which stays flat. */
   box-shadow: var(--hud-shadow);
 }
-.ui-button-hud-icon:hover { background: rgba(255, 255, 255, 0.16); color: var(--hud-text); }
+.ui-button-hud-icon:hover { background: color-mix(in srgb, var(--hud-tint) calc(16% * var(--hud-tint-boost)), transparent); color: var(--hud-text); }
 
 /* Text button on the HUD. */
 .ui-button-hud {
-  background: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--hud-tint) calc(8% * var(--hud-tint-boost)), transparent);
   font-size: 12px; font-weight: 500;
   padding: 6px 12px;
 }
-.ui-button-hud:hover { background: rgba(255, 255, 255, 0.14); }
+.ui-button-hud:hover { background: color-mix(in srgb, var(--hud-tint) calc(14% * var(--hud-tint-boost)), transparent); }
 
 /* Subtle/ghost text button. */
 .ui-button-hud-subtle {
@@ -1078,13 +1311,13 @@ table.point-list {
   font-size: 12px; font-weight: 500;
   padding: 6px 12px;
 }
-.ui-button-hud-subtle:hover { color: var(--hud-text); background: rgba(255, 255, 255, 0.08); }
+.ui-button-hud-subtle:hover { color: var(--hud-text); background: color-mix(in srgb, var(--hud-tint) calc(8% * var(--hud-tint-boost)), transparent); }
 
 /* Buttons on the HUD: light, squircle-cornered. */
 .hud-button {
   appearance: none;
   border: none;
-  background: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--hud-tint) calc(8% * var(--hud-tint-boost)), transparent);
   color: var(--hud-text);
   font: inherit;
   font-size: 12px;
@@ -1095,10 +1328,10 @@ table.point-list {
   cursor: pointer;
   transition: background 120ms ease, transform 80ms ease;
 }
-.hud-button:hover { background: rgba(255, 255, 255, 0.14); }
+.hud-button:hover { background: color-mix(in srgb, var(--hud-tint) calc(14% * var(--hud-tint-boost)), transparent); }
 .hud-button:active { transform: translateY(1px); }
 .hud-button.subtle { background: transparent; color: var(--hud-text-muted); }
-.hud-button.subtle:hover { color: var(--hud-text); background: rgba(255, 255, 255, 0.08); }
+.hud-button.subtle:hover { color: var(--hud-text); background: color-mix(in srgb, var(--hud-tint) calc(8% * var(--hud-tint-boost)), transparent); }
 
 /* Top-right profile chip — sits at the same top as the projects panel. */
 .hud-profile { display: flex; align-items: center; gap: 10px; min-height: var(--hud-top-row); padding: 0 8px 0 12px; }
@@ -1144,17 +1377,17 @@ table.point-list {
   cursor: pointer;
   transition: background 100ms ease, border-color 100ms ease;
 }
-.hud-item:hover { background: rgba(255, 255, 255, 0.07); }
+.hud-item:hover { background: color-mix(in srgb, var(--hud-tint) calc(7% * var(--hud-tint-boost)), transparent); }
 /* Selected: just the panel colour lifted a touch — a translucent white
    overlay, no accent hue, no border. */
-.hud-item.active { background: rgba(255, 255, 255, 0.12); border-color: transparent; }
+.hud-item.active { background: color-mix(in srgb, var(--hud-tint) calc(12% * var(--hud-tint-boost)), transparent); border-color: transparent; }
 .hud-item-badge {
   display: grid; place-items: center;
   width: 26px; height: 26px; border-radius: 8px; corner-shape: squircle; flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.1);
+  background: color-mix(in srgb, var(--hud-tint) calc(10% * var(--hud-tint-boost)), transparent);
   font-size: 12px; font-weight: 600; color: var(--hud-text-muted);
 }
-.hud-item.active .hud-item-badge { background: rgba(255, 255, 255, 0.18); color: var(--hud-text); }
+.hud-item.active .hud-item-badge { background: color-mix(in srgb, var(--hud-tint) calc(18% * var(--hud-tint-boost)), transparent); color: var(--hud-text); }
 .hud-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* --- outline rows ---------------------------------------------------- */
@@ -1188,7 +1421,7 @@ table.point-list {
 }
 .hud-item:hover .hud-item-more,
 .hud-item-menu:has(.hud-menu) .hud-item-more { opacity: 1; }
-.hud-item-more:hover { background: rgba(255, 255, 255, 0.1); color: var(--hud-text); }
+.hud-item-more:hover { background: color-mix(in srgb, var(--hud-tint) calc(10% * var(--hud-tint-boost)), transparent); color: var(--hud-text); }
 
 /* The dropdown itself: a small solid panel below the button. */
 .hud-menu {
@@ -1203,7 +1436,7 @@ table.point-list {
   corner-shape: squircle;
   /* Contrast against the white page and the panel it may overlap: a
      hairline plus the shared HUD depth, so it reads as a raised menu. */
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid color-mix(in srgb, var(--hud-tint) calc(8% * var(--hud-tint-boost)), transparent);
   box-shadow: var(--hud-shadow);
 }
 .hud-menu-item {
@@ -1213,7 +1446,7 @@ table.point-list {
   padding: 8px 10px; border-radius: 8px; corner-shape: squircle;
   cursor: pointer; transition: background 100ms ease;
 }
-.hud-menu-item:hover { background: rgba(255, 255, 255, 0.09); }
+.hud-menu-item:hover { background: color-mix(in srgb, var(--hud-tint) calc(9% * var(--hud-tint-boost)), transparent); }
 .hud-empty { color: var(--hud-text-faint); font-size: 12px; padding: 10px; }
 
 /* Error toast, centred at the bottom. */
@@ -1242,6 +1475,15 @@ table.point-list {
   pointer-events: none;
 }
 
+/* Text only, on iOS's material: ONE dark translucent grey for every
+   message, regardless of level — no icon, no shadow, no border. The
+   surface is the same slab each time, so what the eye tracks is the
+   text arriving, not a colour change.
+
+   Translucency needs the blur to go with it. Without backdrop-filter a
+   see-through panel over a busy 3D viewport reads as dirt on the glass;
+   with it, the model behind stays a soft wash and the text keeps its
+   contrast wherever the toast lands. */
 .toast {
   pointer-events: auto;
   display: flex;
@@ -1251,46 +1493,40 @@ table.point-list {
   padding: 11px 14px;
   appearance: none;
   border: none;
-  background: var(--hud-panel);
-  color: var(--hud-text);
+  background: rgb(38 40 44 / 0.82);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  color: rgb(255 255 255 / 0.92);
   border-radius: 14px;
   corner-shape: squircle;
-  box-shadow: var(--hud-shadow);
+  box-shadow: none;
   font: inherit;
   font-size: 13px;
+  font-weight: 500;
   text-align: left;
   /* The whole toast is the dismiss target. */
   cursor: pointer;
   animation: toast-in 160ms cubic-bezier(0.22, 1, 0.36, 1);
   transition: background 100ms ease;
 }
-.toast:hover { background: color-mix(in srgb, var(--hud-panel) 88%, white); }
+.toast:hover { background: rgb(48 50 55 / 0.88); }
 
-/* Level tints the ICON only, never the text: a whole message in red is
-   harder to read, and the icon already carries the severity. */
-.toast[data-level="info"] .toast-icon { color: var(--hud-text-muted); }
-.toast[data-level="success"] .toast-icon { color: var(--success); }
-.toast[data-level="warning"] .toast-icon { color: var(--warning); }
-.toast[data-level="error"] .toast-icon { color: var(--danger); }
-
-/* Fixed square, so the row keeps its geometry while the icon module is
-   still loading and the text does not shift when the glyph arrives. */
-.toast-icon {
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  width: 15px;
-  height: 15px;
-  margin-top: 2px;
-}
+/* With the surface neutral, the level survives as a hairline down the
+   leading edge — enough to tell an error from a confirmation at a
+   glance, without the slab changing colour under the text. `info` gets
+   none: the default case should look like the default case. */
+.toast[data-level="success"] { box-shadow: inset 3px 0 0 var(--success); }
+.toast[data-level="warning"] { box-shadow: inset 3px 0 0 var(--warning); }
+.toast[data-level="error"] { box-shadow: inset 3px 0 0 var(--danger); }
 
 .toast-text { flex: 1; min-width: 0; line-height: 1.4; }
 
 /* The offer, not a button: the whole toast is already clickable, so a
-   nested button would be a smaller target for the identical result. */
+   nested button would be a smaller target for the identical result.
+   Accent works again now that the surface is neutral. */
 .toast-action {
   flex-shrink: 0;
-  color: var(--accent);
+  color: var(--hover);
   font-weight: 600;
   font-size: 12px;
   margin-top: 1px;
@@ -1359,7 +1595,7 @@ table.point-list {
 .drawer-input {
   appearance: none;
   border: 1px solid var(--hud-stroke);
-  background: rgba(255, 255, 255, 0.06);
+  background: color-mix(in srgb, var(--hud-tint) calc(6% * var(--hud-tint-boost)), transparent);
   color: var(--hud-text);
   font: inherit;
   font-size: 14px;
@@ -1372,7 +1608,7 @@ table.point-list {
 .drawer-input::placeholder { color: var(--hud-text-faint); }
 .drawer-input:focus {
   border-color: var(--accent);
-  background: rgba(255, 255, 255, 0.09);
+  background: color-mix(in srgb, var(--hud-tint) calc(9% * var(--hud-tint-boost)), transparent);
 }
 
 .drawer-actions {
@@ -1389,7 +1625,7 @@ table.point-list {
 
 /* =====================================================================
    PROJECT SCREEN — the workspace layout: canvas with HUD panels pinned
-   around the edges, plus a top toolbar and a bottom status bar.
+   around the edges, plus a top toolbar.
    ===================================================================== */
 
 /* The viewport fills the slot outright. No centring grid: the canvas is
@@ -1412,9 +1648,9 @@ table.point-list {
      other vertical gap on the HUD. */
   top: calc(var(--hud-gap) * 2 + var(--hud-top-row));
   left: var(--hud-gap);
-  /* Symmetric at the bottom: clear the status bar (a top-row-height panel)
-     plus the same consistent gap. */
-  bottom: calc(var(--hud-gap) * 2 + var(--hud-top-row));
+  /* Symmetric at the bottom: the same inset that pins every other panel
+     to a viewport edge. */
+  bottom: var(--hud-gap);
   display: flex;
   flex-direction: column;
   /* A consistent vertical gap between stacked HUD panels, matching the
@@ -1433,12 +1669,12 @@ table.point-list {
   bottom: var(--hud-gap);
 }
 /* The info panel: its own right column, occupying the LOWER HALF of the
-   screen — it starts at the vertical midpoint and runs down to just above
-   the status bar. Keeping the upper right clear leaves that area to the
-   floating view cube and the session chip. */
+   screen — it starts at the vertical midpoint and runs down to the bottom
+   inset. Keeping the upper right clear leaves that area to the floating
+   view cube and the session chip. */
 .hud-right-info {
   top: 50%;
-  bottom: calc(var(--hud-gap) * 2 + var(--hud-top-row));
+  bottom: var(--hud-gap);
   right: var(--hud-gap);
   width: var(--hud-panel-width);
   /* A right-edge row: expanded, the panel fills the width; collapsed, its
@@ -1464,12 +1700,6 @@ table.point-list {
 .hud-designer {
   inset: 0;
   pointer-events: none;
-}
-
-.hud-statusbar {
-  left: var(--hud-gap);
-  right: var(--hud-gap);
-  bottom: var(--hud-gap);
 }
 
 /* --- breadcrumb ----------------------------------------------------- */
@@ -1519,17 +1749,6 @@ table.point-list {
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
   color: var(--hud-text-faint); margin-right: 4px;
 }
-
-/* --- status bar ----------------------------------------------------- */
-.hud-status {
-  display: flex; align-items: center; gap: 8px;
-  min-height: var(--hud-top-row);
-  padding: 0 14px;
-  font-size: 12px; color: var(--hud-text-muted);
-}
-.hud-status-sep { color: var(--hud-text-faint); }
-.hud-status-spacer { flex: 1; }
-.hud-status-muted { color: var(--hud-text-faint); }
 
 /* =====================================================================
    SPLIT BUTTON — a default action joined to a chevron that opens a menu.
@@ -1693,12 +1912,12 @@ table.point-list {
      stray glyph rather than a control — the restore button it pairs with
      carries the panel material at rest, so this one has to look like a
      button before it is hovered too. */
-  background: rgba(255, 255, 255, 0.06);
+  background: color-mix(in srgb, var(--hud-tint) calc(6% * var(--hud-tint-boost)), transparent);
   color: var(--hud-text-muted);
   border-radius: 8px; corner-shape: squircle;
   cursor: pointer; transition: background 100ms ease, color 100ms ease;
 }
-.hud-icon-button:hover { background: rgba(255, 255, 255, 0.14); color: var(--hud-text); }
+.hud-icon-button:hover { background: color-mix(in srgb, var(--hud-tint) calc(14% * var(--hud-tint-boost)), transparent); color: var(--hud-text); }
 
 /* --- viewport overlays ------------------------------------------------ */
 /* The canvas plus anything positioned over it. The canvas has no

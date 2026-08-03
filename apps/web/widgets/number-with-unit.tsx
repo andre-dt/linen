@@ -9,10 +9,18 @@
 // The text is kept verbatim. A round trip through this widget must
 // never rewrite the user's formula into a normalised form they did not
 // type.
+//
+// Built from the shared field parts, so it is the same box and the same
+// button sizes as every other field — see widgets/field-parts.tsx. Its
+// panel holds what a formula needs and a bare number does not: the unit,
+// the declared range, and the evaluated result.
 // =====================================================================
 
-import { createSignal, createMemo, Show } from "solid-js"
+import { createMemo, Show } from "solid-js"
 import type { ExpressionField } from "@linen/cad/features"
+import {
+  FieldRoot, FieldBox, FieldClear, FieldPanelTrigger, FieldPanel,
+} from "./field-parts"
 
 interface Props {
   readonly field: ExpressionField
@@ -44,33 +52,73 @@ export function NumberWithUnit(props: Props) {
   // evaluated result beside it is what keeps a formula legible.
   const isFormula = createMemo(() => text().trim() !== "" && Number.isNaN(Number(text())))
 
+  const range = createMemo(() => {
+    const { minimum, maximum } = props.field
+    if (minimum === null && maximum === null) return null
+    if (minimum !== null && maximum !== null) return `${minimum} to ${maximum}`
+    return minimum !== null ? `at least ${minimum}` : `at most ${maximum}`
+  })
+
   return (
-    <label class="widget widget-number">
+    <div class="widget widget-number">
       <span class="widget-label">{props.field.label}</span>
 
-      <div class="widget-input-row">
-        <input
-          class="widget-input"
-          value={text()}
-          placeholder={props.field.optional ? "auto" : ""}
-          onInput={(event) => props.onChange?.(event.currentTarget.value)}
-          inputmode="text"
-          spellcheck={false}
-        />
-        <Show when={unit()}>
-          <span class="widget-unit">{unit()}</span>
-        </Show>
-      </div>
+      <FieldRoot
+        invalid={props.error !== null}
+        // Empty text is NO VALUE, not the empty string: a cleared field
+        // must be indistinguishable from one never filled, or the step
+        // would count it as answered.
+        value={text() === "" ? undefined : text()}
+        onCommit={(value) => props.onChange?.(value)}
+      >
+        <FieldBox
+          control={
+            <input
+              class="field-control"
+              value={text()}
+              placeholder={props.field.optional ? "auto" : ""}
+              onInput={(event) => props.onChange?.(event.currentTarget.value)}
+              inputmode="text"
+              spellcheck={false}
+            />
+          }
+        >
+          {/* The unit is part of reading the value, not a control, so it
+              sits with the text rather than in the button cluster. */}
+          <Show when={unit()}>
+            <span class="field-unit">{unit()}</span>
+          </Show>
+          <FieldClear label="Clear value" />
+          <FieldPanelTrigger label="Value details" />
+        </FieldBox>
 
-      {/* The evaluated value, greyed. Only shown for formulas: echoing
-          "12" under a field that says 12 is noise. */}
-      <Show when={isFormula() && evaluated() !== null}>
-        <span class="widget-evaluated">= {evaluated()} {unit()}</span>
-      </Show>
+        <FieldPanel>
+          <dl class="field-panel-facts">
+            <Show when={unit()}>
+              <dt>Unit</dt>
+              <dd>{unit()}</dd>
+            </Show>
+            <Show when={range()}>
+              {(bounds) => (
+                <>
+                  <dt>Range</dt>
+                  <dd>{bounds()}</dd>
+                </>
+              )}
+            </Show>
+            <Show when={isFormula()}>
+              <dt>Evaluates to</dt>
+              {/* No expression engine yet, so a formula says so rather
+                  than showing a guess at its value. */}
+              <dd>{evaluated() ?? "pending the kernel"}</dd>
+            </Show>
+          </dl>
 
-      <Show when={props.field.help}>
-        {(help) => <span class="widget-help">{help()}</span>}
-      </Show>
-    </label>
+          <Show when={props.field.help}>
+            {(help) => <p class="field-panel-empty">{help()}</p>}
+          </Show>
+        </FieldPanel>
+      </FieldRoot>
+    </div>
   )
 }

@@ -103,7 +103,11 @@ export function CommandPanel(props: CommandPanelProps) {
     <Show when={step()}>
       {(current) => (
         <div
-          class="hud-panel command-panel"
+          // SECONDARY material: the designer floats over the side columns
+          // and is where the user is actually working, so it should read
+          // as distinct from the panels it covers rather than merging
+          // into them. See .hud-panel-secondary.
+          class="hud-panel hud-panel-secondary command-panel"
           style={{ left: `${floating.position().x}px`, top: `${floating.position().y}px` }}
         >
           <header
@@ -150,7 +154,7 @@ export function CommandPanel(props: CommandPanelProps) {
                   // Errors are SHOWN only once the user has tried to leave
                   // the step. A field that is empty because it has not been
                   // reached yet is not a mistake, and greeting an untouched
-                  // panel with "Sketch plane is required" states the
+                  // panel with "Plane is required" states the
                   // obvious in the colour reserved for things going wrong.
                   //
                   // The machine still carries the error the whole time —
