@@ -53,8 +53,26 @@ fn shape(expression: &Expression) -> String {
             format!("({} {} {})", shape(left), operator.symbol(), shape(right))
         }
         Expression::Call { callee, arguments, .. } => {
-            let args: Vec<_> = arguments.iter().map(shape).collect();
+            let args: Vec<_> = arguments
+                .iter()
+                .map(|argument| format!("{}: {}", argument.name, shape(&argument.value)))
+                .collect();
             format!("{callee}({})", args.join(", "))
+        }
+        Expression::Array { elements, .. } => {
+            let items: Vec<_> = elements.iter().map(shape).collect();
+            format!("[{}]", items.join(", "))
+        }
+        Expression::Construct { shape: name, fields, .. } => {
+            let written: Vec<_> = fields
+                .iter()
+                .map(|field| format!("{}: {}", field.name, shape(&field.value)))
+                .collect();
+            format!("{name}({})", written.join(", "))
+        }
+        Expression::Field { target, name, .. } => format!("{}.{name}", shape(target)),
+        Expression::Index { target, index, .. } => {
+            format!("{}[{}]", shape(target), shape(index))
         }
     }
 }
@@ -112,7 +130,7 @@ fn parses_a_let_binding() {
 
 #[test]
 fn parses_a_call_with_arguments() {
-    assert_eq!(thrown("test \"t\"\n  throw \"m\" unless add(1, 2) == 3\n"), "(add(1, 2) == 3)");
+    assert_eq!(thrown("test \"t\"\n  throw \"m\" unless add(a: 1, b: 2) == 3\n"), "(add(a: 1, b: 2) == 3)");
 }
 
 #[test]
@@ -122,7 +140,7 @@ fn parses_a_call_with_no_arguments() {
 
 #[test]
 fn parses_several_items_in_one_file() {
-    let unit = tree("fn double(n i32) i32\n  return n * 2\n\ntest \"t\"\n  throw \"m\" unless double(2) == 4\n");
+    let unit = tree("fn double(n i32) i32\n  return n * 2\n\ntest \"t\"\n  throw \"m\" unless double(n: 2) == 4\n");
     assert_eq!(unit.items.len(), 2);
 }
 
@@ -191,5 +209,42 @@ fn rejects_an_unknown_statement() {
 #[test]
 fn rejects_a_stray_top_level_statement() {
     let message = error("let x = 5\n");
-    assert!(message.contains("`fn` or `test`"), "got: {message}");
+    assert!(message.contains("`fn`, `shape` or `test`"), "got: {message}");
+}
+
+// --- naming ---------------------------------------------------------------
+
+#[test]
+fn a_function_name_must_start_lowercase() {
+    // The case is grammar, not convention: it is what tells `Point(x: 1)`
+    // from `add(a: 1)` at the first token.
+    let message = error("fn Double(n i32) i32\n  return n\n");
+    assert!(message.contains("names a shape"), "got: {message}");
+}
+
+#[test]
+fn a_shape_name_must_start_uppercase() {
+    let message = error("shape point\n  x i32\n");
+    assert!(message.contains("names a function"), "got: {message}");
+}
+
+#[test]
+fn a_call_names_every_argument() {
+    // Positional would let two parameters of the same type be swapped
+    // without anyone noticing.
+    let message = error("fn add(a i32, b i32) i32\n  return a\ntest \"t\"\n  throw \"m\" unless add(1, 2) == 3\n");
+    assert!(message.contains("parameter name"), "got: {message}");
+}
+
+#[test]
+fn a_construction_and_a_call_read_alike() {
+    // Both name what goes in them; only the case says which is which.
+    assert_eq!(
+        thrown("test \"t\"\n  throw \"m\" unless add(a: 1, b: 2) == 3\n"),
+        "(add(a: 1, b: 2) == 3)"
+    );
+    assert_eq!(
+        thrown("test \"t\"\n  throw \"m\" unless Point(x: 1, y: 2).x == 1\n"),
+        "(Point(x: 1, y: 2).x == 1)"
+    );
 }

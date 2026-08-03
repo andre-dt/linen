@@ -1,0 +1,49 @@
+# Arrays have a size in their TYPE — `[i32; 3]` is three i32 — so a value
+# needs no allocation at all. `List<T>` is the one that grows, and lives
+# in the arena.
+
+fn first(xs [i32; 3]) i32
+  return xs[0]
+
+fn sum_three(xs [i32; 3]) i32
+  return xs[0] + xs[1] + xs[2]
+
+fn at(xs List<i32>, index i32) i32
+  return xs[index]
+
+test "a literal and its elements"
+  let xs = [10, 20, 30]
+  throw "the first should be 10" unless xs[0] == 10
+  throw "the second should be 20" unless xs[1] == 20
+  throw "the third should be 30" unless xs[2] == 30
+
+test "an index can be an expression"
+  let xs = [10, 20, 30]
+  let i = 1
+  throw "an offset index should reach the third" unless xs[i + 1] == 30
+
+test "an array of one"
+  let xs = [7]
+  throw "the only element should be 7" unless xs[0] == 7
+
+test "an array as a parameter"
+  throw "first should read the head" unless first(xs: [1, 2, 3]) == 1
+  throw "the sum should be 6" unless sum_three(xs: [1, 2, 3]) == 6
+
+test "a List as a parameter"
+  throw "at should read by index" unless at(xs: [5, 6, 7], index: 1) == 6
+
+test "an array of bools"
+  let flags = [true, false]
+  throw "the first flag should hold" unless flags[0]
+  throw "the second flag should not hold" if flags[1]
+
+test "elements can be expressions"
+  let xs = [1 + 1, 2 * 2, 3 * 3]
+  throw "the computed first should be 2" unless xs[0] == 2
+  throw "the computed third should be 9" unless xs[2] == 9
+
+test "an array inside a loop"
+  let xs = [0, 1, 2]
+  for i in 0 .. 3
+    throw "each element should equal its index" unless xs[i] == i

@@ -29,7 +29,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use syntax::{lex::lex, parse::parse};
+use syntax::{lex::lex, parse::parse, resolve::resolve};
 
 /// Every .lang file in the suite.
 fn lang_files() -> Vec<PathBuf> {
@@ -44,12 +44,14 @@ fn lang_files() -> Vec<PathBuf> {
     files
 }
 
-/// How far the compiler currently goes. Today: text to tree. The checker
-/// and the backend join here as they land, and every existing .lang file
-/// starts exercising them without being touched.
+/// How far the compiler currently goes: text to tree, then resolution —
+/// matching every argument to what it fills. The typechecker and the
+/// backend join here as they land, and every existing .lang file starts
+/// exercising them without being touched.
 fn compile(source: &str) -> Result<(), String> {
     let tokens = lex(source).map_err(|error| error.message)?;
-    parse(&tokens).map_err(|error| error.message)?;
+    let unit = parse(&tokens).map_err(|error| error.message)?;
+    resolve(&unit).map_err(|error| error.message)?;
     Ok(())
 }
 

@@ -1,2 +1,2 @@
-#~ expected `fn` or `test` at the top level
+#~ expected `fn`, `shape` or `test` at the top level
 let x = 5

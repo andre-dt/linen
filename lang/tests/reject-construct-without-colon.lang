@@ -1,0 +1,6 @@
+shape Point
+  x i32
+  y i32
+test "t"
+  #~ expected `:` after the field name
+  let p = Point(x: 1, y 2)

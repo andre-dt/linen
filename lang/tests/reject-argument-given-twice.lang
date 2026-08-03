@@ -1,0 +1,9 @@
+#~ is given twice
+# One of the two was meant to be something else, and there is no way to
+# tell which — so neither can be assumed.
+
+fn add(a i32, b i32) i32
+  return a + b
+
+test "t"
+  throw "m" unless add(a: 1, a: 2) == 3

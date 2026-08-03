@@ -51,18 +51,39 @@ impl<'a> Parser<'a> {
         Ok(Unit { items })
     }
 
+    /// PascalCase names a shape, snake_case names a function.
+    ///
+    /// The case is grammar here, not convention. It is what lets
+    /// `Point(x: 1)` and `add(a: 1)` be told apart at the first token
+    /// instead of by looking ahead for a `:` — and, being checked, it is
+    /// something a reader can rely on rather than hope for.
+    fn starts_uppercase(name: &str) -> bool {
+        name.chars().next().is_some_and(|first| first.is_ascii_uppercase())
+    }
+
     fn item(&mut self) -> Result<Item, ParseError> {
         match self.peek_name() {
             Some("fn") => Ok(Item::Function(self.function()?)),
+            Some("shape") => Ok(Item::Shape(self.shape()?)),
             Some("test") => Ok(Item::Test(self.test()?)),
-            _ => Err(self.error_here("expected `fn` or `test` at the top level")),
+            _ => Err(self.error_here("expected `fn`, `shape` or `test` at the top level")),
         }
     }
 
     fn function(&mut self) -> Result<Function, ParseError> {
         let start = self.span_here();
         self.advance(); // fn
+        let name_span = self.span_here();
         let name = self.name("a function name")?;
+        if Self::starts_uppercase(&name) {
+            return Err(ParseError {
+                message: format!(
+                    "`{name}` starts with a capital, which names a shape; a function is written in snake_case"
+                ),
+                span: name_span,
+            });
+        }
+        let generics = self.generic_parameters()?;
 
         self.expect(&TokenKind::LeftParen, "`(` after the function name")?;
         let mut parameters = Vec::new();
@@ -73,6 +94,16 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(&TokenKind::RightParen, "`)` to close the parameter list")?;
+
+        if let Some(late) = Self::required_come_first(&parameters) {
+            return Err(ParseError {
+                message: format!(
+                    "`{}` has no default, so it must come before the parameters that do",
+                    late.name
+                ),
+                span: late.span,
+            });
+        }
 
         // The return type, if there is one. Written bare after the
         // parameters — no arrow, no colon. Its absence means the function
@@ -85,20 +116,169 @@ impl<'a> Parser<'a> {
 
         let body = self.block()?;
         let span = start.to(self.span_before());
-        Ok(Function { name, parameters, result, body, span })
+        Ok(Function { name, generics, parameters, result, body, span })
     }
 
     fn parameter(&mut self) -> Result<Parameter, ParseError> {
         let start = self.span_here();
         let name = self.name("a parameter name")?;
         let type_name = self.type_name()?;
-        Ok(Parameter { name, type_name, span: start.to(self.span_before()) })
+        // `= value` makes it optional. Nothing else does — there is no
+        // separate marker to also keep in sync.
+        let default = if self.take(&TokenKind::Equal) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+        Ok(Parameter { name, type_name, default, span: start.to(self.span_before()) })
     }
 
+    /// Required parameters come before optional ones.
+    ///
+    /// Arguments are given in declaration order, so an optional one in the
+    /// middle could only be skipped by leaving a hole — and there is no
+    /// notation for a hole. Requiring the order at the DECLARATION means
+    /// every call site is writable; allowing it and then rejecting calls
+    /// would move the error away from the mistake.
+    fn required_come_first(parameters: &[Parameter]) -> Option<&Parameter> {
+        let first_optional = parameters.iter().position(|p| p.default.is_some())?;
+        parameters[first_optional..].iter().find(|p| p.default.is_none())
+    }
+
+    /// The same rule for shape fields, since a construction is written
+    /// like a call and skips omitted values the same way.
+    fn fields_required_come_first(fields: &[Field]) -> Option<&Field> {
+        let first_optional = fields.iter().position(|f| f.default.is_some())?;
+        fields[first_optional..].iter().find(|f| f.default.is_none())
+    }
+
+    /// `shape Name` with its fields indented under it.
+    fn shape(&mut self) -> Result<Shape, ParseError> {
+        let start = self.span_here();
+        self.advance(); // shape
+        let name_span = self.span_here();
+        let name = self.name("a shape name")?;
+        if !Self::starts_uppercase(&name) {
+            return Err(ParseError {
+                message: format!(
+                    "`{name}` starts lowercase, which names a function; a shape is written in PascalCase"
+                ),
+                span: name_span,
+            });
+        }
+        let generics = self.generic_parameters()?;
+
+        self.expect(&TokenKind::Newline, "a line break before the fields")?;
+        self.expect(&TokenKind::Indent, "the fields, indented")?;
+
+        let mut fields = Vec::new();
+        loop {
+            self.skip_newlines();
+            if self.check(&TokenKind::Dedent) {
+                break;
+            }
+            if self.check(&TokenKind::End) {
+                return Err(self.error_here("this shape is never closed"));
+            }
+            let field_start = self.span_here();
+            let field_name = self.name("a field name")?;
+            let type_name = self.type_name()?;
+            let default = if self.take(&TokenKind::Equal) {
+                Some(self.expression()?)
+            } else {
+                None
+            };
+            self.expect(&TokenKind::Newline, "a line break after the field")?;
+            fields.push(Field {
+                name: field_name,
+                type_name,
+                default,
+                span: field_start.to(self.span_before()),
+            });
+        }
+        self.advance(); // Dedent
+
+        if fields.is_empty() {
+            return Err(self.error_here("a shape needs at least one field"));
+        }
+        if let Some(late) = Self::fields_required_come_first(&fields) {
+            return Err(ParseError {
+                message: format!(
+                    "`{}` has no default, so it must come before the fields that do",
+                    late.name
+                ),
+                span: late.span,
+            });
+        }
+        Ok(Shape { name, generics, fields, span: start.to(self.span_before()) })
+    }
+
+    /// `<T, U>` after a name, or nothing.
+    fn generic_parameters(&mut self) -> Result<Vec<GenericParameter>, ParseError> {
+        if !self.check(&TokenKind::Less) {
+            return Ok(Vec::new());
+        }
+        self.advance(); // <
+
+        let mut generics = Vec::new();
+        loop {
+            let span = self.span_here();
+            let name = self.name("a type parameter")?;
+            generics.push(GenericParameter { name, span });
+            if !self.take(&TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(&TokenKind::Greater, "`>` to close the type parameters")?;
+        Ok(generics)
+    }
+
+    /// A type as written: `i32`, `List<i32>`, `[i32; 3]`.
     fn type_name(&mut self) -> Result<TypeName, ParseError> {
         let span = self.span_here();
+
+        // `[element; size]` — a fixed-size array. The size is part of the
+        // type, which is what lets the value live without an allocation.
+        if self.take(&TokenKind::LeftBracket) {
+            let element = self.type_name()?;
+            self.expect(&TokenKind::Semicolon, "`;` between the element type and the size")?;
+            let size = match self.peek().kind {
+                TokenKind::Integer(value) => {
+                    self.advance();
+                    value
+                }
+                _ => return Err(self.error_here("expected the array size, as a number")),
+            };
+            self.expect(&TokenKind::RightBracket, "`]` to close the array type")?;
+            return Ok(TypeName {
+                name: element.name.clone(),
+                arguments: vec![element],
+                array_size: Some(size),
+                span: span.to(self.span_before()),
+            });
+        }
+
         let name = self.name("a type")?;
-        Ok(TypeName { name, span })
+
+        // `List<i32>` — arguments applied to the name.
+        let mut arguments = Vec::new();
+        if self.check(&TokenKind::Less) {
+            self.advance();
+            loop {
+                arguments.push(self.type_name()?);
+                if !self.take(&TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(&TokenKind::Greater, "`>` to close the type arguments")?;
+        }
+
+        Ok(TypeName {
+            name,
+            arguments,
+            array_size: None,
+            span: span.to(self.span_before()),
+        })
     }
 
     fn test(&mut self) -> Result<Test, ParseError> {
@@ -352,7 +532,39 @@ impl<'a> Parser<'a> {
                 span,
             });
         }
-        self.primary()
+        self.postfix()
+    }
+
+    /// A value, then any number of `.field` and `[index]` after it.
+    ///
+    /// Left-associative by construction: `a.b.c` reads a, then .b, then
+    /// .c, which is the only grouping that means anything.
+    fn postfix(&mut self) -> Result<Expression, ParseError> {
+        let mut target = self.primary()?;
+        loop {
+            if self.take(&TokenKind::Dot) {
+                let span = target.span();
+                let name = self.name("a field name after `.`")?;
+                target = Expression::Field {
+                    target: Box::new(target),
+                    name,
+                    span: span.to(self.span_before()),
+                };
+                continue;
+            }
+            if self.take(&TokenKind::LeftBracket) {
+                let span = target.span();
+                let index = self.expression()?;
+                self.expect(&TokenKind::RightBracket, "`]` to close the index")?;
+                target = Expression::Index {
+                    target: Box::new(target),
+                    index: Box::new(index),
+                    span: span.to(self.span_before()),
+                };
+                continue;
+            }
+            return Ok(target);
+        }
     }
 
     fn primary(&mut self) -> Result<Expression, ParseError> {
@@ -419,17 +631,32 @@ impl<'a> Parser<'a> {
                     span,
                 })
             }
+            TokenKind::LeftBracket => {
+                self.advance();
+                let mut elements = Vec::new();
+                while !self.check(&TokenKind::RightBracket) {
+                    elements.push(self.expression()?);
+                    if !self.take(&TokenKind::Comma) {
+                        break;
+                    }
+                }
+                self.expect(&TokenKind::RightBracket, "`]` to close the array")?;
+                Ok(Expression::Array { elements, span: span.to(self.span_before()) })
+            }
             TokenKind::Name(name) => {
                 self.advance();
                 if self.take(&TokenKind::LeftParen) {
-                    let mut arguments = Vec::new();
-                    while !self.check(&TokenKind::RightParen) {
-                        arguments.push(self.expression()?);
-                        if !self.take(&TokenKind::Comma) {
-                            break;
-                        }
+                    // The CASE decides: `Point(…)` builds a shape,
+                    // `add(…)` calls a function. Both name what goes in
+                    // them, so the two read alike and only the name says
+                    // which is which.
+                    if Self::starts_uppercase(&name) {
+                        let fields = self.named_arguments("field")?;
+                        let span = span.to(self.span_before());
+                        return Ok(Expression::Construct { shape: name, fields, span });
                     }
-                    self.expect(&TokenKind::RightParen, "`)` to close the arguments")?;
+
+                    let arguments = self.named_arguments("parameter")?;
                     let span = span.to(self.span_before());
                     return Ok(Expression::Call { callee: name, arguments, span });
                 }
@@ -469,6 +696,40 @@ impl<'a> Parser<'a> {
         // The lexer always ends with `End`, so there is nothing past it
         // to index into.
         &self.tokens[self.at.min(self.tokens.len() - 1)]
+    }
+
+    /// `name: value, name: value)` — the inside of a call or a
+    /// construction, which are written the same way.
+    ///
+    /// Every argument is named. Positional would be shorter, but two
+    /// parameters of the same type could then be swapped without anyone
+    /// noticing, and the reader would have to go find the signature to
+    /// know what the second `10` meant.
+    fn named_arguments(&mut self, what: &str) -> Result<Vec<FieldValue>, ParseError> {
+        let mut arguments = Vec::new();
+        while !self.check(&TokenKind::RightParen) {
+            let start = self.span_here();
+            let name_span = self.span_here();
+            let name = self.name(&format!("a {what} name"))?;
+            if arguments.iter().any(|given: &FieldValue| given.name == name) {
+                return Err(ParseError {
+                    message: format!("`{name}` is given twice"),
+                    span: name_span,
+                });
+            }
+            self.expect(&TokenKind::Colon, &format!("`:` after the {what} name"))?;
+            let value = self.expression()?;
+            arguments.push(FieldValue {
+                name,
+                value,
+                span: start.to(self.span_before()),
+            });
+            if !self.take(&TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RightParen, "`)` to close them")?;
+        Ok(arguments)
     }
 
     fn peek_name(&self) -> Option<&str> {

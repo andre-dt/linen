@@ -10,16 +10,16 @@ fn zero() i32
   return 0
 
 test "calls a function"
-  throw "double(21) should be 42" unless double(21) == 42
+  throw "double(n: 21) should be 42" unless double(n: 21) == 42
 
 test "passes several arguments"
-  throw "add(20, 22) should be 42" unless add(20, 22) == 42
+  throw "add(a: 20, b: 22) should be 42" unless add(a: 20, b: 22) == 42
 
 test "calls with no arguments"
   throw "zero() should be 0" unless zero() == 0
 
 test "nests calls"
-  throw "double(add(1, 2)) should be 6" unless double(add(1, 2)) == 6
+  throw "double(n: add(a: 1, b: 2)) should be 6" unless double(n: add(a: 1, b: 2)) == 6
 
 test "calls inside arithmetic"
-  throw "double(3) + add(1, 1) should be 8" unless double(3) + add(1, 1) == 8
+  throw "double(n: 3) + add(a: 1, b: 1) should be 8" unless double(n: 3) + add(a: 1, b: 1) == 8

@@ -1,0 +1,3 @@
+#~ expected the array size, as a number
+fn f(xs [i32; n]) i32
+  return xs[0]

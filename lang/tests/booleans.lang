@@ -44,10 +44,10 @@ test "not binds tighter than and"
   throw "false and true should not hold" if false and true
 
 test "bool as a parameter and a result"
-  throw "is_even(4) should hold" unless is_even(4)
-  throw "is_even(3) should not hold" if is_even(3)
-  throw "both(true, true) should hold" unless both(true, true)
-  throw "both(true, false) should not hold" if both(true, false)
+  throw "is_even(n: 4) should hold" unless is_even(n: 4)
+  throw "is_even(n: 3) should not hold" if is_even(n: 3)
+  throw "both(a: true, b: true) should hold" unless both(a: true, b: true)
+  throw "both(a: true, b: false) should not hold" if both(a: true, b: false)
 
 test "bool in a binding"
   let ready = true

@@ -1,0 +1,4 @@
+test "t"
+  #~ expected `]` to close the index
+  let xs = [1]
+  throw "m" unless xs[0 == 1

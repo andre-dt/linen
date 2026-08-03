@@ -1,0 +1,7 @@
+#~ has no default, so it must be given
+shape Point
+  x i32
+  y i32
+
+test "t"
+  throw "m" unless Point(x: 1).x == 1

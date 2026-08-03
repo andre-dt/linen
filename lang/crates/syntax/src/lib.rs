@@ -10,9 +10,12 @@
 pub mod ast;
 pub mod lex;
 pub mod parse;
+pub mod resolve;
 pub mod token;
 
 #[cfg(test)]
 mod lex_test;
 #[cfg(test)]
 mod parse_test;
+#[cfg(test)]
+mod resolve_test;

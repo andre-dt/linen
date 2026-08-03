@@ -1,0 +1,4 @@
+#~ expected a type
+shape Point
+  x
+  y i32

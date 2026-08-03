@@ -18,4 +18,4 @@ test "a binding can read the ones before it"
   throw "b should be 6" unless b == 6
 
 test "bindings work inside a function"
-  throw "triple(4) should be 12" unless triple(4) == 12
+  throw "triple(n: 4) should be 12" unless triple(n: 4) == 12

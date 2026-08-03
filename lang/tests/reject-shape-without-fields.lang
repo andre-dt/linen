@@ -1,0 +1,5 @@
+#~ expected the fields, indented
+shape Empty
+
+test "t"
+  throw "m" unless 1 == 1

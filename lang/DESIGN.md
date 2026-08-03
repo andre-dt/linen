@@ -153,6 +153,84 @@ aparecer no meio da linha — dentro de um argumento, à direita de um `let`
 mesma. `then` separa a condição do valor; sem ele, `if a - 1 else` teria
 que adivinhar onde a condição termina.
 
+### Dados: shape, array, List
+
+`shape` é a forma de um valor. Não é `struct` nem `class` porque não tem
+método, herança nem comportamento — só campos.
+
+```
+shape Point
+  x i32
+  y i32
+
+let p = Point(x: 1, y: 2)
+let a = p.x
+```
+
+### O case é gramática
+
+**PascalCase nomeia shape, snake_case nomeia função.** Não é convenção —
+o compilador exige, e é o que deixa `Point(x: 1)` e `add(a: 1)` serem
+distinguidos no primeiro token, sem olhar adiante.
+
+    shape Point   ✓        fn add     ✓
+    shape point   ✗        fn Add     ✗
+
+### Tudo que entra é nomeado
+
+Chamada e construção se escrevem igual: cada argumento traz o nome do
+parâmetro ou do campo.
+
+```
+let p = Point(x: 1, y: 2)
+let s = add(a: 20, b: 22)
+```
+
+Posicional seria mais curto, mas dois parâmetros do mesmo tipo poderiam
+ser trocados sem ninguém notar, e o leitor teria que ir buscar a
+assinatura para saber o que o segundo `10` significa. Campo novo também
+quebraria toda construção silenciosamente em vez de ruidosamente.
+
+### Na ordem, e nada é opcional por acaso
+
+Os argumentos vêm na ordem em que foram declarados. `add(b: 2, a: 1)` é
+erro — não por rigor, mas porque seriam duas formas de escrever a mesma
+chamada, e o leitor que confere uma chamada contra a assinatura teria que
+checar qual das duas está lendo, toda vez.
+
+Um parâmetro fica **opcional** ganhando um valor padrão. Só isso; não há
+marcador separado, então não há um segundo lugar para manter em sincronia
+com o padrão.
+
+```
+fn step(from i32, by i32 = 1) i32
+  return from + by
+
+step(from: 10)          # by vale 1
+step(from: 10, by: 5)   # by vale 5
+```
+
+Os obrigatórios vêm antes dos opcionais — checado na **declaração**, não
+na chamada. Como os argumentos correm em ordem, um obrigatório depois de
+um opcional só seria alcançável deixando um buraco, e não existe notação
+para buraco. Errar isso na declaração é um erro; deixar passar seria
+espalhar o erro por toda chamada que não dá para escrever.
+
+E é por aí que a linguagem **não tem null**: todo parâmetro ou é dado
+pelo chamador ou tem padrão, e todo `let` nasce com valor. Nunca existe
+um lugar onde falta valor, então nunca é preciso um valor para dizer
+"falta".
+
+Array e List são coisas diferentes, e a diferença é onde o valor mora:
+
+```
+[i32; 3]      tamanho no TIPO, sem alocação
+List<i32>     cresce, mora na arena
+```
+
+O tamanho do array ser parte do tipo é o que deixa o valor existir sem
+alocar nada.
+
 ### Iteração
 
 `while` e `for`, os dois statements. O range do `for` é **meio-aberto**:
@@ -161,7 +239,7 @@ ranges adjacentes se encontram sem se sobrepor.
 
 ```
 for i in 0 .. 3
-  assert(i < 3)
+  throw "the range should stop before 3" unless i < 3
 ```
 
 Recursão também funciona, e é a forma que sobra quando não há o que
@@ -205,10 +283,19 @@ Feito:
 - **bool** — `true`/`false`, `and`/`or`/`not`, `bool` como tipo
 - **`if`** — statement e expressão
 - **`while`**, **`for`** com range meio-aberto, e recursão
-- **suíte** — 41 arquivos em `tests/`: 12 de linguagem (91 testes) e 29
+- **`shape`** com campos, aninhamento e acesso `.`
+- **nomeação obrigatória** em chamada e construção, e o **case como
+  gramática** (PascalCase = shape, snake_case = função)
+- **parâmetros opcionais** por valor padrão, obrigatórios primeiro
+- **resolução** (`syntax/resolve.rs`) — casa argumento com o que ele
+  preenche: nomeado, na ordem declarada, e nada obrigatório faltando
+- **array** `[i32; 3]` e **`List<T>`**, com índice
+- **genéricos** — `shape Pair<T>`, `fn identity<T>` (sintaxe; a
+  verificação chega com o typechecker)
+- **suíte** — 68 arquivos em `tests/`: 15 de linguagem (114 testes) e 53
   rejeições, uma por mensagem de erro distinta
 - **CLI `linen`** — `build`/`test`/`clean`, erro com arquivo:linha:coluna
-  e caret, relatório progressivo e sumário — 49 testes no total
+  e caret, relatório progressivo e sumário — 66 testes no total
 
 Em aberto:
 - **Encadeamento** — `.pipe(f)`, UFCS (`x.f()` = `f(x)`) ou `|>`. Não

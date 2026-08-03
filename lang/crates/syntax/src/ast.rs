@@ -23,12 +23,47 @@ pub struct Unit {
 #[derive(Debug, PartialEq)]
 pub enum Item {
     Function(Function),
+    Shape(Shape),
     Test(Test),
+}
+
+/// `shape Name` with its fields indented under it.
+///
+/// Called a shape rather than a struct because that is what it is: the
+/// shape of a value, with no methods, no inheritance and no behaviour
+/// attached.
+#[derive(Debug, PartialEq)]
+pub struct Shape {
+    pub name: String,
+    /// Type parameters, empty for the ordinary case. `shape Pair<T>`.
+    pub generics: Vec<GenericParameter>,
+    pub fields: Vec<Field>,
+    pub span: Span,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Field {
+    pub name: String,
+    pub type_name: TypeName,
+    /// `y i32 = 0` — what the field is when a construction leaves it out.
+    /// `None` means it must be given. Same rule as a parameter, so the
+    /// two do not drift apart.
+    pub default: Option<Expression>,
+    pub span: Span,
+}
+
+/// A type variable as declared: the `T` in `shape Pair<T>`.
+#[derive(Debug, PartialEq, Clone)]
+pub struct GenericParameter {
+    pub name: String,
+    pub span: Span,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Function {
     pub name: String,
+    /// Type parameters, empty for the ordinary case. `fn first<T>(…)`.
+    pub generics: Vec<GenericParameter>,
     pub parameters: Vec<Parameter>,
     /// The declared return type. `None` means the function returns
     /// nothing — written by leaving the type off, not by naming a unit
@@ -42,6 +77,14 @@ pub struct Function {
 pub struct Parameter {
     pub name: String,
     pub type_name: TypeName,
+    /// `count i32 = 1` — what the parameter is when the caller leaves it
+    /// out. `None` means it is required.
+    ///
+    /// A default is what makes a parameter optional; there is no separate
+    /// way to mark one. And because every parameter either is given or
+    /// has a default, no value is ever absent — which is why the language
+    /// has no null.
+    pub default: Option<Expression>,
     pub span: Span,
 }
 
@@ -51,6 +94,13 @@ pub struct Parameter {
 #[derive(Debug, PartialEq, Clone)]
 pub struct TypeName {
     pub name: String,
+    /// `List<i32>` — the arguments applied to the name. Empty for a
+    /// plain type.
+    pub arguments: Vec<TypeName>,
+    /// `[i32; 3]` — a fixed-size array. The size is part of the TYPE, so
+    /// it is known at compile time and the value needs no allocation.
+    /// `None` for anything that is not an array.
+    pub array_size: Option<i64>,
     pub span: Span,
 }
 
@@ -163,11 +213,51 @@ pub enum Expression {
         right: Box<Expression>,
         span: Span,
     },
+    /// `add(a: 1, b: 2)`
+    ///
+    /// Arguments are named, the same way a construction names its
+    /// fields — so a call and a construction read alike, and only the
+    /// case of the name says which one it is.
     Call {
         callee: String,
-        arguments: Vec<Expression>,
+        arguments: Vec<FieldValue>,
         span: Span,
     },
+    /// `[1, 2, 3]` — an array literal. Its size comes from how many
+    /// elements were written.
+    Array {
+        elements: Vec<Expression>,
+        span: Span,
+    },
+    /// `Point(x: 1, y: 2)` — building a shape, naming each field.
+    ///
+    /// Named rather than positional: a shape with two fields of the same
+    /// type would otherwise let them be swapped silently, and adding a
+    /// field would break every construction quietly rather than loudly.
+    Construct {
+        shape: String,
+        fields: Vec<FieldValue>,
+        span: Span,
+    },
+    /// `p.x` — reading a field.
+    Field {
+        target: Box<Expression>,
+        name: String,
+        span: Span,
+    },
+    /// `xs[0]` — reading an element.
+    Index {
+        target: Box<Expression>,
+        index: Box<Expression>,
+        span: Span,
+    },
+}
+
+#[derive(Debug, PartialEq)]
+pub struct FieldValue {
+    pub name: String,
+    pub value: Expression,
+    pub span: Span,
 }
 
 impl Expression {
@@ -179,7 +269,11 @@ impl Expression {
             | Expression::Name { span, .. }
             | Expression::Unary { span, .. }
             | Expression::Binary { span, .. }
-            | Expression::Call { span, .. } => *span,
+            | Expression::Call { span, .. }
+            | Expression::Array { span, .. }
+            | Expression::Construct { span, .. }
+            | Expression::Field { span, .. }
+            | Expression::Index { span, .. } => *span,
         }
     }
 }

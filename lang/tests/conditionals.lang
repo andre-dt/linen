@@ -40,39 +40,39 @@ fn clamp(n i32, low i32, high i32) i32
   return n
 
 test "if as a statement, without else"
-  throw "sign(-5) should be -1" unless sign(-5) == -1
-  throw "sign(5) should be 1" unless sign(5) == 1
-  throw "sign(0) should be 0" unless sign(0) == 0
+  throw "sign(n: -5) should be -1" unless sign(n: -5) == -1
+  throw "sign(n: 5) should be 1" unless sign(n: 5) == 1
+  throw "sign(n: 0) should be 0" unless sign(n: 0) == 0
 
 test "if as a statement, with else"
-  throw "abs_statement(-4) should be 4" unless abs_statement(-4) == 4
-  throw "abs_statement(4) should be 4" unless abs_statement(4) == 4
-  throw "abs_statement(0) should be 0" unless abs_statement(0) == 0
+  throw "abs_statement(n: -4) should be 4" unless abs_statement(n: -4) == 4
+  throw "abs_statement(n: 4) should be 4" unless abs_statement(n: 4) == 4
+  throw "abs_statement(n: 0) should be 0" unless abs_statement(n: 0) == 0
 
 test "if as an expression"
-  throw "abs_expression(-4) should be 4" unless abs_expression(-4) == 4
-  throw "abs_expression(4) should be 4" unless abs_expression(4) == 4
+  throw "abs_expression(n: -4) should be 4" unless abs_expression(n: -4) == 4
+  throw "abs_expression(n: 4) should be 4" unless abs_expression(n: 4) == 4
 
 test "an if expression in a binding"
   let smaller = if 3 < 5 then 3 else 5
   throw "smaller should be 3" unless smaller == 3
 
 test "an if expression as an argument"
-  throw "abs_expression(if true then -7 else 7) should be 7" unless abs_expression(if true then -7 else 7) == 7
+  throw "abs_expression(n: if true then -7 else 7) should be 7" unless abs_expression(n: if true then -7 else 7) == 7
 
 test "if expressions nest"
   let x = if true then (if false then 1 else 2) else 3
   throw "x should be 2" unless x == 2
 
 test "nested if statements"
-  throw "grade(95) should be 4" unless grade(95) == 4
-  throw "grade(85) should be 3" unless grade(85) == 3
-  throw "grade(70) should be 2" unless grade(70) == 2
+  throw "grade(n: 95) should be 4" unless grade(n: 95) == 4
+  throw "grade(n: 85) should be 3" unless grade(n: 85) == 3
+  throw "grade(n: 70) should be 2" unless grade(n: 70) == 2
 
 test "several ifs in sequence"
-  throw "clamp(5, 0, 10) should be 5" unless clamp(5, 0, 10) == 5
-  throw "clamp(-5, 0, 10) should be 0" unless clamp(-5, 0, 10) == 0
-  throw "clamp(15, 0, 10) should be 10" unless clamp(15, 0, 10) == 10
+  throw "clamp(n: 5, low: 0, high: 10) should be 5" unless clamp(n: 5, low: 0, high: 10) == 5
+  throw "clamp(n: -5, low: 0, high: 10) should be 0" unless clamp(n: -5, low: 0, high: 10) == 0
+  throw "clamp(n: 15, low: 0, high: 10) should be 10" unless clamp(n: 15, low: 0, high: 10) == 10
 
 test "a condition can be any bool expression"
   let x = if 2 + 2 == 4 and 1 < 2 then 1 else 0

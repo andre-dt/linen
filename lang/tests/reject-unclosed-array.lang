@@ -1,0 +1,3 @@
+test "t"
+  #~ expected `]` to close the array
+  let xs = [1, 2

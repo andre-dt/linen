@@ -1,0 +1,9 @@
+#~ has no parameter called
+# Naming something the function does not have is usually a typo, and a
+# silent one if the argument were simply ignored.
+
+fn add(a i32, b i32) i32
+  return a + b
+
+test "t"
+  throw "m" unless add(a: 1, b: 2, c: 3) == 3

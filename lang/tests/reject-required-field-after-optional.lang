@@ -1,0 +1,7 @@
+#~ has no default, so it must come before
+# The same rule for shape fields, since a construction is written like a
+# call.
+
+shape Point
+  x i32 = 0
+  y i32

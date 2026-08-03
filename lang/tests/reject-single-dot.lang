@@ -1,4 +1,4 @@
 test "t"
-  #~ a range is written `..`
+  #~ expected a field name after `.`
   for i in 0 . 3
-    throw "1 should be 1" unless 1 == 1
+    throw "unreachable" if true

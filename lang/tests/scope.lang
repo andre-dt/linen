@@ -26,10 +26,10 @@ test "bindings in a test do not leak into a function"
   throw "chain() should be 3" unless chain() == 3
 
 test "a parameter can be shadowed"
-  throw "shadow_parameter(5) should be 10" unless shadow_parameter(5) == 10
+  throw "shadow_parameter(n: 5) should be 10" unless shadow_parameter(n: 5) == 10
 
 test "a parameter can be read more than once"
-  throw "uses_parameter_twice(4) should be 8" unless uses_parameter_twice(4) == 8
+  throw "uses_parameter_twice(n: 4) should be 8" unless uses_parameter_twice(n: 4) == 8
 
 test "each test has its own bindings"
   let x = 1

@@ -1,0 +1,5 @@
+fn add(a i32, b i32) i32
+  return a + b
+test "t"
+  #~ expected `:` after the parameter name
+  throw "m" unless add(a 1, b: 2) == 3

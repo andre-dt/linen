@@ -29,4 +29,4 @@ fn deep(n i32) i32
       return doubled
 
 test "any consistent indent width works"
-  throw "deep(4) should be 8" unless deep(4) == 8
+  throw "deep(n: 4) should be 8" unless deep(n: 4) == 8

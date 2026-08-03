@@ -1,0 +1,10 @@
+#~ arguments go in the order they are declared
+# Out of order would be a second way to write one call, and a reader
+# matching a call against its signature would have to check which of the
+# two they were looking at every time.
+
+fn add(a i32, b i32) i32
+  return a + b
+
+test "t"
+  throw "m" unless add(b: 2, a: 1) == 3

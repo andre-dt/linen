@@ -1,0 +1,6 @@
+#~ there is no `nope` here
+# Calling something that was never declared. Caught now that arguments
+# are matched against declarations — it needs the same table.
+
+test "t"
+  throw "m" unless nope(a: 1) == 1

@@ -1,0 +1,45 @@
+# Optional parameters.
+#
+# A parameter with a default may be left out at the call site. That is
+# the only thing that makes one optional — there is no separate marker,
+# so there is nothing to keep in sync with the default itself.
+#
+# It is also why the language has no null: every parameter is either
+# given by the caller or has a default, so nothing is ever absent.
+
+fn greet(times i32 = 1) i32
+  return times
+
+fn step(from i32, by i32 = 1) i32
+  return from + by
+
+fn between(low i32 = 0, high i32 = 10) i32
+  return high - low
+
+test "an optional parameter may be left out"
+  throw "the default should apply" unless greet() == 1
+
+test "an optional parameter may be given"
+  throw "the argument should win over the default" unless greet(times: 5) == 5
+
+test "required first, then optional"
+  throw "by should default to 1" unless step(from: 10) == 11
+  throw "by should be used when given" unless step(from: 10, by: 5) == 15
+
+test "every optional may be left out"
+  throw "both defaults should apply" unless between() == 10
+
+test "a later optional may be given alone"
+  # `low` is skipped, `high` is given. Unambiguous because arguments run
+  # in declaration order — the name says which slot is being filled and
+  # the order says which were passed over.
+  throw "low should default to 0" unless between(high: 4) == 4
+
+test "an earlier optional may be given alone"
+  throw "high should default to 10" unless between(low: 4) == 6
+
+test "a default can be an expression"
+  throw "the default should be evaluated" unless offset(x: 1) == 11
+
+fn offset(x i32, by i32 = 4 + 6) i32
+  return x + by

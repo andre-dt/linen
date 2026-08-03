@@ -20,7 +20,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use syntax::{lex::lex, parse::parse};
+use syntax::{lex::lex, parse::parse, resolve::resolve};
 
 use crate::report::Report;
 use crate::{build_directory, Options};
@@ -209,9 +209,10 @@ struct Outcome {
     tests: Vec<String>,
 }
 
-/// Compiles one file. Today: text to tree. The checker and the backend
-/// join here as they land, and every command picks them up at once —
-/// which is the reason all three go through this single function.
+/// Compiles one file: text to tree, then resolution. The typechecker and
+/// the backend join here as they land, and every command picks them up
+/// at once — which is the reason all three go through this single
+/// function.
 fn check(file: &Path) -> Result<Outcome, Report> {
     let source = fs::read_to_string(file).map_err(|error| Report {
         text: format!("{}: {error}\n", file.display()),
@@ -220,6 +221,8 @@ fn check(file: &Path) -> Result<Outcome, Report> {
     let tokens = lex(&source)
         .map_err(|error| Report::new(file, &source, error.span, &error.message))?;
     let unit = parse(&tokens)
+        .map_err(|error| Report::new(file, &source, error.span, &error.message))?;
+    resolve(&unit)
         .map_err(|error| Report::new(file, &source, error.span, &error.message))?;
 
     let tests = unit

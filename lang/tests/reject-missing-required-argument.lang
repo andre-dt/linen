@@ -1,0 +1,9 @@
+#~ has no default, so it must be given
+# Without a default there is nothing to fall back to, so leaving it out
+# would leave the parameter with no value at all.
+
+fn add(a i32, b i32) i32
+  return a + b
+
+test "t"
+  throw "m" unless add(a: 1) == 3

@@ -1,0 +1,8 @@
+#~ has no default, so it must come before
+# A required parameter after an optional one could never be reached:
+# arguments run in declaration order, and there is no notation for a
+# hole to skip the optional with. Caught at the DECLARATION, where the
+# mistake is, rather than at every call site that cannot be written.
+
+fn f(a i32 = 1, b i32) i32
+  return a + b

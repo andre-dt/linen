@@ -1,0 +1,4 @@
+test "t"
+  #~ expected a field name after `.`
+  let p = 1
+  throw "m" unless p. == 1
