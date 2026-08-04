@@ -38,6 +38,18 @@ struct Lexer<'a> {
     /// Where the next character comes from.
     at: usize,
     tokens: Vec<Token>,
+    /// How many brackets are open — `(` and `[` that have not been
+    /// closed.
+    ///
+    /// While any is open, the layout rule is SUSPENDED: no Newline, no
+    /// Indent, no Dedent. An open bracket already says the construct is
+    /// unfinished, so a line break inside one carries no meaning, and
+    /// indentation inside one is alignment rather than structure.
+    ///
+    /// It is the one thing layout cannot decide for itself. Eight corners
+    /// of a box on one line is the alternative, and that is the line
+    /// nobody can read.
+    open_brackets: usize,
     /// Indentation widths of the blocks currently open, innermost last.
     /// Starts with 0 — the file's own level, which is never closed.
     levels: Vec<usize>,
@@ -46,6 +58,7 @@ struct Lexer<'a> {
 impl<'a> Lexer<'a> {
     fn new(source: &'a str) -> Self {
         Self {
+            open_brackets: 0,
             source: source.as_bytes(),
             at: 0,
             tokens: Vec::new(),
@@ -79,6 +92,7 @@ impl<'a> Lexer<'a> {
         let indent_start = self.at;
         let width = self.measure_indent()?;
 
+
         // Nothing on this line: no layout, no tokens. Checked BEFORE the
         // indent rule so that a blank line inside a block — which has no
         // indentation to speak of — cannot close it.
@@ -89,9 +103,21 @@ impl<'a> Lexer<'a> {
 
         self.apply_layout(width, indent_start)?;
 
-        while !self.at_line_end() {
-            self.token()?;
-            self.skip_spaces();
+        // Tokens until the line ends — or, while a bracket is open,
+        // straight past the end of the line and on through the next.
+        // The logical line finishes when the brackets are balanced
+        // again, so the Newline lands where the CONSTRUCT ends rather
+        // than where the text happens to wrap.
+        loop {
+            while !self.at_line_end() {
+                self.token()?;
+                self.skip_spaces();
+            }
+            if self.open_brackets == 0 || self.at >= self.source.len() {
+                break;
+            }
+            self.skip_to_next_line();
+            self.measure_indent()?;
         }
 
         self.push(TokenKind::Newline, self.at, self.at);
@@ -243,8 +269,17 @@ impl<'a> Lexer<'a> {
             (b'%', _) => TokenKind::Percent,
             (b'<', _) => TokenKind::Less,
             (b'>', _) => TokenKind::Greater,
-            (b'(', _) => TokenKind::LeftParen,
-            (b')', _) => TokenKind::RightParen,
+            (b'(', _) => {
+                self.open_brackets += 1;
+                TokenKind::LeftParen
+            }
+            (b')', _) => {
+                // Saturating, so a stray `)` cannot wrap the counter and
+                // silently disable layout for the rest of the file. The
+                // parser reports the mismatch; the lexer just stays sane.
+                self.open_brackets = self.open_brackets.saturating_sub(1);
+                TokenKind::RightParen
+            }
             (b',', _) => TokenKind::Comma,
             // `=` binds a name; `==` compares. Checked after the
             // two-character forms above, so `==` never lexes as two of
@@ -257,8 +292,14 @@ impl<'a> Lexer<'a> {
             (b'.', _) => TokenKind::Dot,
             (b':', _) => TokenKind::Colon,
             (b';', _) => TokenKind::Semicolon,
-            (b'[', _) => TokenKind::LeftBracket,
-            (b']', _) => TokenKind::RightBracket,
+            (b'[', _) => {
+                self.open_brackets += 1;
+                TokenKind::LeftBracket
+            }
+            (b']', _) => {
+                self.open_brackets = self.open_brackets.saturating_sub(1);
+                TokenKind::RightBracket
+            }
             (other, _) => {
                 return Err(LexError {
                     message: format!("`{}` is not part of the language", other as char),

@@ -1,0 +1,8 @@
+#~ this list holds
+# A list holds one type. Pushing another would make `at` return
+# something the caller cannot have been expecting.
+
+test "t"
+  let xs = push(list: list(), value: 1)
+  let mixed = push(list: xs, value: true)
+  throw "m" unless length(list: mixed) == 2

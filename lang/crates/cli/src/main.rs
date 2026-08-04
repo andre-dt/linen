@@ -17,6 +17,9 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+mod gallery;
+mod render;
+mod scene;
 mod report;
 mod run;
 

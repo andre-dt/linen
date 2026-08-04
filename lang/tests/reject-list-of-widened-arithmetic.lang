@@ -1,0 +1,20 @@
+#~ say what the list holds
+# `n * 4` is i64 even where `n` is i32 — arithmetic widens — so the first
+# push into an empty list would make it a list of i64.
+#
+# That is almost never what was meant. A list of indices or coordinates
+# is i32, and the mismatch does not show up as a type error later: it
+# shows up as elements stored eight bytes wide and read four bytes wide
+# through a declared `List<i32>`, where the FIRST element is right and
+# every one after it comes out of the wrong place.
+#
+# Declaring the element type costs one function and removes the whole
+# class.
+
+fn narrow(n i32) i32
+  return n
+
+test "t"
+  let n = narrow(n: 1)
+  let xs = push(list: list(), value: n * 4)
+  throw "x" unless at(list: xs, index: 0) == 4

@@ -6,6 +6,7 @@
 // second, and it would not if it lived here.
 // =====================================================================
 
+pub mod arena;
 pub mod emit;
 pub mod host;
 pub mod object;

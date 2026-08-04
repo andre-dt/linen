@@ -1,0 +1,13 @@
+#~ is declared twice
+# Two functions with one name. Whichever wins, the other is dead code
+# that reads as live — and a reader has no way to tell which one a call
+# reaches.
+
+fn area() i32
+  return 1
+
+fn area() i32
+  return 2
+
+test "t"
+  throw "m" unless area() == 1

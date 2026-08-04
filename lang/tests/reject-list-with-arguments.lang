@@ -1,0 +1,7 @@
+#~ `list` takes nothing
+# `list()` makes an empty one. Anything to put in it goes through `push`,
+# so there is one way to build a list rather than two.
+
+test "t"
+  let xs = list(value: 1)
+  throw "m" unless length(list: xs) == 1

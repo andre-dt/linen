@@ -1,0 +1,179 @@
+# A box, as eight corners and twelve triangles.
+#
+# The first thing the kernel produces that can be LOOKED AT. Everything
+# before this was a predicate answering a question; this is geometry with
+# a shape, and the test beside it renders to kernel-box.png so the answer
+# can be checked by eye as well as by assertion.
+#
+# Fixed size, because a box has eight corners whatever its dimensions.
+# `List<T>` is for the shapes whose size is not known until they are
+# built, and it arrives with the arena.
+#
+# WHY TRIANGLES AND NOT QUADS
+# ---------------------------
+# A quad with four corners is only planar if you are lucky; three points
+# are coplanar by definition. Every renderer wants triangles in the end,
+# and splitting later would mean choosing a diagonal later, where the
+# choice is invisible.
+
+shape Point3
+  x i32
+  y i32
+  z i32
+
+fn wide(value i64) i128
+  return value + 0
+
+fn orient3d(a Point3, b Point3, c Point3, d Point3) i128
+  let bx = wide(value: b.x - a.x)
+  let by = wide(value: b.y - a.y)
+  let bz = wide(value: b.z - a.z)
+  let cx = wide(value: c.x - a.x)
+  let cy = wide(value: c.y - a.y)
+  let cz = wide(value: c.z - a.z)
+  let dx = wide(value: d.x - a.x)
+  let dy = wide(value: d.y - a.y)
+  let dz = wide(value: d.z - a.z)
+  return bx * (cy * dz - cz * dy) - by * (cx * dz - cz * dx) + bz * (cx * dy - cy * dx)
+
+# The eight corners of a box at the origin, in a fixed order.
+#
+#   0..3   the bottom face, counter-clockwise seen from above
+#   4..7   the top face, directly above each
+#
+# The order is part of the contract: the triangles below index into it,
+# and a renderer reading the buffer relies on it too. Changing it means
+# changing both.
+fn corners(width i32, depth i32, height i32) [Point3; 8]
+  return [
+    Point3(x: 0, y: 0, z: 0),
+    Point3(x: width, y: 0, z: 0),
+    Point3(x: width, y: depth, z: 0),
+    Point3(x: 0, y: depth, z: 0),
+    Point3(x: 0, y: 0, z: height),
+    Point3(x: width, y: 0, z: height),
+    Point3(x: width, y: depth, z: height),
+    Point3(x: 0, y: depth, z: height)]
+
+# The twelve triangles, as indices into `corners`.
+#
+# Every triangle winds counter-clockwise seen from OUTSIDE the box, so
+# its normal points outward. That is what lets a renderer cull back faces
+# and what tells a boolean operation which side is solid — and it is
+# checked below rather than trusted, because a single flipped winding is
+# invisible until something renders inside out.
+fn triangles() [i32; 36]
+  return [
+    0, 2, 1,  0, 3, 2,
+    4, 5, 6,  4, 6, 7,
+    0, 1, 5,  0, 5, 4,
+    1, 2, 6,  1, 6, 5,
+    2, 3, 7,  2, 7, 6,
+    3, 0, 4,  3, 4, 7]
+
+# Whether a triangle of the box faces outward.
+#
+# Asked by putting the box's own centre on the inside: a triangle winds
+# correctly when the centre is BELOW its plane, since "above" is the side
+# the normal points to.
+fn faces_outward(a Point3, b Point3, c Point3, centre Point3) bool
+  return orient3d(a: a, b: b, c: c, d: centre) < 0
+
+test "a box has eight distinct corners"
+  let box = corners(width: 100, depth: 200, height: 300)
+  throw "the origin corner" unless box[0].x == 0 and box[0].y == 0 and box[0].z == 0
+  throw "the far top corner" unless box[6].x == 100 and box[6].y == 200 and box[6].z == 300
+  throw "the top face is at height" unless box[4].z == 300
+  throw "the bottom face is at zero" unless box[3].z == 0
+
+test "every triangle indexes a real corner"
+  let indices = triangles()
+  for i in 0 .. 36
+    throw "an index should be a corner" unless indices[i] >= 0 and indices[i] < 8
+
+test "every triangle faces outward"
+  # The one that matters. A single flipped winding renders inside out and
+  # tells a boolean operation the wrong side is solid — and neither is
+  # visible until something much later goes wrong.
+  let box = corners(width: 100, depth: 200, height: 300)
+  let centre = Point3(x: 50, y: 100, z: 150)
+  let indices = triangles()
+  for t in 0 .. 12
+    let a = box[indices[t * 3]]
+    let b = box[indices[t * 3 + 1]]
+    let c = box[indices[t * 3 + 2]]
+    throw "a triangle winds the wrong way" unless faces_outward(a: a, b: b, c: c, centre: centre)
+
+test "no triangle is degenerate"
+  # Three corners of a box are never collinear, so every triangle has
+  # area. A zero here would mean two indices are the same.
+  let box = corners(width: 100, depth: 200, height: 300)
+  let far = Point3(x: 0 - 1000, y: 0 - 1000, z: 0 - 1000)
+  let indices = triangles()
+  for t in 0 .. 12
+    let a = box[indices[t * 3]]
+    let b = box[indices[t * 3 + 1]]
+    let c = box[indices[t * 3 + 2]]
+    throw "a triangle has no area" if orient3d(a: a, b: b, c: c, d: far) == 0
+
+test "a box at full range still holds"
+  # 10 metres on a side, where every coordinate is at the top of the
+  # range and the orient3d determinants reach 10^21.
+  let box = corners(width: 10000000, depth: 10000000, height: 10000000)
+  let centre = Point3(x: 5000000, y: 5000000, z: 5000000)
+  let indices = triangles()
+  for t in 0 .. 12
+    let a = box[indices[t * 3]]
+    let b = box[indices[t * 3 + 1]]
+    let c = box[indices[t * 3 + 2]]
+    throw "a triangle winds the wrong way at full range" unless faces_outward(a: a, b: b, c: c, centre: centre)
+
+test "a flat box is degenerate"
+  # Height zero, so the top and bottom faces coincide. Every triangle
+  # then lies in one plane and the centre is ON it, not below it.
+  let flat = corners(width: 100, depth: 200, height: 0)
+  let centre = Point3(x: 50, y: 100, z: 0)
+  let indices = triangles()
+  throw "a flat box has no outward faces" if faces_outward(a: flat[0], b: flat[2], c: flat[1], centre: centre)
+
+# --- what this file draws ---------------------------------------------
+#
+# `test draws` marks a test that produces a solid. It is still a test —
+# it asserts, it can throw, it fails the suite — and it also hands its
+# geometry to `solid`, which becomes one tile of kernel-box.png.
+#
+# The label under each tile is the test's own description, so a picture
+# and the sentence describing it cannot disagree.
+
+fn flat(box [Point3; 8]) [i32; 24]
+  return [
+    box[0].x, box[0].y, box[0].z,
+    box[1].x, box[1].y, box[1].z,
+    box[2].x, box[2].y, box[2].z,
+    box[3].x, box[3].y, box[3].z,
+    box[4].x, box[4].y, box[4].z,
+    box[5].x, box[5].y, box[5].z,
+    box[6].x, box[6].y, box[6].z,
+    box[7].x, box[7].y, box[7].z]
+
+test draws "a box, wider than it is tall"
+  let box = corners(width: 200, depth: 300, height: 150)
+  throw "the far corner should be at the far extent" unless box[6].x == 200 and box[6].y == 300
+  solid(points: flat(box: box), triangles: triangles())
+
+test draws "a cube"
+  let box = corners(width: 200, depth: 200, height: 200)
+  throw "every side should be equal" unless box[6].x == box[6].y and box[6].y == box[6].z
+  solid(points: flat(box: box), triangles: triangles())
+
+test draws "a tall thin box"
+  let box = corners(width: 80, depth: 80, height: 320)
+  throw "it should be taller than it is wide" unless box[6].z > box[6].x * 3
+  solid(points: flat(box: box), triangles: triangles())
+
+test draws "a flat slab"
+  # Height is small but not zero: a zero-height box is degenerate, and
+  # every triangle of it lies in one plane.
+  let box = corners(width: 300, depth: 300, height: 20)
+  throw "it should be much wider than it is tall" unless box[6].x > box[6].z * 10
+  solid(points: flat(box: box), triangles: triangles())

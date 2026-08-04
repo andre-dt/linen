@@ -84,3 +84,41 @@ export function orientations(
   bx: number, by: number,
   points: Int32Array,
 ): Int32Array
+
+/**
+ * Which side of the plane through a, b, c the point d falls on.
+ *
+ *   1  above, the side the normal of a->b->c points to
+ *   0  COPLANAR, exactly
+ *  -1  below
+ *
+ * The most used predicate in a BREP kernel: every face classification and
+ * every boolean operation asks it.
+ *
+ * Computed in 128-bit integers. The determinant reaches 10^21 at full
+ * range, which overflows a 64-bit integer by two orders — and a wrapped
+ * determinant does not merely lose precision, it can carry the wrong
+ * SIGN, placing a point above a face it is below. Only the sign is
+ * returned, because that is what every caller branches on.
+ */
+export function orientation3(
+  ax: number, ay: number, az: number,
+  bx: number, by: number, bz: number,
+  cx: number, cy: number, cz: number,
+  dx: number, dy: number, dz: number,
+): number
+
+/**
+ * Which side of a plane each point in a buffer falls on.
+ *
+ * The plane is scalar and the points are a buffer — x, y, z per point,
+ * so the length must be a multiple of 3.
+ *
+ * @throws if the length is not a multiple of 3.
+ */
+export function orientations3(
+  ax: number, ay: number, az: number,
+  bx: number, by: number, bz: number,
+  cx: number, cy: number, cz: number,
+  points: Int32Array,
+): Int32Array

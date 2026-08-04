@@ -1,0 +1,13 @@
+#~ does not fit in i32
+# A literal wider than the parameter it is passed to.
+#
+# Caught at COMPILE time because both sides are known: the value is
+# written right there and the type is declared. Letting it through would
+# wrap 10^12 to -727379968 — a plausible-looking number that is simply
+# wrong, which is the exact failure the integer model exists to prevent.
+
+fn takes(n i32) i64
+  return n + 0
+
+test "t"
+  throw "m" unless takes(n: 1000000000000) == 1000000000000

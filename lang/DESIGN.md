@@ -389,10 +389,15 @@ Feito:
 - **`Point` e polígono do kernel** — `orient2d`, `distance_squared`,
   área e winding exatos em `tests/kernel-point.lang` e
   `tests/kernel-polygon.lang`
+- **`orient3d` em i128** — o determinante 3x3 chega a 10²¹; há um teste
+  que passa em i128 e **falha em i64**, com o sinal invertido
+- **`export fn` + objeto** — `linen build` emite `.o` e `liblinen.a`; só
+  o exportado vira símbolo global, o resto o LLVM pode inlinar
+- **addon N-API** (`apps/kernel/native`) — Node chama o kernel
 - **array** `[i32; 3]` e **`List<T>`**, com índice
 - **genéricos** — `shape Pair<T>`, `fn identity<T>` (sintaxe; a
   verificação chega com o typechecker)
-- **suíte** — 80 arquivos em `tests/`: 19 de linguagem (151 testes) e 61
+- **suíte** — 84 arquivos em `tests/`: 21 de linguagem (163 testes) e 63
   rejeições, uma por mensagem de erro distinta
 - **CLI `linen`** — `build`/`test`/`clean`, erro com arquivo:linha:coluna
   e caret, relatório progressivo e sumário — 94 testes no total

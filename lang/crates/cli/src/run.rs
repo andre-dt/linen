@@ -90,6 +90,7 @@ pub fn test(options: &Options) -> Result<ExitCode, String> {
     }
 
     let mut summary = Summary::default();
+    let mut drawings = 0usize;
 
     for file in &files {
         let source = match fs::read_to_string(file) {
@@ -123,6 +124,7 @@ pub fn test(options: &Options) -> Result<ExitCode, String> {
                         None => println!("    {}", test.name),
                     }
                 }
+                drawings += outcome.drawings;
                 if failures == 0 {
                     summary.files_passed += 1;
                     summary.tests += outcome.tests.len();
@@ -154,6 +156,10 @@ pub fn test(options: &Options) -> Result<ExitCode, String> {
                 summary.files_failed += 1;
             }
         }
+    }
+
+    if drawings > 0 {
+        println!("\n{} drawing{} rendered", drawings, plural(drawings));
     }
 
     summary.print();
@@ -301,6 +307,8 @@ pub fn clean() -> Result<ExitCode, String> {
 struct Outcome {
     /// What each test did, in source order.
     tests: Vec<TestOutcome>,
+    /// How many tiles this file's mosaic holds.
+    drawings: usize,
 }
 
 #[derive(Debug)]
@@ -354,12 +362,19 @@ fn compile(file: &Path) -> Result<Outcome, Report> {
                 _ => None,
             })
             .collect();
-        return Ok(Outcome { tests });
+        return Ok(Outcome { tests, drawings: 0 });
     }
 
     let name = file.file_stem().unwrap_or_default().to_string_lossy();
     let ran = run_tests(&unit, &name).map_err(|error| Report {
         text: format!("{}: {}\n", file.display(), error.message),
+    })?;
+
+    // Rendered after the tests, so a file whose assertions fail still
+    // produces the pictures of the tests that did draw — seeing the
+    // wrong solid is usually how a failure gets understood.
+    let drawings = crate::scene::render_file(&ran, file).map_err(|error| Report {
+        text: format!("{}: {error}\n", file.display()),
     })?;
 
     Ok(Outcome {
@@ -370,6 +385,7 @@ fn compile(file: &Path) -> Result<Outcome, Report> {
                 failed: test.failed,
             })
             .collect(),
+        drawings,
     })
 }
 

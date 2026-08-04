@@ -115,6 +115,13 @@ pub struct TypeName {
 #[derive(Debug, PartialEq)]
 pub struct Test {
     pub name: String,
+    /// `test draws "..."` — this test produces a solid, and the runner
+    /// renders it to a tile in the file's mosaic.
+    ///
+    /// A modifier on `test` rather than a keyword of its own, because it
+    /// IS a test: it asserts, it can throw, it fails the suite. Drawing
+    /// is something it does as well, not instead.
+    pub draws: bool,
     pub body: Vec<Statement>,
     pub span: Span,
 }
@@ -152,6 +159,16 @@ pub enum Statement {
         start: Expression,
         end: Expression,
         body: Vec<Statement>,
+        span: Span,
+    },
+    /// `solid(points: …, triangles: …)` — the mesh a drawing test built.
+    ///
+    /// A statement rather than an expression, because it produces
+    /// nothing: it hands geometry to the runner and the program has no
+    /// use for a value back. Making it an expression would mean
+    /// inventing a type for something nobody can read.
+    Solid {
+        arguments: Vec<FieldValue>,
         span: Span,
     },
     /// `throw "message" if condition` / `throw "message" unless condition`

@@ -1,0 +1,14 @@
+#~ can end without returning
+# A function that declares a result must produce one on every path.
+#
+# Without this the compiler fills in a zero, and a function that forgot
+# a branch returns a plausible number instead of failing. In a kernel
+# that is a coordinate of zero — a point at the origin, which looks like
+# geometry rather than like a bug.
+
+fn sign_of(n i32) i32
+  if n > 0
+    return 1
+
+test "t"
+  throw "m" unless sign_of(n: 5) == 1

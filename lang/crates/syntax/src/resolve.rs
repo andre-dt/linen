@@ -131,6 +131,14 @@ fn check_statements(
                 check_expression(end, signatures)?;
                 check_statements(body, signatures)?;
             }
+            // `solid` is a builtin: there is no declaration to match
+            // its arguments against, so only the expressions inside it
+            // are resolved.
+            Statement::Solid { arguments, .. } => {
+                for argument in arguments {
+                    check_expression(&argument.value, signatures)?;
+                }
+            }
             Statement::Throw { condition, .. } => check_expression(condition, signatures)?,
         }
     }
@@ -183,6 +191,13 @@ fn check_arguments(
     // Every argument is itself an expression that may contain calls.
     for argument in given {
         check_expression(&argument.value, signatures)?;
+    }
+
+    // The builtins have no declaration to match against — their types
+    // cannot be written in this language yet, which is why they are
+    // builtins. The typechecker is what checks their arguments.
+    if matches!(name, "list" | "push" | "length" | "at" | "solid") {
+        return Ok(());
     }
 
     let Some(signature) = signatures.get(name) else {

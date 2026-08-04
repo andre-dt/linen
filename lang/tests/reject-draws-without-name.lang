@@ -1,0 +1,6 @@
+#~ quoted text
+# `draws` still needs a name, like any test. The modifier says the test
+# produces a solid; it does not replace the description.
+
+test draws
+  throw "m" unless 1 == 1

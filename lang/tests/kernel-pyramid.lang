@@ -1,0 +1,100 @@
+# A square pyramid — the simplest solid with a non-quad face.
+#
+# Where a box has six flat quads, this has four triangles meeting at a
+# point, which exercises the thing a box cannot: a vertex shared by more
+# than three faces, and faces that are genuinely triangular rather than
+# halves of a rectangle.
+#
+# Rendered to kernel-pyramid.png beside this file.
+
+shape Point3
+  x i32
+  y i32
+  z i32
+
+fn wide(value i64) i128
+  return value + 0
+
+fn orient3d(a Point3, b Point3, c Point3, d Point3) i128
+  let bx = wide(value: b.x - a.x)
+  let by = wide(value: b.y - a.y)
+  let bz = wide(value: b.z - a.z)
+  let cx = wide(value: c.x - a.x)
+  let cy = wide(value: c.y - a.y)
+  let cz = wide(value: c.z - a.z)
+  let dx = wide(value: d.x - a.x)
+  let dy = wide(value: d.y - a.y)
+  let dz = wide(value: d.z - a.z)
+  return bx * (cy * dz - cz * dy) - by * (cx * dz - cz * dx) + bz * (cx * dy - cy * dx)
+
+fn faces_outward(a Point3, b Point3, c Point3, centre Point3) bool
+  return orient3d(a: a, b: b, c: c, d: centre) < 0
+
+# Four corners of the base, then the apex above its centre.
+fn corners(width i32, depth i32, height i32) [Point3; 5]
+  return [
+    Point3(x: 0, y: 0, z: 0),
+    Point3(x: width, y: 0, z: 0),
+    Point3(x: width, y: depth, z: 0),
+    Point3(x: 0, y: depth, z: 0),
+    Point3(x: width / 2, y: depth / 2, z: height)]
+
+# Six triangles: two for the square base, one per sloping side.
+fn triangles() [i32; 18]
+  return [
+    0, 2, 1,  0, 3, 2,
+    0, 1, 4,
+    1, 2, 4,
+    2, 3, 4,
+    3, 0, 4]
+
+test "the apex sits above the centre of the base"
+  let pyramid = corners(width: 200, depth: 200, height: 150)
+  throw "the apex should be centred in x" unless pyramid[4].x == 100
+  throw "the apex should be centred in y" unless pyramid[4].y == 100
+  throw "the apex should be at height" unless pyramid[4].z == 150
+
+test "every triangle faces outward"
+  # The centroid of a pyramid is a quarter of the way up, not half — so
+  # a point at half height would be outside the sloping faces near the
+  # apex, and this test would pass for the wrong reason.
+  let pyramid = corners(width: 200, depth: 200, height: 200)
+  let inside = Point3(x: 100, y: 100, z: 50)
+  let indices = triangles()
+  for t in 0 .. 6
+    let a = pyramid[indices[t * 3]]
+    let b = pyramid[indices[t * 3 + 1]]
+    let c = pyramid[indices[t * 3 + 2]]
+    throw "a triangle winds the wrong way" unless faces_outward(a: a, b: b, c: c, centre: inside)
+
+test "the base is flat"
+  let pyramid = corners(width: 200, depth: 200, height: 150)
+  throw "all four base corners share a height" unless pyramid[0].z == 0 and pyramid[1].z == 0 and pyramid[2].z == 0 and pyramid[3].z == 0
+
+test "no sloping face is degenerate"
+  let pyramid = corners(width: 200, depth: 200, height: 150)
+  let far = Point3(x: 0 - 1000, y: 0 - 1000, z: 0 - 1000)
+  throw "a sloping face has no area" if orient3d(a: pyramid[0], b: pyramid[1], c: pyramid[4], d: far) == 0
+
+fn flat(p [Point3; 5]) [i32; 15]
+  return [
+    p[0].x, p[0].y, p[0].z,
+    p[1].x, p[1].y, p[1].z,
+    p[2].x, p[2].y, p[2].z,
+    p[3].x, p[3].y, p[3].z,
+    p[4].x, p[4].y, p[4].z]
+
+test draws "a square pyramid"
+  let pyramid = corners(width: 240, depth: 240, height: 200)
+  throw "the apex should be centred" unless pyramid[4].x == 120
+  solid(points: flat(p: pyramid), triangles: triangles())
+
+test draws "a squat pyramid"
+  let pyramid = corners(width: 300, depth: 300, height: 90)
+  throw "it should be wider than it is tall" unless pyramid[4].z * 3 < pyramid[1].x
+  solid(points: flat(p: pyramid), triangles: triangles())
+
+test draws "a spire"
+  let pyramid = corners(width: 100, depth: 100, height: 340)
+  throw "it should be taller than it is wide" unless pyramid[4].z > pyramid[1].x * 3
+  solid(points: flat(p: pyramid), triangles: triangles())

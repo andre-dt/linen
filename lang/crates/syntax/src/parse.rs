@@ -295,6 +295,13 @@ impl<'a> Parser<'a> {
         let start = self.span_here();
         self.advance(); // test
 
+        // `draws` sits between `test` and the name: the modifier reads
+        // as part of the sentence rather than as a separate declaration.
+        let draws = self.peek_name() == Some("draws");
+        if draws {
+            self.advance();
+        }
+
         let name = match &self.peek().kind {
             TokenKind::Text(text) => {
                 let text = text.clone();
@@ -313,7 +320,7 @@ impl<'a> Parser<'a> {
 
         let body = self.block()?;
         let span = start.to(self.span_before());
-        Ok(Test { name, body, span })
+        Ok(Test { name, draws, body, span })
     }
 
     // --- blocks and statements --------------------------------------------
@@ -357,12 +364,13 @@ impl<'a> Parser<'a> {
         }
 
         let statement = match self.peek_name() {
+            Some("solid") => self.solid_statement()?,
             Some("let") => self.let_statement()?,
             Some("return") => self.return_statement()?,
             Some("throw") => self.throw_statement()?,
             _ => {
                 return Err(self.error_here(
-                    "expected `let`, `return`, `throw`, `if`, `while` or `for`",
+                    "expected `let`, `return`, `throw`, `solid`, `if`, `while` or `for`",
                 ))
             }
         };
@@ -429,6 +437,15 @@ impl<'a> Parser<'a> {
 
         let span = start_span.to(self.span_before());
         Ok(Statement::For { name, start, end, body, span })
+    }
+
+    /// `solid(points: …, triangles: …)`
+    fn solid_statement(&mut self) -> Result<Statement, ParseError> {
+        let start = self.span_here();
+        self.advance(); // solid
+        self.expect(&TokenKind::LeftParen, "`(` after `solid`")?;
+        let arguments = self.named_arguments("argument")?;
+        Ok(Statement::Solid { arguments, span: start.to(self.span_before()) })
     }
 
     fn let_statement(&mut self) -> Result<Statement, ParseError> {

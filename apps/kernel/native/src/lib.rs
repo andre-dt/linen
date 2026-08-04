@@ -56,12 +56,19 @@ extern "C" {
         cx: i32,
         cy: i32,
     ) -> i32;
+    fn linen_orientation3(
+        ax: i32, ay: i32, az: i32,
+        bx: i32, by: i32, bz: i32,
+        cx: i32, cy: i32, cz: i32,
+        dx: i32, dy: i32, dz: i32,
+    ) -> i32;
 }
 
 /// How many i32 make up one point, and one triangle. Named rather than
 /// written as 2 and 6 at each use, because an off-by-one in a stride is
 /// the kind of bug that produces plausible wrong answers.
 const COORDINATES_PER_POINT: usize = 2;
+const COORDINATES_PER_POINT3: usize = 3;
 const COORDINATES_PER_TRIANGLE: usize = 3 * COORDINATES_PER_POINT;
 
 // =====================================================================
@@ -111,6 +118,28 @@ pub fn orientation(
     cy: i32,
 ) -> i32 {
     unsafe { linen_orientation(ax, ay, bx, by, cx, cy) }
+}
+
+/// Which side of the plane through a, b, c the point d falls on: 1
+/// above, -1 below, 0 coplanar.
+///
+/// The 3D predicate, and the most used one in a BREP kernel — every face
+/// classification and every boolean operation asks it.
+///
+/// Computed in i128 on the other side of this call. The determinant
+/// reaches 10^21 at full range, which overflows i64 by two orders, and a
+/// wrapped determinant can carry the WRONG SIGN — placing a point above
+/// a face it is below. Only the sign crosses back, because that is what
+/// every caller branches on.
+#[napi]
+#[allow(clippy::too_many_arguments)]
+pub fn orientation3(
+    ax: i32, ay: i32, az: i32,
+    bx: i32, by: i32, bz: i32,
+    cx: i32, cy: i32, cz: i32,
+    dx: i32, dy: i32, dz: i32,
+) -> i32 {
+    unsafe { linen_orientation3(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz) }
 }
 
 // =====================================================================
@@ -174,6 +203,38 @@ pub fn orientations(
     let sides: Vec<i32> = values
         .chunks_exact(COORDINATES_PER_POINT)
         .map(|p| unsafe { linen_orientation(ax, ay, bx, by, p[0], p[1]) })
+        .collect();
+    Ok(Int32Array::new(sides))
+}
+
+/// Which side of a plane each point in a buffer falls on.
+///
+/// The plane is scalar and the points are a buffer — the shape this is
+/// used in: classifying many points against one face.
+#[napi]
+#[allow(clippy::too_many_arguments)]
+pub fn orientations3(
+    ax: i32, ay: i32, az: i32,
+    bx: i32, by: i32, bz: i32,
+    cx: i32, cy: i32, cz: i32,
+    points: Int32Array,
+) -> Result<Int32Array> {
+    let values: &[i32] = &points;
+    if values.len() % COORDINATES_PER_POINT3 != 0 {
+        return Err(Error::new(
+            Status::InvalidArg,
+            format!(
+                "a 3D point is {COORDINATES_PER_POINT3} coordinates, so the buffer length must be a multiple of it; got {}",
+                values.len()
+            ),
+        ));
+    }
+
+    let sides: Vec<i32> = values
+        .chunks_exact(COORDINATES_PER_POINT3)
+        .map(|p| unsafe {
+            linen_orientation3(ax, ay, az, bx, by, bz, cx, cy, cz, p[0], p[1], p[2])
+        })
         .collect();
     Ok(Int32Array::new(sides))
 }

@@ -43,6 +43,18 @@ use inkwell::IntPredicate;
 use syntax::ast::*;
 use syntax::check::{arrays_of, literal_type, resolve_written, type_of, Arrays, Type};
 
+/// Which arena function is being declared.
+enum ArenaSignature {
+    New,
+    Push,
+    Length,
+    At,
+}
+
+/// The symbol a `solid` statement calls. The runner registers a Rust
+/// function under this name before the JIT starts.
+pub const SOLID_SYMBOL: &str = "linen_solid";
+
 #[derive(Debug)]
 pub struct EmitError {
     pub message: String,
@@ -89,6 +101,9 @@ pub fn emit<'context>(
         arrays: arrays_of(unit).map_err(|error| EmitError {
             message: error.message,
         })?,
+        target_data: inkwell::targets::TargetData::create(
+            &module.get_data_layout().as_str().to_string_lossy(),
+        ),
         unit,
     };
 
@@ -104,6 +119,22 @@ pub fn emit<'context>(
     for item in &unit.items {
         if let Item::Function(function) = item {
             emitter.function_body(function)?;
+        }
+    }
+
+    // A wrapper per scene function: `void linen.scene.f(i32* out)`,
+    // which copies the array into a buffer the caller owns.
+    //
+    // Emitted rather than calling the function directly, because an
+    // array returned BY VALUE crosses the ABI differently per target —
+    // a hidden out-parameter here, registers there — and guessing wrong
+    // is silent nonsense rather than a crash. Writing the copy in IR
+    // makes the shape of the call something the compiler decided.
+    for item in &unit.items {
+        if let Item::Function(function) = item {
+            if function.name.starts_with("scene_") && function.parameters.is_empty() {
+                emitter.scene_wrapper(function)?;
+            }
         }
     }
 
@@ -129,6 +160,10 @@ struct Emitter<'a, 'context> {
     /// rebuilt: `Type::Array(i)` indexes it, and two tables built
     /// separately could disagree about which `i` is which.
     arrays: Arrays,
+    /// How the target lays types out. The authority on how big anything
+    /// is — asking the type itself gives a symbolic expression, not a
+    /// number.
+    target_data: inkwell::targets::TargetData,
     unit: &'a Unit,
 }
 
@@ -150,9 +185,13 @@ impl<'a, 'context> Emitter<'a, 'context> {
             Type::I64 => self.context.i64_type(),
             Type::I128 => self.context.i128_type(),
             Type::Bool => self.context.bool_type(),
-            Type::Shape(_) | Type::Array(_) => {
-                unreachable!("a shape or array is not an integer; use `basic`")
+            Type::Shape(_) | Type::Array(_) | Type::List(_) => {
+                unreachable!("a shape, array or list is not an integer; use `basic`")
             }
+            // An empty list that never received a push: nothing reads
+            // its elements, so any size works. i32 keeps the arithmetic
+            // that computes offsets well formed.
+            Type::Unknown => self.context.i32_type(),
         }
     }
 
@@ -178,8 +217,40 @@ impl<'a, 'context> Emitter<'a, 'context> {
                 })?;
                 self.basic(info.element)?.array_type(info.size as u32).into()
             }
+            // A List is `{ i32 length, T* elements }` — a length and a
+            // pointer into the arena.
+            //
+            // By value like everything else: the STRUCT is copied, the
+            // elements are not. Two lists sharing a prefix therefore
+            // share the memory holding it, which is exactly what makes
+            // `push` cheap without any mutation being observable — the
+            // old list still points at its own length, so it still holds
+            // what it held.
+            Type::List(entry) => {
+                let info = self.arrays.get(entry).ok_or_else(|| EmitError {
+                    message: "a list type outside the unit".to_string(),
+                })?;
+                let _ = info;
+                self.list_type().into()
+            }
             primitive => self.integer(primitive).into(),
         })
+    }
+
+    /// `{ i32, ptr }` — what every List is, whatever it holds.
+    ///
+    /// One layout for all element types rather than one per element: the
+    /// pointer is untyped at this level, and the element type is only
+    /// needed to know how far apart the elements sit, which the caller
+    /// already knows from the static type.
+    fn list_type(&self) -> inkwell::types::StructType<'context> {
+        self.context.struct_type(
+            &[
+                self.context.i32_type().into(),
+                self.context.ptr_type(inkwell::AddressSpace::default()).into(),
+            ],
+            false,
+        )
     }
 
     /// The struct type for a shape, built from its declared fields in
@@ -277,6 +348,64 @@ impl<'a, 'context> Emitter<'a, 'context> {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// `void linen_solid(i32* points, i32 point_count, i32* triangles,
+    /// i32 triangle_count)` — declared here, provided by the runner.
+    ///
+    /// Flat pointers and lengths rather than anything structured, for
+    /// the same reason the N-API boundary is: those are the shapes every
+    /// ABI agrees about, and a mesh is exactly the payload that should
+    /// cross in one piece rather than element by element.
+    fn solid_declaration(&mut self) -> FunctionValue<'context> {
+        if let Some(existing) = self.module.get_function(SOLID_SYMBOL) {
+            return existing;
+        }
+        let pointer = self.context.ptr_type(inkwell::AddressSpace::default());
+        let count = self.context.i32_type();
+        let signature = self.context.void_type().fn_type(
+            &[pointer.into(), count.into(), pointer.into(), count.into()],
+            false,
+        );
+        self.module.add_function(SOLID_SYMBOL, signature, None)
+    }
+
+    /// `void linen.scene.<name>(i32* out)` — calls the scene function
+    /// and stores its array through the pointer.
+    fn scene_wrapper(&mut self, function: &Function) -> Result<(), EmitError> {
+        let Some(result) = &function.result else {
+            return Ok(());
+        };
+        if result.array_size.is_none() {
+            return Ok(());
+        }
+
+        let pointer = self.context.ptr_type(inkwell::AddressSpace::default());
+        let signature = self.context.void_type().fn_type(&[pointer.into()], false);
+        let wrapper = self
+            .module
+            .add_function(&format!("linen.scene.{}", function.name), signature, None);
+        let entry = self.context.append_basic_block(wrapper, "entry");
+        self.builder.position_at_end(entry);
+
+        let inner = self.functions[&function.name];
+        let value = self
+            .builder
+            .build_call(inner, &[], "scene")
+            .map_err(builder_error)?
+            .try_as_basic_value()
+            .left()
+            .ok_or_else(|| EmitError {
+                message: format!("`{}` returns nothing", function.name),
+            })?;
+
+        let out = wrapper
+            .get_nth_param(0)
+            .expect("declared with one parameter")
+            .into_pointer_value();
+        self.builder.build_store(out, value).map_err(builder_error)?;
+        self.builder.build_return(None).map_err(builder_error)?;
         Ok(())
     }
 
@@ -455,6 +584,87 @@ impl<'a, 'context> Emitter<'a, 'context> {
                 }
 
                 self.builder.position_at_end(after);
+            }
+
+            // `solid(points: …, triangles: …)` — the mesh a drawing test
+            // built.
+            //
+            // Compiled into a call to `linen_solid`, which the runner
+            // provides: the arrays are spilled to the stack and passed
+            // as pointer plus length, the same flat shape the N-API
+            // boundary uses. Nothing about a mesh crosses as an
+            // aggregate.
+            Statement::Solid { arguments, .. } => {
+                let mut passed: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                for wanted in ["points", "triangles"] {
+                    let argument = arguments
+                        .iter()
+                        .find(|given| given.name == wanted)
+                        .ok_or_else(|| EmitError {
+                            message: format!("`solid` needs `{wanted}`"),
+                        })?;
+                    let of = self.checked_type(&argument.value, scope)?;
+                    match of {
+                        Type::Array(entry) => {
+                            let info = self.arrays.get(entry).ok_or_else(|| EmitError {
+                                message: "an array type outside the unit".to_string(),
+                            })?;
+
+                            // Through memory, because a pointer is what
+                            // crosses: the value itself lives in
+                            // registers and has no address until one is
+                            // taken.
+                            let array_type = self.basic(of)?.into_array_type();
+                            let slot = self
+                                .builder
+                                .build_alloca(array_type, wanted)
+                                .map_err(builder_error)?;
+                            let value = self.expression(&argument.value, scope)?;
+                            self.builder.build_store(slot, value).map_err(builder_error)?;
+
+                            passed.push(slot.into());
+                            passed.push(
+                                self.context
+                                    .i32_type()
+                                    .const_int(info.size as u64, false)
+                                    .into(),
+                            );
+                        }
+
+                        // A list is ALREADY a pointer and a length —
+                        // that is what its representation is — so it
+                        // needs no spill at all. The two forms meet here
+                        // and the runner cannot tell them apart, which
+                        // is why `solid` can take either.
+                        Type::List(_) => {
+                            let value = self.expression(&argument.value, scope)?;
+                            let list = value.into_struct_value();
+                            let length = self
+                                .builder
+                                .build_extract_value(list, 0, "length")
+                                .map_err(builder_error)?;
+                            let elements = self
+                                .builder
+                                .build_extract_value(list, 1, "elements")
+                                .map_err(builder_error)?;
+                            passed.push(elements.into());
+                            passed.push(length.into());
+                        }
+
+                        _ => {
+                            return Err(EmitError {
+                                message: format!(
+                                    "`{wanted}` of `solid` has to be an array or a list"
+                                ),
+                            });
+                        }
+                    }
+                }
+
+                let solid = self.solid_declaration();
+                self.builder
+                    .build_call(solid, &passed, "")
+                    .map_err(builder_error)?;
             }
 
             // The one that makes a test a test. `if` throws when the
@@ -636,6 +846,13 @@ impl<'a, 'context> Emitter<'a, 'context> {
 
             Expression::If { condition, then_branch, else_branch, .. } => {
                 self.if_expression(expression, condition, then_branch, else_branch, scope)
+            }
+
+            // The List builtins, compiled into calls to the arena.
+            Expression::Call { callee, arguments, .. }
+                if matches!(callee.as_str(), "list" | "push" | "length" | "at") =>
+            {
+                self.list_builtin(expression, callee, arguments, scope)
             }
 
             Expression::Call { callee, arguments, .. } => {
@@ -821,6 +1038,196 @@ impl<'a, 'context> Emitter<'a, 'context> {
                     .map_err(builder_error)
             }
         }
+    }
+
+    /// How many bytes one element of a type occupies.
+    ///
+    /// Asked of the target data layout rather than assumed: struct
+    /// padding is the target's decision, and a size guessed here would
+    /// disagree with the one the generated code uses to index.
+    fn size_of(&self, of: Type) -> Result<u64, EmitError> {
+        // From the target data layout, not from `size_of()` on the type.
+        //
+        // LLVM's `size_of` returns a symbolic constant expression rather
+        // than a number, so asking it for a value gives None — and the
+        // fallback that used to stand in for it silently reported 8 for
+        // everything. An i32 element then indexed as if it were eight
+        // bytes wide, which read past the end of a list and segfaulted.
+        //
+        // The data layout knows the answer for certain, and it is the
+        // same one the generated code uses to lay the type out.
+        Ok(self.target_data.get_store_size(&self.basic(of)?))
+    }
+
+    /// `list()`, `push`, `length`, `at` — calls into the arena.
+    fn list_builtin(
+        &mut self,
+        expression: &Expression,
+        callee: &str,
+        arguments: &[FieldValue],
+        scope: &Scope<'context>,
+    ) -> Result<BasicValueEnum<'context>, EmitError> {
+        let argument = |wanted: &str| -> Result<&FieldValue, EmitError> {
+            arguments
+                .iter()
+                .find(|given| given.name == wanted)
+                .ok_or_else(|| EmitError {
+                    message: format!("`{callee}` needs `{wanted}`"),
+                })
+        };
+
+        match callee {
+            "list" => {
+                let function = self.arena_function("linen_list_new", ArenaSignature::New);
+                Ok(self
+                    .builder
+                    .build_call(function, &[], "list")
+                    .map_err(builder_error)?
+                    .try_as_basic_value()
+                    .left()
+                    .expect("linen_list_new returns a list"))
+            }
+
+            "push" => {
+                let given = argument("list")?;
+                let value = argument("value")?;
+
+                let list = self.expression(&given.value, scope)?;
+
+                // The element type comes from the LIST, not from the
+                // value. Arithmetic widens — `n * 4` is i64 even when
+                // `n` is i32 — so pushing one onto a `List<i32>` would
+                // otherwise store eight bytes where `at` reads four, and
+                // every element after the first would be read from the
+                // wrong place. Silently: the first element is right, so
+                // a one-element test proves nothing.
+                let of_list = self.checked_type(&given.value, scope)?;
+                let declared = match of_list {
+                    Type::List(entry) => {
+                        self.arrays
+                            .get(entry)
+                            .ok_or_else(|| EmitError {
+                                message: "a list type outside the unit".to_string(),
+                            })?
+                            .element
+                    }
+                    _ => Type::Unknown,
+                };
+                // An empty `list()` has no element type yet — this push
+                // is what decides it — so the value's type is the only
+                // one there is.
+                let element_type = if declared == Type::Unknown {
+                    self.checked_type(&value.value, scope)?
+                } else {
+                    declared
+                };
+                let of_value = self.checked_type(&value.value, scope)?;
+                let emitted = self.expression(&value.value, scope)?;
+                let emitted = self.convert_any(emitted, of_value, element_type)?;
+
+                // The value goes through memory, because the arena takes
+                // it by pointer: one push works for every element type
+                // instead of one push per type.
+                let slot = self
+                    .builder
+                    .build_alloca(self.basic(element_type)?, "value")
+                    .map_err(builder_error)?;
+                self.builder.build_store(slot, emitted).map_err(builder_error)?;
+
+                let size = self
+                    .context
+                    .i32_type()
+                    .const_int(self.size_of(element_type)?, false);
+                let function = self.arena_function("linen_list_push", ArenaSignature::Push);
+                Ok(self
+                    .builder
+                    .build_call(function, &[list.into(), slot.into(), size.into()], "pushed")
+                    .map_err(builder_error)?
+                    .try_as_basic_value()
+                    .left()
+                    .expect("linen_list_push returns a list"))
+            }
+
+            "length" => {
+                let given = argument("list")?;
+                let list = self.expression(&given.value, scope)?;
+                let function = self.arena_function("linen_list_length", ArenaSignature::Length);
+                Ok(self
+                    .builder
+                    .build_call(function, &[list.into()], "length")
+                    .map_err(builder_error)?
+                    .try_as_basic_value()
+                    .left()
+                    .expect("linen_list_length returns a number"))
+            }
+
+            "at" => {
+                let given = argument("list")?;
+                let index = argument("index")?;
+
+                let list = self.expression(&given.value, scope)?;
+                let position = self.integer_expression(&index.value, scope)?;
+                let position = self.convert(
+                    position,
+                    self.checked_type(&index.value, scope)?,
+                    Type::I32,
+                )?;
+
+                // The element type is the type of the whole expression:
+                // `at` produces one element.
+                let element_type = self.checked_type(expression, scope)?;
+                let size = self
+                    .context
+                    .i32_type()
+                    .const_int(self.size_of(element_type)?, false);
+
+                let function = self.arena_function("linen_list_at", ArenaSignature::At);
+                let pointer = self
+                    .builder
+                    .build_call(
+                        function,
+                        &[list.into(), position.into(), size.into()],
+                        "element",
+                    )
+                    .map_err(builder_error)?
+                    .try_as_basic_value()
+                    .left()
+                    .expect("linen_list_at returns a pointer")
+                    .into_pointer_value();
+
+                self.builder
+                    .build_load(self.basic(element_type)?, pointer, "at")
+                    .map_err(builder_error)
+            }
+
+            _ => unreachable!("matched above"),
+        }
+    }
+
+    /// Declares one of the arena functions, once per module.
+    fn arena_function(
+        &mut self,
+        name: &str,
+        signature: ArenaSignature,
+    ) -> FunctionValue<'context> {
+        if let Some(existing) = self.module.get_function(name) {
+            return existing;
+        }
+        let list = self.list_type();
+        let pointer = self.context.ptr_type(inkwell::AddressSpace::default());
+        let count = self.context.i32_type();
+
+        let declared = match signature {
+            ArenaSignature::New => list.fn_type(&[], false),
+            ArenaSignature::Push => {
+                list.fn_type(&[list.into(), pointer.into(), count.into()], false)
+            }
+            ArenaSignature::Length => count.fn_type(&[list.into()], false),
+            ArenaSignature::At => {
+                pointer.fn_type(&[list.into(), count.into(), count.into()], false)
+            }
+        };
+        self.module.add_function(name, declared, None)
     }
 
     /// A function's parameters as declared, for filling in defaults.

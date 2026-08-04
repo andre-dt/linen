@@ -62,6 +62,24 @@ pub enum Type {
     /// The size being part of the type is what lets the value live
     /// without an allocation — the space is known at compile time.
     Array(usize),
+    /// The element type of an empty `list()`, before a push decides it.
+    ///
+    /// A placeholder, not a type anything can hold: it exists so that
+    /// "has not been decided" is distinguishable from "is i32", which it
+    /// was not when the default was i32 — and then a list of numbers
+    /// accepted a bool.
+    Unknown,
+    /// `List<i32>` — a sequence whose length is not in its type.
+    ///
+    /// Interned like an array, but carrying only an element type: a
+    /// List that knew its length would be an array, and the whole point
+    /// is the shapes whose size is not known until they are built. A
+    /// face has however many loops it has.
+    ///
+    /// Where an array lives in the value, a List lives in the ARENA —
+    /// which is what makes it the thing that can grow, and what makes it
+    /// die with the call that built it.
+    List(usize),
 }
 
 impl Type {
@@ -78,6 +96,8 @@ impl Type {
             Type::Bool => "bool",
             Type::Shape(_) => "a shape",
             Type::Array(_) => "an array",
+            Type::List(_) => "a list",
+            Type::Unknown => "not yet decided",
         }
     }
 
@@ -108,7 +128,7 @@ impl Type {
             Type::I64 => 64,
             Type::I128 => 128,
             Type::Bool => 1,
-            Type::Shape(_) | Type::Array(_) => 0,
+            Type::Shape(_) | Type::Array(_) | Type::List(_) | Type::Unknown => 0,
         }
     }
 }
@@ -157,7 +177,60 @@ fn arithmetic_result(left: Type, right: Type) -> Type {
 /// A wrap would be silent and wrong. A failure is loud and right, and
 /// costs one compare on a path that is already touching memory.
 fn assignable(from: Type, to: Type) -> bool {
-    from == to || (from.is_integer() && to.is_integer())
+    if from == to || (from.is_integer() && to.is_integer()) {
+        return true;
+    }
+    // An undecided type fits anywhere: `fn f() List<i32>` returning
+    // `list()` is a list that has not been pushed into, and the
+    // declaration is what decides what it holds.
+    from == Type::Unknown || to == Type::Unknown
+}
+
+/// Whether an undecided list can flow where `to` is wanted.
+///
+/// `List<Unknown>` is what `list()` produces, and it belongs anywhere a
+/// list belongs. Compared structurally rather than by index, because the
+/// two are different entries in the table and equality on the index
+/// would say no.
+fn lists_agree(from: Type, to: Type, program: &Program) -> bool {
+    let (Type::List(a), Type::List(b)) = (from, to) else {
+        return false;
+    };
+    let (Some(a), Some(b)) = (program.arrays.get(a), program.arrays.get(b)) else {
+        return false;
+    };
+    a.element == Type::Unknown || b.element == Type::Unknown || assignable(a.element, b.element)
+}
+
+/// A written number that cannot fit where it is going.
+///
+/// Checked here, at compile time, because both halves are known: the
+/// value is written in the source and the type is declared. Everything
+/// else that narrows is a runtime concern — a computed i64 might or
+/// might not fit an i32 — but a literal is decidable now, and letting it
+/// through would wrap 10^12 to -727379968.
+///
+/// That number looks plausible, which is what makes it the worst kind of
+/// wrong. It is also exactly the failure the integer model exists to
+/// prevent, so catching it is not an extra: it is the model holding.
+fn literal_fits(expression: &Expression, wanted: Type) -> Result<(), CheckError> {
+    let Expression::Integer { value, span } = expression else {
+        return Ok(());
+    };
+    let fits = match wanted {
+        Type::I32 => *value >= i32::MIN as i64 && *value <= i32::MAX as i64,
+        // The lexer parses into i64, so anything that got here already
+        // fits i64 and i128.
+        Type::I64 | Type::I128 => true,
+        Type::Bool | Type::Shape(_) | Type::Array(_) | Type::List(_) | Type::Unknown => true,
+    };
+    if fits {
+        return Ok(());
+    }
+    Err(CheckError {
+        message: format!("{value} does not fit in {}", wanted.name()),
+        span: *span,
+    })
 }
 
 // =====================================================================
@@ -198,6 +271,23 @@ pub struct Arrays {
 }
 
 impl Arrays {
+    /// `List<element>`, interned by element type.
+    ///
+    /// Kept in the same table as arrays, distinguished by size: a list
+    /// has none. One table rather than two, because both answer the same
+    /// question — what is in it — and two would be two places to look.
+    fn intern_list(&self, element: Type) -> Type {
+        let mut entries = self.entries.borrow_mut();
+        if let Some(index) = entries
+            .iter()
+            .position(|entry| entry.element == element && entry.size < 0)
+        {
+            return Type::List(index);
+        }
+        entries.push(ArrayInfo { element, size: -1 });
+        Type::List(entries.len() - 1)
+    }
+
     fn intern(&self, info: ArrayInfo) -> Type {
         let mut entries = self.entries.borrow_mut();
         if let Some(index) = entries.iter().position(|entry| *entry == info) {
@@ -255,7 +345,63 @@ struct Program {
 
 pub fn check(unit: &Unit) -> Result<(), CheckError> {
     let program = program_of(unit)?;
+    check_names(unit)?;
     check_against(unit, &program)
+}
+
+/// One name, one declaration.
+///
+/// Two functions sharing a name compiles today and one of them wins,
+/// which makes the other dead code that reads as live — and a reader has
+/// no way to tell which one a call reaches.
+fn check_names(unit: &Unit) -> Result<(), CheckError> {
+    let mut seen: Vec<(&str, &'static str)> = Vec::new();
+    for item in &unit.items {
+        let (name, what, span) = match item {
+            Item::Function(function) => (function.name.as_str(), "function", function.span),
+            Item::Shape(shape) => (shape.name.as_str(), "shape", shape.span),
+            // A test's name is prose, not an identifier: two tests may
+            // reasonably describe themselves the same way, and nothing
+            // refers to a test by name.
+            Item::Test(_) => continue,
+        };
+        if let Some((_, first)) = seen.iter().find(|(other, _)| *other == name) {
+            return Err(CheckError {
+                message: format!("`{name}` is declared twice; the first was a {first}"),
+                span,
+            });
+        }
+        seen.push((name, what));
+    }
+    Ok(())
+}
+
+/// Whether a body always reaches a `return`.
+///
+/// The compiler fills in a zero for a body that runs off the end, which
+/// turns a forgotten branch into a plausible number rather than a
+/// failure. In a kernel that zero is a coordinate — a point at the
+/// origin, which reads as geometry rather than as a bug.
+///
+/// Conservative on loops: a `while` may run zero times, so a `return`
+/// inside one does not count. That rejects some correct programs, and
+/// the alternative is accepting incorrect ones.
+fn always_returns(body: &[Statement]) -> bool {
+    body.iter().any(|statement| match statement {
+        Statement::Return { .. } => true,
+        // Both branches, or neither: an `if` without an `else` falls
+        // through when the condition does not hold.
+        Statement::If { then_branch, else_branch, .. } => match else_branch {
+            Some(else_branch) => {
+                always_returns(then_branch) && always_returns(else_branch)
+            }
+            None => false,
+        },
+        // A throw ends the test where it stands, so anything after it is
+        // unreachable — but a throw is conditional, so it is not a
+        // return.
+        _ => false,
+    })
 }
 
 /// Checks a unit against a program already built from it.
@@ -281,6 +427,16 @@ fn check_against(unit: &Unit, program: &Program) -> Result<(), CheckError> {
                     None => None,
                 };
                 check_body(&function.body, &mut scope, expected, program)?;
+
+                if expected.is_some() && !always_returns(&function.body) {
+                    return Err(CheckError {
+                        message: format!(
+                            "`{}` can end without returning, but it declares a result",
+                            function.name
+                        ),
+                        span: function.span,
+                    });
+                }
             }
             Item::Test(test) => {
                 let mut scope = Vec::new();
@@ -316,6 +472,232 @@ pub fn arrays_of(unit: &Unit) -> Result<Arrays, CheckError> {
     // has to run against THIS program, not a fresh one.
     check_against(unit, &program)?;
     Ok(program.arrays)
+}
+
+/// The names the List builtins take.
+const LIST: &str = "list";
+const PUSH: &str = "push";
+const LENGTH: &str = "length";
+const AT: &str = "at";
+
+fn is_list_builtin(name: &str) -> bool {
+    matches!(name, LIST | PUSH | LENGTH | AT)
+}
+
+/// Types the four List builtins.
+fn check_list_builtin(
+    callee: &str,
+    arguments: &[FieldValue],
+    span: Span,
+    scope: &Scope,
+    program: &Program,
+) -> Result<Type, CheckError> {
+    /// The argument with this name, or an error naming what is missing.
+    fn argument<'a>(
+        arguments: &'a [FieldValue],
+        wanted: &str,
+        callee: &str,
+        span: Span,
+    ) -> Result<&'a FieldValue, CheckError> {
+        arguments
+            .iter()
+            .find(|given| given.name == wanted)
+            .ok_or_else(|| CheckError {
+                message: format!("`{callee}` needs `{wanted}`"),
+                span,
+            })
+    }
+
+    match callee {
+        // `list()` — an empty list, of nothing in particular yet.
+        //
+        // Its element is `Unknown`: a real type variable would need the
+        // inference that arrives with generics, and typing it `i32` by
+        // default was worse than a placeholder — a list genuinely
+        // holding i32 was then indistinguishable from one that had not
+        // decided, so pushing a bool onto `[1]` was accepted.
+        LIST => {
+            if !arguments.is_empty() {
+                return Err(CheckError {
+                    message: "`list` takes nothing; it makes an empty list".to_string(),
+                    span,
+                });
+            }
+            Ok(program.arrays.intern_list(Type::Unknown))
+        }
+
+        // `push(list: xs, value: v)` — a NEW list, one longer.
+        PUSH => {
+            let given = argument(arguments, "list", callee, span)?;
+            let value = argument(arguments, "value", callee, span)?;
+            let of = check_expression(&given.value, scope, program)?;
+            let Type::List(entry) = of else {
+                return Err(CheckError {
+                    message: format!(
+                        "`list` of `push` is a list, but this is {}",
+                        program.name_of(of)
+                    ),
+                    span: given.value.span(),
+                });
+            };
+            let element = program
+                .arrays
+                .get(entry)
+                .expect("interned when the type was resolved")
+                .element;
+            let pushed = check_expression(&value.value, scope, program)?;
+
+            // The first push into an empty list is what decides its
+            // element type. After that the type is fixed.
+            //
+            // Except when the value is a WIDENED integer. Arithmetic
+            // widens — `n * 4` is i64 even where every operand is i32 —
+            // so inferring from it silently makes a `List<i64>` out of
+            // what the author meant as a list of coordinates. Stored
+            // eight bytes wide and later read four bytes wide through a
+            // declared `List<i32>`, every element after the first comes
+            // out of the wrong place, and the first one is right — which
+            // is what makes a small test miss it.
+            //
+            // The type has to be written down, and saying so is cheap.
+            if element == Type::Unknown {
+                if pushed == Type::I64 || pushed == Type::I128 {
+                    return Err(CheckError {
+                        message: format!(
+                            "this list has no element type yet, and {} is what arithmetic \
+                             produces rather than what was meant; say what the list holds",
+                            program.name_of(pushed)
+                        ),
+                        span: value.value.span(),
+                    });
+                }
+                return Ok(program.arrays.intern_list(pushed));
+            }
+            if !assignable(pushed, element) {
+                return Err(CheckError {
+                    message: format!(
+                        "this list holds {}, but this value is {}",
+                        program.name_of(element),
+                        program.name_of(pushed)
+                    ),
+                    span: value.value.span(),
+                });
+            }
+            Ok(of)
+        }
+
+        // `length(list: xs)` — how many.
+        LENGTH => {
+            let given = argument(arguments, "list", callee, span)?;
+            let of = check_expression(&given.value, scope, program)?;
+            if !matches!(of, Type::List(_)) {
+                return Err(CheckError {
+                    message: format!(
+                        "`length` takes a list, but this is {}",
+                        program.name_of(of)
+                    ),
+                    span: given.value.span(),
+                });
+            }
+            Ok(Type::I32)
+        }
+
+        // `at(list: xs, index: i)` — the element there.
+        AT => {
+            let given = argument(arguments, "list", callee, span)?;
+            let index = argument(arguments, "index", callee, span)?;
+            let of = check_expression(&given.value, scope, program)?;
+            let Type::List(entry) = of else {
+                return Err(CheckError {
+                    message: format!("`at` takes a list, but this is {}", program.name_of(of)),
+                    span: given.value.span(),
+                });
+            };
+            let position = check_expression(&index.value, scope, program)?;
+            if !position.is_integer() {
+                return Err(CheckError {
+                    message: format!(
+                        "an index is a number, but this is {}",
+                        program.name_of(position)
+                    ),
+                    span: index.value.span(),
+                });
+            }
+            Ok(program
+                .arrays
+                .get(entry)
+                .expect("interned when the type was resolved")
+                .element)
+        }
+
+        _ => unreachable!("checked by is_list_builtin"),
+    }
+}
+
+/// The builtin a drawing test calls to hand over its mesh.
+pub const SOLID: &str = "solid";
+
+/// `solid(points: …, triangles: …)` — numbers, as an array or a list.
+///
+/// Both, because both are how a mesh legitimately arrives. A test that
+/// writes its corners out literally knows how many there are, and a
+/// fixed array costs no allocation. A tessellated body does not: a face
+/// has however many triangles its loop yields, and that is only known
+/// once it is clipped.
+fn check_solid(
+    arguments: &[FieldValue],
+    span: Span,
+    scope: &Scope,
+    program: &Program,
+) -> Result<Type, CheckError> {
+    let mut seen = Vec::new();
+    for argument in arguments {
+        let of = check_expression(&argument.value, scope, program)?;
+        let element = match of {
+            Type::Array(entry) => program
+                .arrays
+                .get(entry)
+                .expect("interned when the type was resolved")
+                .element,
+            Type::List(entry) => program
+                .arrays
+                .get(entry)
+                .expect("interned when the type was resolved")
+                .element,
+            _ => {
+                return Err(CheckError {
+                    message: format!(
+                        "`{}` of `solid` is numbers, as an array or a list, but this is {}",
+                        argument.name,
+                        program.name_of(of)
+                    ),
+                    span: argument.value.span(),
+                });
+            }
+        };
+        if !element.is_integer() {
+            return Err(CheckError {
+                message: format!(
+                    "`{}` of `solid` holds numbers, but this array holds {}",
+                    argument.name,
+                    program.name_of(element)
+                ),
+                span: argument.value.span(),
+            });
+        }
+        seen.push(argument.name.as_str());
+    }
+
+    for wanted in ["points", "triangles"] {
+        if !seen.contains(&wanted) {
+            return Err(CheckError {
+                message: format!("`solid` needs `{wanted}`"),
+                span,
+            });
+        }
+    }
+    // Produces nothing: it is an instruction to the runner, not a value.
+    Ok(Type::Bool)
 }
 
 /// The type of an expression, given what is in scope around it.
@@ -448,6 +830,16 @@ fn resolve_type(
         let element = resolve_type(written, shapes, arrays)?;
         return Ok(arrays.intern(ArrayInfo { element, size }));
     }
+    // `List<T>` — the one written type with an argument.
+    if type_name.name == "List" {
+        let written = type_name.arguments.first().ok_or_else(|| CheckError {
+            message: "`List` needs an element type, as in `List<i32>`".to_string(),
+            span: type_name.span,
+        })?;
+        let element = resolve_type(written, shapes, arrays)?;
+        return Ok(arrays.intern_list(element));
+    }
+
     if let Some(primitive) = Type::from_name(&type_name.name) {
         return Ok(primitive);
     }
@@ -513,7 +905,7 @@ fn check_statement(
         Statement::Return { value, span } => match (value, result) {
             (Some(value), Some(expected)) => {
                 let found = check_expression(value, scope, program)?;
-                if !assignable(found, expected) {
+                if !assignable(found, expected) && !lists_agree(found, expected, program) {
                     return Err(CheckError {
                         message: format!(
                             "this returns {}, but the function is declared to return {}",
@@ -523,6 +915,7 @@ fn check_statement(
                         span: value.span(),
                     });
                 }
+                literal_fits(value, expected)?;
             }
             (Some(value), None) => {
                 return Err(CheckError {
@@ -574,6 +967,10 @@ fn check_statement(
             scope.push((name.clone(), arithmetic_result(from, to)));
             check_body(body, scope, result, program)?;
             scope.truncate(depth);
+        }
+
+        Statement::Solid { arguments, span } => {
+            check_solid(arguments, *span, scope, program)?;
         }
 
         // The condition decides whether the test dies, so it has to be a
@@ -679,6 +1076,18 @@ fn check_expression(
             })
         }
 
+        // The List builtins.
+        //
+        // Builtins rather than declarations in a prelude, because their
+        // types cannot be written in this language yet: `push` is
+        // generic over the element AND returns a List of it, which needs
+        // the monomorphisation that has not landed. Writing them here
+        // keeps the language honest — nothing pretends to be ordinary
+        // user code that is not.
+        Expression::Call { callee, arguments, span } if is_list_builtin(callee) => {
+            check_list_builtin(callee, arguments, *span, scope, program)
+        }
+
         Expression::Call { callee, arguments, span } => {
             // resolve.rs already matched names, order and completeness,
             // so this only has to agree on types.
@@ -697,7 +1106,7 @@ fn check_expression(
                         message: format!("`{callee}` has no parameter called `{}`", argument.name),
                         span: argument.span,
                     })?;
-                if !assignable(found, expected) {
+                if !assignable(found, expected) && !lists_agree(found, expected, program) {
                     return Err(CheckError {
                         message: format!(
                             "`{}` is {}, but this is {}",
@@ -708,6 +1117,7 @@ fn check_expression(
                         span: argument.value.span(),
                     });
                 }
+                literal_fits(&argument.value, expected)?;
             }
             signature.result.ok_or_else(|| CheckError {
                 message: format!("`{callee}` returns nothing, so it has no value here"),
@@ -731,7 +1141,7 @@ fn check_expression(
                         message: format!("`{shape}` has no field called `{}`", given.name),
                         span: given.span,
                     })?;
-                if !assignable(found, expected) {
+                if !assignable(found, expected) && !lists_agree(found, expected, program) {
                     return Err(CheckError {
                         message: format!(
                             "`{}` is {}, but this is {}",
@@ -742,6 +1152,7 @@ fn check_expression(
                         span: given.value.span(),
                     });
                 }
+                literal_fits(&given.value, expected)?;
             }
             // Building one produces one.
             Ok(Type::Shape(

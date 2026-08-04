@@ -31,6 +31,11 @@ shape Point
   x i32
   y i32
 
+shape Point3
+  x i32
+  y i32
+  z i32
+
 # --- predicates -------------------------------------------------------
 
 # Which side of a->b the point c falls on.
@@ -65,6 +70,37 @@ fn double_area(a Point, b Point, c Point) i64
 fn distance_squared(a Point, b Point) i64
   return (b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y)
 
+# Widen an i64 into i128 before it is multiplied.
+#
+# Written out rather than left implicit: arithmetic widens i32 to i64,
+# which is right everywhere except here. Making every subtraction in the
+# language i128 to serve one predicate would be the wrong trade.
+fn wide(value i64) i128
+  return value + 0
+
+# Which side of the plane through a, b, c the point d falls on.
+#
+#   > 0   above, the side the normal of a->b->c points to
+#   = 0   COPLANAR, exactly
+#   < 0   below
+#
+# A 3x3 determinant: six products of three coordinates. A coordinate
+# reaches 10^7, so a triple product reaches 10^21 and i64 is two orders
+# short — and a wrapped determinant does not merely lose precision, it
+# can carry the WRONG SIGN, placing a point on the wrong side of a face.
+# That is what i128 is here for.
+fn orient3d(a Point3, b Point3, c Point3, d Point3) i128
+  let bx = wide(value: b.x - a.x)
+  let by = wide(value: b.y - a.y)
+  let bz = wide(value: b.z - a.z)
+  let cx = wide(value: c.x - a.x)
+  let cy = wide(value: c.y - a.y)
+  let cz = wide(value: c.z - a.z)
+  let dx = wide(value: d.x - a.x)
+  let dy = wide(value: d.y - a.y)
+  let dz = wide(value: d.z - a.z)
+  return bx * (cy * dz - cz * dy) - by * (cx * dz - cz * dx) + bz * (cx * dy - cy * dx)
+
 # --- the boundary -----------------------------------------------------
 
 # Twice the signed area of one triangle, from six loose coordinates.
@@ -85,4 +121,20 @@ export fn linen_distance_squared(ax i32, ay i32, bx i32, by i32) i64
 # the sign is what every use of this actually branches on.
 export fn linen_orientation(ax i32, ay i32, bx i32, by i32, cx i32, cy i32) i32
   let determinant = orient2d(a: Point(x: ax, y: ay), b: Point(x: bx, y: by), c: Point(x: cx, y: cy))
+  return if determinant > 0 then 1 else if determinant < 0 then 0 - 1 else 0
+
+# Which side of the plane through a, b, c the point d falls on: 1 above,
+# -1 below, 0 coplanar.
+#
+# A sign rather than the determinant, and for a stronger reason here than
+# in 2D: the value reaches 10^21, which no integer type on the other side
+# of this boundary can hold. JS has BigInt but the sign is what every
+# caller branches on, and returning i32 keeps the crossing free of a heap
+# allocation per call.
+export fn linen_orientation3(ax i32, ay i32, az i32, bx i32, by i32, bz i32, cx i32, cy i32, cz i32, dx i32, dy i32, dz i32) i32
+  let a = Point3(x: ax, y: ay, z: az)
+  let b = Point3(x: bx, y: by, z: bz)
+  let c = Point3(x: cx, y: cy, z: cz)
+  let d = Point3(x: dx, y: dy, z: dz)
+  let determinant = orient3d(a: a, b: b, c: c, d: d)
   return if determinant > 0 then 1 else if determinant < 0 then 0 - 1 else 0
