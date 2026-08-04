@@ -1,0 +1,7 @@
+#~ expected `fn` after `export`
+# `export` marks a function as part of the boundary, and only a
+# function. A shape is reachable through an exported signature or not at
+# all, and a test is never part of one.
+
+export shape Point
+  x i32

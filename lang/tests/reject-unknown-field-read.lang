@@ -1,0 +1,11 @@
+#~ has no field called `z`
+# Reading a field the shape does not declare — usually a typo, and a
+# silent one if it returned anything at all.
+
+shape Point
+  x i32
+  y i32
+
+test "t"
+  let p = Point(x: 1, y: 2)
+  throw "m" unless p.z == 1

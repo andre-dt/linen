@@ -8,6 +8,7 @@
 // =====================================================================
 
 pub mod ast;
+pub mod check;
 pub mod lex;
 pub mod parse;
 pub mod resolve;
@@ -17,5 +18,7 @@ pub mod token;
 mod lex_test;
 #[cfg(test)]
 mod parse_test;
+#[cfg(test)]
+mod check_test;
 #[cfg(test)]
 mod resolve_test;

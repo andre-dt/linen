@@ -1,0 +1,112 @@
+# A polygon — points in an array, and the things you ask of them.
+#
+# This is the first place the kernel has more than one point at a time,
+# and it is where the exact predicates start paying for themselves: area
+# and winding are both `orient2d` summed, so both are exact, and a
+# polygon can never be "probably counter-clockwise".
+#
+# Fixed size for now. `List<T>` is what a polygon of unknown size needs,
+# and it lands with the arena.
+
+shape Point
+  x i32
+  y i32
+
+fn orient2d(a Point, b Point, c Point) i64
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+
+# Twice the signed area of a triangle.
+#
+# Twice, and never halved: the doubled value is always a whole number
+# where the halved one is not, and every use — comparing areas, testing
+# a winding, summing a polygon — is unaffected by the constant factor.
+# Halving would be the only step that could lose anything.
+fn double_area(a Point, b Point, c Point) i64
+  return orient2d(a: a, b: b, c: c)
+
+# Twice the signed area of a triangle given as an array.
+#
+# Positive when the points wind counter-clockwise, negative clockwise,
+# zero when they are collinear — and zero EXACTLY, which is what makes
+# "is this polygon degenerate?" a question with an answer.
+fn triangle_area(points [Point; 3]) i64
+  return double_area(a: points[0], b: points[1], c: points[2])
+
+fn is_counter_clockwise(points [Point; 3]) bool
+  return triangle_area(points: points) > 0
+
+fn is_degenerate(points [Point; 3]) bool
+  return triangle_area(points: points) == 0
+
+# Twice the signed area of a quadrilateral, as two triangles sharing the
+# diagonal 0-2. The split is exact, so the sum is exact.
+fn quad_area(points [Point; 4]) i64
+  return double_area(a: points[0], b: points[1], c: points[2]) + double_area(a: points[0], b: points[2], c: points[3])
+
+# Whether `candidate` sits below `best`, ties going to the leftmost.
+fn is_lower(candidate Point, best Point) bool
+  return if candidate.y < best.y then true else candidate.y == best.y and candidate.x < best.x
+
+# The lowest point of four, breaking ties by the leftmost — the starting
+# point of a convex hull.
+#
+# Written as a fold rather than a loop with a running `best`, because
+# there is no assignment: a `let` inside a loop body shadows for that
+# iteration and is gone by the next one. Carrying state through a loop
+# means carrying it through a CALL, which is what this does.
+fn lower_of(a Point, b Point) Point
+  return if is_lower(candidate: a, best: b) then a else b
+
+fn lowest(points [Point; 4]) Point
+  return lower_of(a: lower_of(a: lower_of(a: points[0], b: points[1]), b: points[2]), b: points[3])
+
+test "an array of points"
+  let square = [Point(x: 0, y: 0), Point(x: 10, y: 0), Point(x: 10, y: 10)]
+  throw "the first should be the origin" unless square[0].x == 0
+  throw "the second should be out along x" unless square[1].x == 10
+  throw "the third should be up along y" unless square[2].y == 10
+
+test "a counter-clockwise triangle has positive area"
+  let triangle = [Point(x: 0, y: 0), Point(x: 1000, y: 0), Point(x: 0, y: 1000)]
+  throw "should wind counter-clockwise" unless is_counter_clockwise(points: triangle)
+  # 1000 x 1000 / 2, doubled back to 10^6.
+  throw "twice the area should be 10^6" unless triangle_area(points: triangle) == 1000000
+
+test "reversing the points flips the sign"
+  let forward = [Point(x: 0, y: 0), Point(x: 1000, y: 0), Point(x: 0, y: 1000)]
+  let backward = [Point(x: 0, y: 1000), Point(x: 1000, y: 0), Point(x: 0, y: 0)]
+  throw "the area should be the same size" unless triangle_area(points: forward) == 0 - triangle_area(points: backward)
+  throw "the reverse should wind clockwise" if is_counter_clockwise(points: backward)
+
+test "three points on a line have exactly no area"
+  # The reason for integers, in one line: this is 0, not 1e-11, so
+  # "degenerate" is a fact rather than a threshold.
+  let flat = [Point(x: 0, y: 0), Point(x: 5000000, y: 5000000), Point(x: 10000000, y: 10000000)]
+  throw "a flat triangle should be degenerate" unless is_degenerate(points: flat)
+
+test "one micron of height is not degenerate"
+  # The same three points, with the middle lifted by a single micron at
+  # 10 metres out. It has area, and the kernel says so.
+  let nearly = [Point(x: 0, y: 0), Point(x: 5000000, y: 5000001), Point(x: 10000000, y: 10000000)]
+  throw "a micron of height is still area" if is_degenerate(points: nearly)
+
+test "the area of a triangle at full range"
+  # 10^7 by 10^7, doubled: 10^14. Five orders past what i32 holds, which
+  # is why area is i64.
+  let big = [Point(x: 0, y: 0), Point(x: 10000000, y: 0), Point(x: 0, y: 10000000)]
+  throw "twice the area should be 10^14" unless triangle_area(points: big) == 100000000000000
+
+test "a square by two triangles"
+  let square = [Point(x: 0, y: 0), Point(x: 100, y: 0), Point(x: 100, y: 100), Point(x: 0, y: 100)]
+  # 100 x 100, doubled.
+  throw "twice the area should be 20000" unless quad_area(points: square) == 20000
+
+test "the lowest point of a set"
+  let points = [Point(x: 5, y: 9), Point(x: 2, y: 3), Point(x: 8, y: 3), Point(x: 4, y: 7)]
+  # Two share the lowest y, so the leftmost wins.
+  throw "should find the lowest, leftmost" unless lowest(points: points).x == 2
+
+test "an array of points can be walked"
+  let triangle = [Point(x: 0, y: 0), Point(x: 10, y: 0), Point(x: 0, y: 10)]
+  for i in 0 .. 3
+    throw "no point should be far from the origin" unless triangle[i].x <= 10

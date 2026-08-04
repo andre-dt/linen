@@ -1,0 +1,7 @@
+#~ empty array has no element type
+# `[]` gives the checker nothing to infer from. An element type is part
+# of the array's type, so it cannot be left open.
+
+test "t"
+  let xs = []
+  throw "m" unless 1 == 1

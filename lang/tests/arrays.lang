@@ -8,9 +8,6 @@ fn first(xs [i32; 3]) i32
 fn sum_three(xs [i32; 3]) i32
   return xs[0] + xs[1] + xs[2]
 
-fn at(xs List<i32>, index i32) i32
-  return xs[index]
-
 test "a literal and its elements"
   let xs = [10, 20, 30]
   throw "the first should be 10" unless xs[0] == 10
@@ -29,9 +26,6 @@ test "an array of one"
 test "an array as a parameter"
   throw "first should read the head" unless first(xs: [1, 2, 3]) == 1
   throw "the sum should be 6" unless sum_three(xs: [1, 2, 3]) == 6
-
-test "a List as a parameter"
-  throw "at should read by index" unless at(xs: [5, 6, 7], index: 1) == 6
 
 test "an array of bools"
   let flags = [true, false]

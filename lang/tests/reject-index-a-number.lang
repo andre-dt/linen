@@ -1,0 +1,7 @@
+#~ only an array can be indexed
+# `[i]` on something that is not an array. Without this the checker would
+# have to invent a meaning for indexing an integer.
+
+test "t"
+  let n = 5
+  throw "m" unless n[0] == 5

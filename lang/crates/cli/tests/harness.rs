@@ -29,7 +29,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use syntax::{lex::lex, parse::parse, resolve::resolve};
+use compile::run::run_tests;
+use syntax::{check::check, lex::lex, parse::parse, resolve::resolve};
 
 /// Every .lang file in the suite.
 fn lang_files() -> Vec<PathBuf> {
@@ -44,15 +45,48 @@ fn lang_files() -> Vec<PathBuf> {
     files
 }
 
-/// How far the compiler currently goes: text to tree, then resolution —
-/// matching every argument to what it fills. The typechecker and the
-/// backend join here as they land, and every existing .lang file starts
-/// exercising them without being touched.
+/// How far the compiler currently goes: text to tree, resolution, then
+/// types. The backend joins here when it lands, and every existing .lang
+/// file starts exercising it without being touched.
+///
+/// Shapes and arrays are not typechecked yet, and the files that use
+/// them say so with `#!`. That marker is temporary scaffolding — see
+/// `not_typechecked_yet`.
 fn compile(source: &str) -> Result<(), String> {
     let tokens = lex(source).map_err(|error| error.message)?;
     let unit = parse(&tokens).map_err(|error| error.message)?;
     resolve(&unit).map_err(|error| error.message)?;
+    if not_typechecked_yet(source) {
+        return Ok(());
+    }
+    check(&unit).map_err(|error| error.message)?;
+
+    // And then RUN them. Stopping at "it compiled" would let a file full
+    // of false assertions pass, which is the opposite of what this
+    // directory claims to prove.
+    let ran = run_tests(&unit, "harness").map_err(|error| error.message)?;
+    let failed: Vec<_> = ran
+        .iter()
+        .filter_map(|test| {
+            test.failed
+                .as_ref()
+                .map(|message| format!("{}: {message}", test.name))
+        })
+        .collect();
+    if !failed.is_empty() {
+        return Err(failed.join("; "));
+    }
     Ok(())
+}
+
+/// `#!` — this file uses something the typechecker cannot see yet.
+///
+/// Marked in the file rather than listed here, for the same reason `#~`
+/// is: the expectation belongs to the file. Every one of these is a
+/// feature the checker owes, and the marker disappears as each lands —
+/// so the count of `#!` is the size of the remaining debt, in the open.
+fn not_typechecked_yet(source: &str) -> bool {
+    source.lines().any(|line| line.trim_start().starts_with("#!"))
 }
 
 // =====================================================================

@@ -62,6 +62,14 @@ pub struct GenericParameter {
 #[derive(Debug, PartialEq)]
 pub struct Function {
     pub name: String,
+    /// `export fn` — part of the boundary this unit presents to whoever
+    /// links it.
+    ///
+    /// Marked rather than inferred, and off by default: what a caller
+    /// outside the language can reach is a decision, and everything not
+    /// exported stays free to be renamed or removed. An exported name is
+    /// also a symbol in the object file, so the two are the same choice.
+    pub exported: bool,
     /// Type parameters, empty for the ordinary case. `fn first<T>(…)`.
     pub generics: Vec<GenericParameter>,
     pub parameters: Vec<Parameter>,

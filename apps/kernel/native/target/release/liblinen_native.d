@@ -1,0 +1,1 @@
+/home/avale/dt/linen/apps/kernel/native/target/release/liblinen_native.so: /home/avale/dt/linen/apps/kernel/native/build.rs /home/avale/dt/linen/apps/kernel/native/src/lib.rs /home/avale/dt/linen/lang/build/liblinen.a

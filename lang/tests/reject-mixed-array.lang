@@ -1,0 +1,7 @@
+#~ but this element is
+# Every element shares one type, because that type is part of the
+# array's own — `[i32; 3]` says what is in it, not just how many.
+
+test "t"
+  let xs = [1, true]
+  throw "m" unless xs[0] == 1

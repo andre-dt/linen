@@ -1,0 +1,104 @@
+# Point — the first kernel type.
+#
+# Two i32 microns. This is the shape everything geometric is built from,
+# and the reason it is i32 rather than i64 is memory: a mesh has millions
+# of these, and what decides throughput is how many fit in a cache line.
+#
+# The predicates take a Point instead of six loose coordinates now, which
+# is the whole difference between
+#
+#     orient2d(ax: 0, ay: 0, bx: 1, by: 0, cx: 1, cy: 1)
+#     orient2d(a: origin(), b: right(), c: corner())
+#
+# — the second cannot have its arguments silently paired up wrong.
+
+shape Point
+  x i32
+  y i32
+
+# Which side of a->b the point c falls on.
+#
+#   > 0   left of a->b     (counter-clockwise)
+#   = 0   collinear, EXACTLY
+#   < 0   right
+#
+# i32 coordinates, i64 result: a coordinate reaches 10^7, so the product
+# of two reaches 10^14 and i32 would be five orders short.
+fn orient2d(a Point, b Point, c Point) i64
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+
+fn turns_left(a Point, b Point, c Point) bool
+  return orient2d(a: a, b: b, c: c) > 0
+
+fn collinear(a Point, b Point, c Point) bool
+  return orient2d(a: a, b: b, c: c) == 0
+
+# The squared distance between two points.
+#
+# Squared, and never the distance itself: a square root leaves the
+# integers, and every use a kernel has for a distance — comparing two,
+# finding the nearest, testing a tolerance — works just as well on the
+# square. The one place a real length is needed is display, which is not
+# the kernel's problem.
+fn distance_squared(a Point, b Point) i64
+  return (b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y)
+
+fn same(a Point, b Point) bool
+  return a.x == b.x and a.y == b.y
+
+test "a point holds what it was built with"
+  let p = Point(x: 1000, y: 2000)
+  throw "x should be 1000" unless p.x == 1000
+  throw "y should be 2000" unless p.y == 2000
+
+test "two points with the same coordinates are the same point"
+  # A value has no identity: there is nothing to a Point but its
+  # coordinates, so equality is over those.
+  throw "the same coordinates should be the same point" unless same(a: Point(x: 3, y: 4), b: Point(x: 3, y: 4))
+
+test "a left turn is positive"
+  throw "should turn left" unless turns_left(a: Point(x: 0, y: 0), b: Point(x: 1000, y: 0), c: Point(x: 1000, y: 1000))
+
+test "a right turn is negative"
+  throw "should not turn left" if turns_left(a: Point(x: 0, y: 0), b: Point(x: 1000, y: 0), c: Point(x: 1000, y: 0 - 1000))
+
+test "three points on a line are exactly collinear"
+  throw "should be collinear" unless collinear(a: Point(x: 0, y: 0), b: Point(x: 1000, y: 1000), c: Point(x: 2000, y: 2000))
+
+test "collinear holds at the far end of the range"
+  # 10 metres out, where a double would have thrown away the low bits.
+  throw "should still be collinear" unless collinear(a: Point(x: 0, y: 0), b: Point(x: 5000000, y: 5000000), c: Point(x: 10000000, y: 10000000))
+
+test "one micron off the line is not collinear"
+  # The tightest case: the smallest representable deviation, at full
+  # range. This is what exactness buys — in floating point it is noise.
+  throw "one micron off is not collinear" if collinear(a: Point(x: 0, y: 0), b: Point(x: 5000000, y: 5000000), c: Point(x: 10000000, y: 10000001))
+
+test "reversing the segment flips the sign"
+  let a = Point(x: 0, y: 0)
+  let b = Point(x: 1000, y: 0)
+  let c = Point(x: 0, y: 1000)
+  throw "the sign should flip" unless orient2d(a: a, b: b, c: c) == 0 - orient2d(a: b, b: a, c: c)
+
+test "the determinant needs the full i64 range"
+  # 10^14 — five orders past what i32 holds.
+  throw "the large determinant should be exact" unless orient2d(a: Point(x: 0, y: 0), b: Point(x: 10000000, y: 0), c: Point(x: 0, y: 10000000)) == 100000000000000
+
+test "distance squared is exact"
+  # 3-4-5, in microns.
+  throw "should be 25" unless distance_squared(a: Point(x: 0, y: 0), b: Point(x: 3, y: 4)) == 25
+
+test "distance squared holds at full range"
+  # 10^7 squared twice over: 2 * 10^14, which needs i64.
+  throw "should be 2e14" unless distance_squared(a: Point(x: 0, y: 0), b: Point(x: 10000000, y: 10000000)) == 200000000000000
+
+test "distance squared does not care about direction"
+  let a = Point(x: 100, y: 200)
+  let b = Point(x: 400, y: 600)
+  throw "the order should not matter" unless distance_squared(a: a, b: b) == distance_squared(a: b, b: a)
+
+test "a point survives being passed through a function"
+  throw "the point should come back unchanged" unless same(a: echo(p: Point(x: 7, y: 9)), b: Point(x: 7, y: 9))
+
+fn echo(p Point) Point
+  return p

@@ -62,15 +62,25 @@ impl<'a> Parser<'a> {
     }
 
     fn item(&mut self) -> Result<Item, ParseError> {
+        // `export fn` — the only thing `export` may precede. A shape is
+        // reachable through an exported signature or not at all, and a
+        // test is never part of a boundary.
+        if self.peek_name() == Some("export") {
+            self.advance();
+            if self.peek_name() != Some("fn") {
+                return Err(self.error_here("expected `fn` after `export`"));
+            }
+            return Ok(Item::Function(self.function(true)?));
+        }
         match self.peek_name() {
-            Some("fn") => Ok(Item::Function(self.function()?)),
+            Some("fn") => Ok(Item::Function(self.function(false)?)),
             Some("shape") => Ok(Item::Shape(self.shape()?)),
             Some("test") => Ok(Item::Test(self.test()?)),
-            _ => Err(self.error_here("expected `fn`, `shape` or `test` at the top level")),
+            _ => Err(self.error_here("expected `fn`, `export fn`, `shape` or `test` at the top level")),
         }
     }
 
-    fn function(&mut self) -> Result<Function, ParseError> {
+    fn function(&mut self, exported: bool) -> Result<Function, ParseError> {
         let start = self.span_here();
         self.advance(); // fn
         let name_span = self.span_here();
@@ -116,7 +126,7 @@ impl<'a> Parser<'a> {
 
         let body = self.block()?;
         let span = start.to(self.span_before());
-        Ok(Function { name, generics, parameters, result, body, span })
+        Ok(Function { name, exported, generics, parameters, result, body, span })
     }
 
     fn parameter(&mut self) -> Result<Parameter, ParseError> {

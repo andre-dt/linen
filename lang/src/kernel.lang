@@ -1,0 +1,88 @@
+# The kernel.
+#
+# What `linen build` compiles into liblinen.a, and what the N-API addon
+# links against. Everything reachable from outside is `export fn`;
+# everything else is free to change.
+#
+# THE BOUNDARY IS BUFFERS, NOT VALUES
+# -----------------------------------
+# Nothing here exports a function taking a `Point`. A small struct
+# crossing the C ABI is where "nearly right" becomes silent corruption
+# rather than a crash, and the rules for aggregates differ per platform.
+#
+# Instead the boundary is flat integer buffers: coordinates go in as a
+# packed array, results come out as another. Only pointers and lengths
+# cross, which every ABI agrees about.
+#
+# It is also the shape that makes the crossing cheap. A JS loop calling
+# the kernel once per triangle would spend most of its time on the
+# transition; one call with ten thousand triangles spends it computing.
+#
+#   wrong:  for (t of triangles) kernel.area(t)
+#   right:  kernel.areas(coordinates, count, out)
+#
+# COORDINATES ARE MICRONS
+# -----------------------
+# Every i32 here is a whole number of microns. The range is 1 micron to
+# 10 metres, which is 10^7 units — well inside i32, and the products
+# reach 10^14, which is why every result is i64.
+
+shape Point
+  x i32
+  y i32
+
+# --- predicates -------------------------------------------------------
+
+# Which side of a->b the point c falls on.
+#
+#   > 0   left of a->b, a counter-clockwise turn
+#   = 0   collinear, EXACTLY
+#   < 0   right
+#
+# The most used predicate in a BREP kernel, and the one floating point
+# gets wrong in the way that matters: three points collinear by
+# construction come out as a tiny non-zero determinant, and the kernel
+# then decides a point is left of an edge here and right of it there.
+# In integers the sign of the determinant IS the answer.
+fn orient2d(a Point, b Point, c Point) i64
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+
+# Twice the signed area of a triangle.
+#
+# Twice, and never halved: the doubled value is always a whole number
+# where the halved one is not, and comparing areas, testing a winding or
+# summing a polygon are all unaffected by the constant factor. Halving
+# is the only step that could lose anything.
+fn double_area(a Point, b Point, c Point) i64
+  return orient2d(a: a, b: b, c: c)
+
+# The squared distance between two points.
+#
+# Squared, and never the root: a square root leaves the integers, and
+# every kernel use of a distance — comparing two, finding the nearest,
+# testing a tolerance — works on the square. A real length is a display
+# concern.
+fn distance_squared(a Point, b Point) i64
+  return (b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y)
+
+# --- the boundary -----------------------------------------------------
+
+# Twice the signed area of one triangle, from six loose coordinates.
+#
+# The scalar entry point, for a caller with a single triangle. Six i32
+# rather than three Points: no aggregate crosses the ABI.
+export fn linen_double_area(ax i32, ay i32, bx i32, by i32, cx i32, cy i32) i64
+  return double_area(a: Point(x: ax, y: ay), b: Point(x: bx, y: by), c: Point(x: cx, y: cy))
+
+# The squared distance between two points, from four coordinates.
+export fn linen_distance_squared(ax i32, ay i32, bx i32, by i32) i64
+  return distance_squared(a: Point(x: ax, y: ay), b: Point(x: bx, y: by))
+
+# Which side of a->b the point c falls on, as a sign.
+#
+# Returns -1, 0 or 1 rather than the determinant: a caller asking "which
+# side" does not want a number whose magnitude it must then ignore, and
+# the sign is what every use of this actually branches on.
+export fn linen_orientation(ax i32, ay i32, bx i32, by i32, cx i32, cy i32) i32
+  let determinant = orient2d(a: Point(x: ax, y: ay), b: Point(x: bx, y: by), c: Point(x: cx, y: cy))
+  return if determinant > 0 then 1 else if determinant < 0 then 0 - 1 else 0

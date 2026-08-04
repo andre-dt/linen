@@ -1,0 +1,7 @@
+#~ only a shape has fields
+# `.x` on something that is not a shape. Without this the checker would
+# have to invent a meaning for reading a field off an integer.
+
+test "t"
+  let n = 5
+  throw "m" unless n.x == 1

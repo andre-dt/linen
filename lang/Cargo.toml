@@ -24,3 +24,12 @@ version = "0.0.0"
 [workspace.dependencies]
 syntax = { path = "crates/syntax" }
 compile = { path = "crates/compile" }
+
+# LLVM 18, linked through inkwell. The version is pinned to the one the
+# system provides: inkwell picks its LLVM by cargo feature, so a mismatch
+# is a link error at build time rather than anything subtle.
+inkwell = { version = "0.5", features = ["llvm18-0"] }
+
+# Only for tests: loading a linked library back in, to prove the object
+# file a build produced is one another toolchain accepts.
+libloading = "0.8"

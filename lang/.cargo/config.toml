@@ -1,6 +1,6 @@
-# llvm-sys finds LLVM through a version-stamped variable, and without it
-# the build fails with a link error that reads as if LLVM were missing
-# entirely. Pinned here so `cargo build` works from a clean checkout
-# rather than depending on what happens to be in someone's shell.
 [env]
+# Where llvm-sys finds LLVM 18. Pinned in the repo rather than left to a
+# shell variable: a build that works in one terminal and fails in another
+# is a build nobody can reason about, and this is the one dependency that
+# cannot be vendored.
 LLVM_SYS_181_PREFIX = "/usr/lib/llvm-18"

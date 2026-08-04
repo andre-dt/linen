@@ -1,0 +1,77 @@
+# orient2d — which side of a line a point is on.
+#
+# The first piece of the kernel, and the one everything else rests on.
+# "Is this point left of that edge?" is how a polygon knows its winding,
+# how a triangulation knows it is valid, and how an intersection knows it
+# happened at all.
+#
+# It is the cross product of (b - a) and (c - a):
+#
+#     > 0   c is to the LEFT of a->b   (counter-clockwise turn)
+#     = 0   the three are COLLINEAR
+#     < 0   c is to the RIGHT          (clockwise turn)
+#
+# WHY THIS IS EXACT
+# -----------------
+# In floating point this predicate is the classic source of an
+# inconsistent BREP: three points that are collinear by construction come
+# out as a tiny non-zero determinant, and the kernel decides a point is
+# left of an edge here and right of the same edge there. No amount of
+# epsilon fixes it, because the error depends on the magnitude of the
+# inputs.
+#
+# In integers there is no error to fix. The determinant is a whole
+# number, its sign is THE sign, and collinear means exactly zero.
+#
+# The coordinates are i32 microns; the products are i64. A coordinate
+# reaches 10^7, so a product of two reaches 10^14 — which is why the
+# result is i64 and why storing coordinates in i32 costs nothing here.
+
+fn orient2d(ax i32, ay i32, bx i32, by i32, cx i32, cy i32) i64
+  return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+
+# The sign on its own, for the many callers that only need the answer and
+# not the magnitude.
+fn turns_left(ax i32, ay i32, bx i32, by i32, cx i32, cy i32) bool
+  return orient2d(ax: ax, ay: ay, bx: bx, by: by, cx: cx, cy: cy) > 0
+
+fn collinear(ax i32, ay i32, bx i32, by i32, cx i32, cy i32) bool
+  return orient2d(ax: ax, ay: ay, bx: bx, by: by, cx: cx, cy: cy) == 0
+
+test "a left turn is positive"
+  # (0,0) -> (1000,0) -> (1000,1000) turns left.
+  throw "should turn left" unless turns_left(ax: 0, ay: 0, bx: 1000, by: 0, cx: 1000, cy: 1000)
+
+test "a right turn is negative"
+  throw "should not turn left" if turns_left(ax: 0, ay: 0, bx: 1000, by: 0, cx: 1000, cy: 0 - 1000)
+
+test "three points on a line are exactly collinear"
+  # The whole reason for integers: this is 0, not 1e-17.
+  throw "should be collinear" unless collinear(ax: 0, ay: 0, bx: 1000, by: 1000, cx: 2000, cy: 2000)
+
+test "collinear holds at the far end of the range"
+  # 10 metres out, where a double would have thrown away the low bits.
+  throw "should still be collinear" unless collinear(ax: 0, ay: 0, bx: 5000000, by: 5000000, cx: 10000000, cy: 10000000)
+
+test "one micron off the line is not collinear"
+  # The tightest case there is: the smallest representable deviation
+  # still registers, at full range. This is what exactness buys.
+  throw "one micron off is not collinear" if collinear(ax: 0, ay: 0, bx: 5000000, by: 5000000, cx: 10000000, cy: 10000001)
+
+test "the deviation has the sign of the side it is on"
+  throw "above the line turns left" unless turns_left(ax: 0, ay: 0, bx: 10000000, by: 0, cx: 5000000, cy: 1)
+
+test "reversing the segment flips the sign"
+  # orient2d(a,b,c) = -orient2d(b,a,c), always. An identity worth
+  # pinning: a kernel that gets this wrong has inconsistent winding.
+  throw "the sign should flip" unless orient2d(ax: 0, ay: 0, bx: 1000, by: 0, cx: 0, cy: 1000) == 0 - orient2d(ax: 1000, ay: 0, bx: 0, by: 0, cx: 0, cy: 1000)
+
+test "a degenerate segment is collinear with everything"
+  # a == b, so there is no line to be on a side of.
+  throw "a degenerate segment has no sides" unless collinear(ax: 500, ay: 500, bx: 500, by: 500, cx: 9000, cy: 1)
+
+test "the product needs the full i64 range"
+  # Two coordinates at opposite ends of the range: the determinant is
+  # about 10^14, which overflows i32 by five orders of magnitude. That
+  # this is simply the right answer is the point of computing in i64.
+  throw "the large determinant should be exact" unless orient2d(ax: 0, ay: 0, bx: 10000000, by: 0, cx: 0, cy: 10000000) == 100000000000000

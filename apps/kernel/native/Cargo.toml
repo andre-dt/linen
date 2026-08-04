@@ -1,0 +1,20 @@
+[package]
+name = "linen-native"
+version = "0.0.0"
+edition = "2021"
+
+# A cdylib, because that is what Node loads: `require` on a .node file
+# dlopens it and looks for the N-API entry point.
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+# napi-rs rather than raw N-API: Result<T, E> maps onto the error model
+# we already have, and it is much harder to tear down the process by
+# accident than with the C API.
+napi = { version = "2", default-features = false, features = ["napi8"] }
+napi-derive = "2"
+
+[build-dependencies]
+napi-build = "2"

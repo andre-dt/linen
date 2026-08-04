@@ -1,0 +1,11 @@
+{
+  "name": "@linen/kernel-native",
+  "version": "0.0.0",
+  "private": true,
+  "main": "linen.node",
+  "types": "index.d.ts",
+  "files": ["linen.node", "index.d.ts"],
+  "scripts": {
+    "build": "cd ../../../lang && cargo run -q -p cli -- build && cd ../apps/kernel/native && cargo build --release && cp target/release/liblinen_native.so linen.node"
+  }
+}

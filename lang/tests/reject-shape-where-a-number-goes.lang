@@ -1,0 +1,13 @@
+#~ but this is Point
+# Passing a shape where a number is declared. The message names the
+# shape, which is what the index in `Type::Shape` is recovered for.
+
+shape Point
+  x i32
+  y i32
+
+fn double(n i32) i64
+  return n * 2
+
+test "t"
+  throw "m" unless double(n: Point(x: 1, y: 2)) == 2

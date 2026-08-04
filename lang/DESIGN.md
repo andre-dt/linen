@@ -117,6 +117,73 @@ passada de monomorfização antes do codegen — e é a que torna possível
 escrever as partes genéricas de um kernel (buffers, listas, pipelines)
 uma vez só.
 
+## Números: inteiro, e só
+
+Não existe ponto flutuante. Geometria é aritmética **inteira**, pelo
+mesmo motivo que sistema financeiro conta centavos: o erro de
+arredondamento não é pequeno, é *acumulativo*, e num kernel BREP ele não
+produz um número um pouco errado — produz um sólido inconsistente, onde
+um ponto está dentro num teste e fora no seguinte.
+
+A unidade é o **micron**. A faixa é 1 micron a 10 metros, o que dá 10⁷
+unidades.
+
+### Armazena em 32, calcula em 64
+
+    coordenada guardada    i32     12 bytes por ponto 3D
+    toda conta             i64     folga de 10¹² sobre a faixa
+    predicados             i128    orient3d é produto triplo
+
+Os três tamanhos existem porque cada um resolve uma coisa diferente:
+
+**i32 no armazenamento** porque uma malha tem milhões de vértices e o que
+manda ali é quantos pontos cabem numa linha de cache — 5 em vez de 2,6.
+A faixa cabe: 10⁷ dos 2,1·10⁹ disponíveis.
+
+**i64 no cálculo** porque a folga do i32 é de só 215×, e geometria estoura
+por caminhos indiretos — um `pattern` que repete uma peça a 10 m da
+origem, uma soma `a + b` antes de dividir para achar um ponto médio.
+Alargar é uma instrução; com i64 esses casos simplesmente não existem.
+
+**i128 nos predicados** porque `orient3d` — "este ponto está acima ou
+abaixo deste plano?", o predicado mais usado de um kernel BREP — é um
+determinante 3×3, soma de seis produtos triplos. Produto triplo de
+coordenadas dá 10²¹, que **não cabe em i64**. Em i128 cabe com folga de
+10¹⁶, e `insphere` (produto de quatro) também.
+
+Guardar em i32 e calcular em i64 é o que dá as duas coisas: memória de
+32 e aritmética folgada. A fronteira é explícita — valor que não cabe em
+i32 na hora de guardar é erro, nunca um número que deu a volta em
+silêncio.
+
+### O que isso compra
+
+- **`orient3d` vira exato.** Sem épsilon, sem "quase coplanar": o sinal
+  do determinante é *o* sinal, não uma estimativa. Em `double` esse
+  predicado é a origem clássica de BREP inconsistente.
+- **Igualdade é igualdade.** Comparar coordenada é comparar inteiro, e
+  `LINEAR_TOLERANCE` sai do vocabulário.
+- **Determinismo entre máquinas.** O requisito de "mesma feature tree ⇒
+  mesma geometria e mesmos IDs" é dado de graça pelo inteiro. `double`
+  não dá: `fma` e reassociação mudam o último bit conforme o alvo.
+
+### O que isso não resolve
+
+Ser honesto sobre a parte difícil, porque ela chega junto com a primeira
+interseção:
+
+**Interseção não é fechada nos inteiros.** Duas retas de extremos
+inteiros se cruzam num ponto **racional**, quase nunca inteiro. Ou se
+arredonda para a grade (*snap rounding* — simples, mas mover um ponto
+pode criar interseção nova), ou se guarda o racional exato e arredonda só
+na tesselação (exato, mas o denominador cresce a cada operação
+encadeada). Não decidido; chega com `boolean`.
+
+**Curvas não têm ponto racional.** Círculo, revolve, NURBS: `sqrt` e
+`cos` saem da aritmética exata. O desenho provável é geometria planar
+exata em inteiro, curvas aproximadas na grade com erro limitado a 1
+micron.
+
 ## Sintaxe
 
 Sem chaves, sem `;`, sem `:`, sem `->`. Blocos por indentação, com
@@ -245,6 +312,26 @@ for i in 0 .. 3
 Recursão também funciona, e é a forma que sobra quando não há o que
 mutar.
 
+## A regra de trabalho: `.lang` primeiro
+
+Toda mudança de código funcional começa por um `.lang` novo que **falha**.
+O arquivo é escrito antes, roda vermelho, e só então o compilador muda
+para fazê-lo passar.
+
+Não é cerimônia — é a única forma de saber que o teste testa alguma
+coisa. Um teste escrito depois passa por construção, e já aconteceu aqui:
+81 testes continuaram verdes com o alargamento de tipos **removido de
+propósito**, porque nenhum deles observava o que dizia observar.
+
+O ciclo, então:
+
+1. escreve o `.lang` que descreve o comportamento
+2. roda e confirma que falha, **pelo motivo certo**
+3. muda o compilador
+4. roda e confirma que passa
+
+O passo 2 é o que vale. Sem ele o resto é decoração.
+
 ## Como se sabe que o compilador está são
 
 `cargo test`. Verde é são; qualquer coisa a menos não é.
@@ -289,13 +376,26 @@ Feito:
 - **parâmetros opcionais** por valor padrão, obrigatórios primeiro
 - **resolução** (`syntax/resolve.rs`) — casa argumento com o que ele
   preenche: nomeado, na ordem declarada, e nada obrigatório faltando
+- **tipos** (`syntax/check.rs`) — i32/i64/i128/bool, com a regra de
+  alargamento: guarda em 32, calcula em 64
+- **primeiro código de kernel** — `orient2d` exato em
+  `tests/kernel-orientation.lang`
+- **backend LLVM** (`compile/emit.rs`) — inteiros, chamadas, `if`,
+  `while`, `for`, curto-circuito, `throw`; os testes **rodam** por JIT
+- **shape completo** — tipo, construção e acesso a campo, checados e
+  compilados; no LLVM é **struct por valor**, sem alocação
+- **array fixo** — `[T; N]`, literal e índice, checados e compilados;
+  no LLVM é **array por valor**, sem alocação
+- **`Point` e polígono do kernel** — `orient2d`, `distance_squared`,
+  área e winding exatos em `tests/kernel-point.lang` e
+  `tests/kernel-polygon.lang`
 - **array** `[i32; 3]` e **`List<T>`**, com índice
 - **genéricos** — `shape Pair<T>`, `fn identity<T>` (sintaxe; a
   verificação chega com o typechecker)
-- **suíte** — 68 arquivos em `tests/`: 15 de linguagem (114 testes) e 53
+- **suíte** — 80 arquivos em `tests/`: 19 de linguagem (151 testes) e 61
   rejeições, uma por mensagem de erro distinta
 - **CLI `linen`** — `build`/`test`/`clean`, erro com arquivo:linha:coluna
-  e caret, relatório progressivo e sumário — 66 testes no total
+  e caret, relatório progressivo e sumário — 94 testes no total
 
 Em aberto:
 - **Encadeamento** — `.pipe(f)`, UFCS (`x.f()` = `f(x)`) ou `|>`. Não

@@ -20,7 +20,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use syntax::{lex::lex, parse::parse, resolve::resolve};
+use compile::object::write_object;
+use compile::run::run_tests;
+use syntax::{check::check, lex::lex, parse::parse, resolve::resolve};
 
 use crate::report::Report;
 use crate::{build_directory, Options};
@@ -40,10 +42,14 @@ pub fn build(options: &Options) -> Result<ExitCode, String> {
     }
 
     let mut failed = 0;
+    let mut objects = Vec::new();
     for file in &files {
-        if let Err(report) = check(file) {
-            report.print();
-            failed += 1;
+        match compile_to_object(file, options) {
+            Ok(object) => objects.push(object),
+            Err(report) => {
+                report.print();
+                failed += 1;
+            }
         }
     }
 
@@ -58,11 +64,17 @@ pub fn build(options: &Options) -> Result<ExitCode, String> {
         return Ok(ExitCode::FAILURE);
     }
 
+    // One static library, because that is the unit another toolchain
+    // links: `cc addon.o -llinen` rather than naming every object.
+    let archive = build_directory().join(format!("lib{LIBRARY_NAME}.a"));
+    make_archive(&objects, &archive)?;
+
     println!(
-        "built {} file{} for {}",
+        "built {} file{} for {} -> {}",
         files.len(),
         if files.len() == 1 { "" } else { "s" },
-        options.host.triple()
+        options.host.triple(),
+        archive.display()
     );
     Ok(ExitCode::SUCCESS)
 }
@@ -92,16 +104,33 @@ pub fn test(options: &Options) -> Result<ExitCode, String> {
         // A file carrying `#~` is a case that must be REJECTED. For it,
         // failing to compile is the pass — so the outcome is inverted
         // rather than reported as a failure of the compiler.
-        match (expected_message(&source), check(file)) {
+        match (expected_message(&source), compile(file)) {
             (None, Ok(outcome)) => {
                 // Printed per file, as it finishes: when a run is slow or
                 // hangs, the last line is the clue about where.
-                println!("{} {}", tick(), display(file));
-                for name in &outcome.tests {
-                    println!("    {name}");
+                let failures = outcome.failures();
+                println!(
+                    "{} {}",
+                    if failures == 0 { tick() } else { cross() },
+                    display(file)
+                );
+                for test in &outcome.tests {
+                    match &test.failed {
+                        // The message the author wrote, not the condition
+                        // that produced it: `throw "x == 5" unless x == 5`
+                        // says nothing a reader did not already see.
+                        Some(message) => println!("    {} {}\n      {message}", cross(), test.name),
+                        None => println!("    {}", test.name),
+                    }
                 }
-                summary.files_passed += 1;
-                summary.tests += outcome.tests.len();
+                if failures == 0 {
+                    summary.files_passed += 1;
+                    summary.tests += outcome.tests.len();
+                } else {
+                    summary.files_failed += 1;
+                    summary.tests += outcome.tests.len() - failures;
+                    summary.tests_failed += failures;
+                }
             }
             (None, Err(report)) => {
                 println!("{} {}", cross(), display(file));
@@ -135,10 +164,12 @@ pub fn test(options: &Options) -> Result<ExitCode, String> {
 struct Summary {
     files_passed: usize,
     files_failed: usize,
-    /// Tests that compiled. Not yet tests that RAN — that arrives with
-    /// the backend, and counting them as passing before then would be a
-    /// lie in the one line people read.
+    /// Tests that RAN and held.
     tests: usize,
+    /// Tests that ran and threw. Counted apart from `files_failed`
+    /// because one bad assertion in a file of twenty is not the same
+    /// news as a file that would not compile.
+    tests_failed: usize,
     /// Files that were correctly rejected. Counted apart from `tests`
     /// because they prove the opposite thing, and folding them into one
     /// number would overstate how much of the language works.
@@ -164,8 +195,16 @@ impl Summary {
                 plural(files),
             );
         } else {
+            // Which of the two failed matters: a test that threw is a
+            // bug in the code under test, a file that would not compile
+            // is a bug in the compiler or the source.
+            let assertions = if self.tests_failed > 0 {
+                format!(", {} test{} threw", self.tests_failed, plural(self.tests_failed))
+            } else {
+                String::new()
+            };
             println!(
-                "{} {} of {} file{} failed",
+                "{} {} of {} file{} failed{assertions}",
                 cross(),
                 self.files_failed,
                 files,
@@ -181,6 +220,61 @@ fn plural(count: usize) -> &'static str {
     } else {
         "s"
     }
+}
+
+/// The name of the library a build produces. One constant, so the
+/// archive and anything documenting how to link it cannot disagree.
+const LIBRARY_NAME: &str = "linen";
+
+/// Compiles one file to an object under the build directory.
+fn compile_to_object(file: &Path, options: &Options) -> Result<PathBuf, Report> {
+    let source = fs::read_to_string(file).map_err(|error| Report {
+        text: format!("{}: {error}\n", file.display()),
+    })?;
+    let tokens = lex(&source)
+        .map_err(|error| Report::new(file, &source, error.span, &error.message))?;
+    let unit = parse(&tokens)
+        .map_err(|error| Report::new(file, &source, error.span, &error.message))?;
+    resolve(&unit)
+        .map_err(|error| Report::new(file, &source, error.span, &error.message))?;
+    check(&unit)
+        .map_err(|error| Report::new(file, &source, error.span, &error.message))?;
+
+    let name = file.file_stem().unwrap_or_default().to_string_lossy().to_string();
+    let object = build_directory().join(format!("{name}.o"));
+    write_object(&unit, &name, options.host, &object).map_err(|error| Report {
+        text: format!("{}: {}\n", file.display(), error.message),
+    })?;
+    Ok(object)
+}
+
+/// Bundles the objects into a static library with `ar`.
+///
+/// Shelling out rather than writing the archive format by hand: `ar` is
+/// on every machine that has a linker, and the format has enough
+/// variants that a hand-rolled writer would be a source of "works here,
+/// not there".
+fn make_archive(objects: &[PathBuf], archive: &Path) -> Result<(), String> {
+    if archive.exists() {
+        // `ar r` updates in place, so a stale member from a deleted
+        // source would survive. Removing first makes the archive reflect
+        // exactly what was just built.
+        fs::remove_file(archive)
+            .map_err(|error| format!("cannot remove {}: {error}", archive.display()))?;
+    }
+    let output = std::process::Command::new("ar")
+        .arg("crs")
+        .arg(archive)
+        .args(objects)
+        .output()
+        .map_err(|error| format!("cannot run `ar`: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "`ar` failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(())
 }
 
 // =====================================================================
@@ -205,15 +299,29 @@ pub fn clean() -> Result<ExitCode, String> {
 
 #[derive(Debug)]
 struct Outcome {
-    /// The tests the file declares, in source order.
-    tests: Vec<String>,
+    /// What each test did, in source order.
+    tests: Vec<TestOutcome>,
 }
 
-/// Compiles one file: text to tree, then resolution. The typechecker and
-/// the backend join here as they land, and every command picks them up
-/// at once — which is the reason all three go through this single
-/// function.
-fn check(file: &Path) -> Result<Outcome, Report> {
+#[derive(Debug)]
+struct TestOutcome {
+    name: String,
+    /// The message of the `throw` that fired, or None if it held.
+    failed: Option<String>,
+}
+
+impl Outcome {
+    fn failures(&self) -> usize {
+        self.tests.iter().filter(|test| test.failed.is_some()).count()
+    }
+}
+
+/// Compiles one file and runs its tests: text to tree, resolution,
+/// types, IR, and then the JIT.
+///
+/// One function for all three commands, so they cannot disagree about
+/// how a file is found, compiled or reported.
+fn compile(file: &Path) -> Result<Outcome, Report> {
     let source = fs::read_to_string(file).map_err(|error| Report {
         text: format!("{}: {error}\n", file.display()),
     })?;
@@ -224,17 +332,45 @@ fn check(file: &Path) -> Result<Outcome, Report> {
         .map_err(|error| Report::new(file, &source, error.span, &error.message))?;
     resolve(&unit)
         .map_err(|error| Report::new(file, &source, error.span, &error.message))?;
+    // Shapes and arrays are not typechecked yet; a file that uses them
+    // says so with `#!`, and the marker goes away as each lands.
+    if !source.lines().any(|line| line.trim_start().starts_with("#!")) {
+        check(&unit)
+            .map_err(|error| Report::new(file, &source, error.span, &error.message))?;
+    }
 
-    let tests = unit
-        .items
-        .iter()
-        .filter_map(|item| match item {
-            syntax::ast::Item::Test(test) => Some(test.name.clone()),
-            _ => None,
-        })
-        .collect();
+    // Shapes and arrays reach neither the checker nor the backend yet,
+    // so a `#!` file stops at "it parsed and resolved". Reporting its
+    // tests as having run would be a lie in the one line people read.
+    if source.lines().any(|line| line.trim_start().starts_with("#!")) {
+        let tests = unit
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                syntax::ast::Item::Test(test) => Some(TestOutcome {
+                    name: test.name.clone(),
+                    failed: None,
+                }),
+                _ => None,
+            })
+            .collect();
+        return Ok(Outcome { tests });
+    }
 
-    Ok(Outcome { tests })
+    let name = file.file_stem().unwrap_or_default().to_string_lossy();
+    let ran = run_tests(&unit, &name).map_err(|error| Report {
+        text: format!("{}: {}\n", file.display(), error.message),
+    })?;
+
+    Ok(Outcome {
+        tests: ran
+            .into_iter()
+            .map(|test| TestOutcome {
+                name: test.name,
+                failed: test.failed,
+            })
+            .collect(),
+    })
 }
 
 // =====================================================================
@@ -408,8 +544,11 @@ mod tests {
         fs::write(&file, "test \"first\"\n  throw \"m\" unless 1 == 1\n\ntest \"second\"\n  throw \"m\" unless 2 == 2\n")
             .expect("should write");
 
-        let outcome = check(&file).expect("should compile");
-        assert_eq!(outcome.tests, vec!["first", "second"]);
+        let outcome = compile(&file).expect("should compile");
+        let names: Vec<&str> = outcome.tests.iter().map(|test| test.name.as_str()).collect();
+        assert_eq!(names, vec!["first", "second"]);
+        // And both held — they are `1 == 1` and `2 == 2`.
+        assert_eq!(outcome.failures(), 0);
 
         let _ = fs::remove_file(&file);
     }
@@ -419,7 +558,7 @@ mod tests {
         let file = std::env::temp_dir().join("linen-broken-test.lang");
         fs::write(&file, "test \"t\"\n  throw \"m\" unless 1 +\n").expect("should write");
 
-        let report = check(&file).expect_err("should fail");
+        let report = compile(&file).expect_err("should fail");
         assert!(report.text.contains(":2:"), "should name the line: {}", report.text);
 
         let _ = fs::remove_file(&file);
