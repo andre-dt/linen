@@ -11,8 +11,17 @@
 // which reads as emphasis where none was meant.
 // =====================================================================
 
-use draw::gallery::{LABEL_SIZE, TILE_WIDTH};
 use draw::text::{ellipsised, measure};
+
+/// A tile and its label size, for these tests.
+///
+/// Named here rather than taken from the gallery: the size a mosaic
+/// happens to use is not what is being tested — that a label fits
+/// WHATEVER width it is given is. Tying the test to the layout's
+/// current numbers would make it pass or fail for reasons that have
+/// nothing to do with ellipsising.
+const TILE_WIDTH: usize = 960;
+const LABEL_SIZE: f32 = TILE_WIDTH as f32 / 28.0;
 
 #[test]
 fn a_long_label_is_cut_to_fit() {

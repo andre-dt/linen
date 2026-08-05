@@ -236,13 +236,36 @@ fn an_interior_edge_is_not_dotted() {
     let mesh = box_mesh(400);
     let image = render(&mesh, 320, 260, View::Isometric);
 
+    // What counts as stroke, taken FROM THE IMAGE rather than fixed.
+    //
+    // A fixed threshold breaks whenever the rendering changes what a
+    // stroke pixel is worth. Supersampling did exactly that: an edge
+    // pixel is now averaged with its neighbours, so the brightest sum
+    // along a continuous edge fell from over 500 to about 485, and a
+    // test asking for 500 called every other column a gap on output
+    // that had none.
+    //
+    // Halfway between the brightest thing in the band and the faces
+    // below it separates the two whatever the absolute values are.
+    let sum = |x: i64, y: i64| -> i64 {
+        image
+            .at(x, y)
+            .map(|c| c[0] as i64 + c[1] as i64 + c[2] as i64)
+            .unwrap_or(0)
+    };
+    let brightest = (100..220)
+        .flat_map(|x| (60..200).map(move |y| (x, y)))
+        .map(|(x, y)| sum(x, y))
+        .max()
+        .unwrap_or(0);
+    let stroke = brightest * 3 / 4;
+
     // The middle band, where the three interior edges of a box meet.
     let mut drawn = Vec::new();
     for x in 100..220 {
         let mut bright = 0;
         for y in 60..200 {
-            let Some(colour) = image.at(x, y) else { continue };
-            if colour[0] as i64 + colour[1] as i64 + colour[2] as i64 > 500 {
+            if sum(x, y) > stroke {
                 bright += 1;
             }
         }
@@ -522,4 +545,175 @@ fn a_compressed_png_still_says_what_it_is() {
     let height = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
     assert_eq!(width, 64);
     assert_eq!(height, 48);
+}
+
+/// The ink-weighted centre of one ROW, in 256ths of a pixel.
+///
+/// The mirror of `centre_of_column`, for lines steeper than 45 degrees:
+/// those advance a row at a time, so a row is where their ink is
+/// shared between two pixels.
+fn centre_of_row(image: &Image, y: i64) -> Option<i64> {
+    let mut weight = 0i64;
+    let mut moment = 0i64;
+    for x in 0..image.width as i64 {
+        let amount = ink(image, x, y);
+        weight += amount;
+        moment += amount * x * 256;
+    }
+    if weight == 0 {
+        return None;
+    }
+    Some(moment / weight)
+}
+
+// A LINE DOES NOT DRIFT AWAY FROM THE PATH IT DRAWS.
+//
+// The stroke is centred on the true line at every step, not merely on
+// average. Measured against the exact position rather than against the
+// neighbouring rows, because drift is smooth: it accumulates a little
+// at every step, so consecutive rows always look consistent with each
+// other while the whole stroke slides off the geometry.
+//
+// It was real. The minor coordinate was accumulated as `minor += rise
+// / span` — an integer division computed once and added repeatedly.
+// The same rounding error at every step is a DRIFT rather than a
+// spread, and it grew until the stroke sat a quarter pixel off the
+// line, stalling and then catching up. Along a long edge that reads as
+// serration.
+//
+// Computing the position from the step, `rise * step / span`, keeps
+// the whole quotient and lets no error survive into the next step.
+#[test]
+fn a_steep_line_stays_on_the_true_path() {
+    // A slope chosen so the division has a large remainder at every
+    // step: 56 across 59 gives 4 with 44 left over, which is where an
+    // accumulated error grows fastest. A whole slope like 1 or 1/2
+    // lands on pixel centres and would hide the defect entirely.
+    let (from, to) = ((4i64, 2i64), (60i64, 61i64));
+    let mut image = Image::new(72, 72);
+    line_into(&mut image, (from.0, from.1), (to.0, to.1), INK);
+
+    let span = to.1 - from.1;
+    let mut worst = 0;
+    for y in from.1 + 1..to.1 {
+        let Some(drawn) = centre_of_row(&image, y) else {
+            continue;
+        };
+        // Where the line truly is at this row, in 256ths of a pixel.
+        let exact = from.0 * 256 + (to.0 - from.0) * 256 * (y - from.1) / span;
+        worst = worst.max((drawn - exact).abs());
+    }
+
+    // An eighth of a pixel. The exact formula puts the position dead
+    // on the true line — the only error left is the rounding of the
+    // coverage itself, which the ink-weighted centre mostly averages
+    // out. The drifting one reached 58 on this line and grew with its
+    // length, so the threshold sits between the two rather than at a
+    // round number.
+    assert!(
+        worst <= 32,
+        "the stroke sits {worst} 256ths of a pixel off the true line at its worst"
+    );
+}
+
+// A FLAT FACE HAS NO SEAM WHERE ITS TRIANGLES MEET.
+//
+// A quad face is drawn as two triangles, and the diagonal between them
+// is not geometry — it is an artefact of tessellation. The surface has
+// to look continuous across it.
+//
+// Smoothing the faces broke exactly this. Coverage is computed from a
+// pixel's distance to the nearest side, so along the shared diagonal
+// each triangle reported about half coverage and blended; the seam
+// came out darker than the face around it, and every box showed the
+// diagonal splitting each of its quads. Measured on a rendered box:
+// 260 pixels dipping from 89 to as low as 53.
+//
+// The fix is that only a side on the shape's BOUNDARY fades. A side
+// shared with another triangle reports fully inside, so the neighbour
+// meets it exactly.
+#[test]
+fn a_flat_face_shows_no_triangulation() {
+    use draw::render::{render, Mesh, MeshKind, Point3, View};
+
+    // A square face as two triangles, seen straight on: the diagonal
+    // runs corner to corner, and any seam lies along it.
+    let size = 1000;
+    let mesh = Mesh {
+        points: vec![
+            Point3 { x: 0, y: 0, z: 0 },
+            Point3 { x: size, y: 0, z: 0 },
+            Point3 { x: size, y: size, z: 0 },
+            Point3 { x: 0, y: size, z: 0 },
+        ],
+        triangles: vec![0, 2, 1, 0, 3, 2],
+        kind: MeshKind::Solid,
+    };
+    let image = render(&mesh, 200, 200, View::named("top").unwrap());
+
+    // A pixel darker than both its horizontal neighbours, well inside
+    // the face. On a continuous surface there are none.
+    let mut dips = Vec::new();
+    for y in 2..image.height as i64 - 2 {
+        for x in 2..image.width as i64 - 2 {
+            let (Some(here), Some(left), Some(right)) =
+                (image.at(x, y), image.at(x - 1, y), image.at(x + 1, y))
+            else {
+                continue;
+            };
+            let (here, left, right) = (here[0] as i64, left[0] as i64, right[0] as i64);
+            // Only inside the face: both neighbours are the same shade
+            // and it is not the background.
+            if left == right && left > 40 && here + 3 < left {
+                dips.push((x, y, left, here));
+            }
+        }
+    }
+
+    assert!(
+        dips.is_empty(),
+        "{} pixels are darker than the face around them — the triangulation \
+         is showing through: {:?}",
+        dips.len(),
+        &dips[..dips.len().min(5)]
+    );
+}
+
+// A STEEP LINE LEAVES NO COLUMN UNPAINTED.
+//
+// Wu's algorithm steps along the MAJOR axis and puts two pixels at each
+// step, sharing one pixel's worth of ink across the minor axis. For a
+// line of slope one that is a solid stroke; for a line of slope TWO it
+// is not — the minor coordinate advances two whole pixels per step, so
+// every other column is skipped entirely and the stroke comes out as a
+// chain of dashes stepping down.
+//
+// It is exactly the case the isometric projection produces. `screen_x =
+// x - y` and `screen_y = (x + y) / 2 - z` put every box edge on a 2:1
+// slope, so this is the slope MOST of the pictures are drawn at, not an
+// edge case. Measured on a rendered solid, the fold between two faces
+// read `123, 226, 148` on one row and the same three values two columns
+// over on the next, with the column between them untouched.
+#[test]
+fn a_two_to_one_diagonal_has_no_gaps() {
+    let mut image = Image::new(64, 64);
+    // Slope exactly 2: the isometric edge.
+    line_into(&mut image, (10, 10), (30, 50), INK);
+
+    // Every column between the ends must hold some ink. A stroke that
+    // steps two at a time leaves half of them empty.
+    let mut empty = Vec::new();
+    for x in 12..29 {
+        let held: i64 = (0..image.height as i64).map(|y| ink(&image, x, y)).sum();
+        if held == 0 {
+            empty.push(x);
+        }
+    }
+
+    assert!(
+        empty.is_empty(),
+        "{} columns hold no ink at all ({empty:?}) — the stroke skips a \
+         column every step instead of joining up",
+        empty.len()
+    );
 }

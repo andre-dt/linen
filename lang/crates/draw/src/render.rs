@@ -126,22 +126,57 @@ impl Image {
         // The depth is recorded whenever the line covers a pixel more
         // than it leaves uncovered.
         //
-        // Not only at FULL. An anti-aliased stroke rarely covers a
-        // pixel completely — a diagonal splits its ink between two —
-        // so recording only at FULL left every partial pixel claiming
-        // the depth of whatever was behind it. The next face drawn
-        // over that pixel won, and the edge came out drawn on every
-        // OTHER column: dotted.
+        // Half rather than FULL: an anti-aliased stroke rarely covers a
+        // pixel completely — a diagonal splits its ink between two — so
+        // recording only at FULL left every partial pixel claiming the
+        // depth of whatever was behind it.
         //
         // Not at any coverage either. A pixel the line barely clips is
         // mostly the thing behind it, and claiming the near depth there
         // would hide what is still visible through the gap.
         //
-        // Half is the line between those: the pixel belongs to whatever
-        // covers most of it.
+        // As it stands this only matters to something drawn AFTER an
+        // edge, and edges are drawn last — so nothing observes it
+        // today. It is kept because the rule is right for the moment
+        // something is.
         if coverage * 2 >= FULL {
             self.depth[at] = depth;
         }
+        let behind = self.pixels[at];
+        let mix = |ink: u8, under: u8| -> u8 {
+            ((ink as i64 * coverage + under as i64 * (FULL - coverage)) / FULL) as u8
+        };
+        self.pixels[at] = [
+            mix(colour[0], behind[0]),
+            mix(colour[1], behind[1]),
+            mix(colour[2], behind[2]),
+        ];
+    }
+
+    /// Mixes a face's colour in by how much of the pixel it covers,
+    /// if nothing nearer is already there.
+    ///
+    /// The depth is claimed only when the face covers most of the
+    /// pixel. A face that merely clips a pixel leaves most of it
+    /// belonging to whatever is behind, and claiming the near depth
+    /// there would hide a surface still visible through the gap — the
+    /// silhouette would grow by a pixel all the way round.
+    fn blend_if_nearer(&mut self, x: i64, y: i64, coverage: i64, depth: i64, colour: [u8; 3]) {
+        if x < 0 || y < 0 || x >= self.width as i64 || y >= self.height as i64 {
+            return;
+        }
+        let coverage = coverage.clamp(0, FULL);
+        if coverage == 0 {
+            return;
+        }
+        let at = y as usize * self.width + x as usize;
+        if depth <= self.depth[at] {
+            return;
+        }
+        if coverage * 2 >= FULL {
+            self.depth[at] = depth;
+        }
+
         let behind = self.pixels[at];
         let mix = |ink: u8, under: u8| -> u8 {
             ((ink as i64 * coverage + under as i64 * (FULL - coverage)) / FULL) as u8
@@ -321,7 +356,20 @@ fn edge(ax: i64, ay: i64, bx: i64, by: i64, px: i64, py: i64) -> i64 {
 /// conversion because it is the version that is obviously correct — and
 /// a renderer whose bugs look like geometry bugs would waste more time
 /// than it saves.
-fn triangle(image: &mut Image, a: Projected, b: Projected, c: Projected, colour: [u8; 3]) {
+fn triangle(
+    image: &mut Image,
+    a: Projected,
+    b: Projected,
+    c: Projected,
+    colour: [u8; 3],
+    // How brightly each corner is lit, in 256ths.
+    //
+    // Per CORNER rather than per triangle, so the face is shaded
+    // ACROSS: a real surface catches more light where it faces the
+    // source, and a flat colour is what makes a solid read as a
+    // diagram rather than an object.
+    corner_light: [i64; 3],
+) {
     let area = edge(a.x, a.y, b.x, b.y, c.x, c.y);
     if area == 0 {
         return; // Degenerate on screen: no pixels to fill.
@@ -329,19 +377,43 @@ fn triangle(image: &mut Image, a: Projected, b: Projected, c: Projected, colour:
     // Wind consistently, so the inside test has one sign to look for.
     let (b, c) = if area < 0 { (c, b) } else { (b, c) };
 
-    let left = a.x.min(b.x).min(c.x).max(0);
-    let right = a.x.max(b.x).max(c.x).min(image.width as i64 - 1);
-    let top = a.y.min(b.y).min(c.y).max(0);
-    let bottom = a.y.max(b.y).max(c.y).min(image.height as i64 - 1);
+    // One pixel wider than the triangle on every side.
+    //
+    // The pixels a boundary only clips lie OUTSIDE it — that is what
+    // makes them partly covered — so a box drawn tight to the corners
+    // never visits them and the smoothing would have nothing to work
+    // on.
+    let left = (a.x.min(b.x).min(c.x) - 1).max(0);
+    let right = (a.x.max(b.x).max(c.x) + 1).min(image.width as i64 - 1);
+    let top = (a.y.min(b.y).min(c.y) - 1).max(0);
+    let bottom = (a.y.max(b.y).max(c.y) + 1).min(image.height as i64 - 1);
 
     for y in top..=bottom {
         for x in left..=right {
             let first = edge(a.x, a.y, b.x, b.y, x, y);
             let second = edge(b.x, b.y, c.x, c.y, x, y);
             let third = edge(c.x, c.y, a.x, a.y, x, y);
+            // How much of this pixel the triangle covers.
+            //
+            // The half-space test alone is BINARY — inside or outside,
+            // nothing between — and a binary test is a staircase
+            // wherever the boundary is not axis-aligned. The wire edges
+            // were anti-aliased and the faces were not, so a solid came
+            // out with clean strokes and jagged fills; on the
+            // boundaries no drawn edge covers, the stairs were all
+            // there was to see.
+            // A plain inside test: the pixel's centre is in the
+            // triangle or it is not.
+            //
+            // No coverage formula any more. Smoothing comes from
+            // SAMPLING — the picture is drawn several times larger and
+            // averaged down — so a formula here would smooth twice,
+            // and it was the formula's thresholds that produced the
+            // corner, seam and fold defects in the first place.
             if first < 0 || second < 0 || third < 0 {
                 continue;
             }
+            let coverage = FULL;
             // Depth INTERPOLATED across the face, by barycentric
             // weights, rather than one value for the whole triangle.
             //
@@ -357,8 +429,192 @@ fn triangle(image: &mut Image, a: Projected, b: Projected, c: Projected, colour:
             } else {
                 (second * a.depth + third * b.depth + first * c.depth) / total
             };
-            image.set_if_nearer(x, y, depth, colour);
+
+            // The colour VARIES across the face.
+            //
+            // A flat face painted one value is what makes a solid read
+            // as a diagram: a real surface catches more light where it
+            // faces the source and less where it turns away, and even
+            // a plane does that because the light is at a finite place
+            // rather than infinitely far.
+            //
+            // Interpolated by the same barycentric weights the depth
+            // uses, from a brightness computed at each corner. That is
+            // Gouraud shading, and on a flat triangle it costs one
+            // multiply per channel per pixel.
+            let colour = if total == 0 {
+                colour
+            } else {
+                // The same barycentric weights the depth uses. Gouraud
+                // shading: one multiply per channel per pixel.
+                let lit = (second * corner_light[0]
+                    + third * corner_light[1]
+                    + first * corner_light[2])
+                    / total;
+                [
+                    ((colour[0] as i64 * lit) / FULL).clamp(0, 255) as u8,
+                    ((colour[1] as i64 * lit) / FULL).clamp(0, 255) as u8,
+                    ((colour[2] as i64 * lit) / FULL).clamp(0, 255) as u8,
+                ]
+            };
+            image.blend_if_nearer(x, y, coverage, depth, colour);
         }
+    }
+}
+
+/// For each triangle, which of its three sides — a-b, b-c, c-a — lie
+/// on the shape's boundary rather than being shared with a neighbour.
+///
+/// A side used by exactly two triangles is interior; anything else is
+/// on the outside. That includes a side shared by two triangles that
+/// face DIFFERENT ways, such as the fold between two faces of a box:
+/// there the surface really does turn, and smoothing it is right.
+///
+/// The same information `outline` derives for drawing edges, computed
+/// separately because it is needed per-triangle-per-side rather than
+/// per-edge.
+fn boundary_sides(mesh: &Mesh) -> Vec<[bool; 3]> {
+    use std::collections::HashMap;
+
+    let mut shared: HashMap<(usize, usize), usize> = HashMap::new();
+    for corner in mesh.triangles.chunks_exact(3) {
+        for (from, to) in [
+            (corner[0], corner[1]),
+            (corner[1], corner[2]),
+            (corner[2], corner[0]),
+        ] {
+            let key = if from < to { (from, to) } else { (to, from) };
+            *shared.entry(key).or_insert(0) += 1;
+        }
+    }
+
+    mesh.triangles
+        .chunks_exact(3)
+        .map(|corner| {
+            let mut outer = [true; 3];
+            for (side, (from, to)) in [
+                (corner[0], corner[1]),
+                (corner[1], corner[2]),
+                (corner[2], corner[0]),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let key = if from < to { (from, to) } else { (to, from) };
+                outer[side] = shared.get(&key).copied().unwrap_or(1) < 2;
+            }
+            outer
+        })
+        .collect()
+}
+
+/// How much of a pixel a triangle covers, out of `FULL`.
+///
+/// Each `edge` value is twice the area of the triangle made by the
+/// pixel and one side, which is the pixel's distance from that side
+/// scaled by the side's length. Dividing by the length gives the
+/// distance, and a pixel within half a pixel of a side is covered in
+/// proportion to how far in it reaches.
+///
+/// The NEAREST side decides. At a corner two sides cut the same pixel,
+/// and the one cutting away most governs how much is left; taking the
+/// minimum is what keeps a corner from coming out brighter than the
+/// edges meeting there.
+///
+/// Approximate rather than exact — true coverage of a square by a
+/// half-plane needs an integral — but at this size the difference is
+/// invisible, and it is the same integer arithmetic the lines use.
+fn coverage_of(
+    first: i64,
+    second: i64,
+    third: i64,
+    a: Projected,
+    b: Projected,
+    c: Projected,
+    outer: [bool; 3],
+) -> i64 {
+    // An interior side contributes nothing to the fade: it is reported
+    // as fully inside however near the pixel is, so the neighbouring
+    // triangle's own fill meets it exactly.
+    let along = |from: Projected, to: Projected, doubled: i64, outer: bool| -> i64 {
+        if doubled < 0 {
+            // Outside this side, whichever kind it is.
+            let length = integer_hypotenuse(to.x - from.x, to.y - from.y).max(1);
+            return doubled * FULL / length;
+        }
+        if !outer {
+            return FULL;
+        }
+        let length = integer_hypotenuse(to.x - from.x, to.y - from.y).max(1);
+        doubled * FULL / length
+    };
+
+    let nearest = along(a, b, first, outer[0])
+        .min(along(b, c, second, outer[1]))
+        .min(along(c, a, third, outer[2]));
+
+    // A pixel whose centre is more than half a pixel inside is fully
+    // covered; more than half a pixel outside, not at all; between
+    // those it takes the share it reaches.
+    (nearest + FULL / 2).clamp(0, FULL)
+}
+
+/// The length of a vector, in whole pixels, without floating point.
+///
+/// The kernel avoids roots because geometry must be exact; here the
+/// number only scales a coverage that is approximate anyway, so an
+/// integer root is enough — and it keeps this file free of floating
+/// point like the rest of the project.
+fn integer_hypotenuse(run: i64, rise: i64) -> i64 {
+    let squared = run * run + rise * rise;
+    if squared <= 0 {
+        return 0;
+    }
+    let mut root = squared;
+    let mut previous = 0;
+    // Newton's method on integers: each step is nearer, and it stops
+    // when it stops moving.
+    while root != previous {
+        previous = root;
+        root = (root + squared / root) / 2;
+    }
+    root
+}
+
+/// A line drawn `thickness` samples wide, centred on the path.
+///
+/// Offset perpendicular to the run rather than by drawing several
+/// parallel lines from the endpoints: parallel copies of a diagonal
+/// are spaced by whichever axis they were offset along, so the stroke
+/// comes out wider along one direction than the other and a box's
+/// edges look uneven where they turn.
+fn thick_line(
+    image: &mut Image,
+    a: Projected,
+    b: Projected,
+    colour: [u8; 3],
+    bias: i64,
+    thickness: i64,
+) {
+    if thickness <= 1 {
+        line(image, a, b, colour, bias);
+        return;
+    }
+
+    // Perpendicular to the run, in whole samples. A steep line is
+    // widened across x, a shallow one across y — which is the axis the
+    // stroke is thin along in each case.
+    let steep = (b.y - a.y).abs() > (b.x - a.x).abs();
+    let half = thickness / 2;
+    for step in -half..=half {
+        let (dx, dy) = if steep { (step, 0) } else { (0, step) };
+        line(
+            image,
+            Projected { x: a.x + dx, y: a.y + dy, depth: a.depth },
+            Projected { x: b.x + dx, y: b.y + dy, depth: b.depth },
+            colour,
+            bias,
+        );
     }
 }
 
@@ -426,13 +682,28 @@ fn line(image: &mut Image, a: Projected, b: Projected, colour: [u8; 3], bias: i6
         return;
     }
 
-    // The minor coordinate, in 256ths of a pixel, and how much it
-    // advances per step.
+    // How far the minor axis climbs over the whole run, in 256ths of a
+    // pixel.
     let rise = (b.y - a.y) * FULL;
-    let mut minor = a.y * FULL;
 
     for step in 0..=span {
         let along = a.x + step;
+
+        // The minor coordinate, computed FROM THE STEP rather than
+        // accumulated.
+        //
+        // Accumulating `rise / span` was a real defect. That division
+        // is integer, so every step carried the same rounding error,
+        // and the same error added repeatedly is a DRIFT rather than a
+        // spread: the drawn position slipped behind the true one until
+        // it snapped forward a whole pixel, so the stroke stalled for
+        // two or three steps and then jumped. Along a long edge that
+        // reads as serration.
+        //
+        // Multiplying first keeps the whole quotient, so the position
+        // at a step is exact to a 256th and no error survives into the
+        // next one.
+        let minor = a.y * FULL + rise * step / span;
         // Rounded toward negative infinity rather than toward zero, so
         // a line above and below the axis are treated alike: integer
         // division in Rust truncates, which would bunch the ink toward
@@ -456,8 +727,6 @@ fn line(image: &mut Image, a: Projected, b: Projected, colour: [u8; 3], bias: i6
             image.blend(along, whole, FULL - fraction, depth, colour);
             image.blend(along, whole + 1, fraction, depth, colour);
         }
-
-        minor += rise / span;
     }
 }
 
@@ -500,6 +769,125 @@ const FACE: [u8; 3] = [96, 146, 226];
 /// Shading from the normal means two triangles of one flat face get the
 /// same colour BECAUSE they face the same way, which is the property
 /// that was wanted all along, and it holds for any mesh.
+/// The outward normal of a triangle, from its model points.
+///
+/// i64 is enough: coordinates reach 10^7 and this is a product of two,
+/// so 10^14.
+fn face_normal(a: Point3, b: Point3, c: Point3) -> (i64, i64, i64) {
+    let (ux, uy, uz) = (b.x - a.x, b.y - a.y, b.z - a.z);
+    let (vx, vy, vz) = (c.x - a.x, c.y - a.y, c.z - a.z);
+    (
+        uy * vz - uz * vy,
+        uz * vx - ux * vz,
+        ux * vy - uy * vx,
+    )
+}
+
+/// The model's bounding box: the two opposite corners.
+fn extent(mesh: &Mesh) -> (Point3, Point3) {
+    let first = mesh.points.first().copied().unwrap_or(Point3 { x: 0, y: 0, z: 0 });
+    let mut low = first;
+    let mut high = first;
+    for point in &mesh.points {
+        low = Point3 { x: low.x.min(point.x), y: low.y.min(point.y), z: low.z.min(point.z) };
+        high = Point3 { x: high.x.max(point.x), y: high.y.max(point.y), z: high.z.max(point.z) };
+    }
+    (low, high)
+}
+
+/// How brightly one POINT of a surface is lit, in 256ths.
+///
+/// A point light rather than a direction. With a light infinitely far
+/// away every point of a plane is lit identically, and a flat face
+/// comes out one flat colour — which is exactly the diagram look this
+/// is meant to replace. A light at a finite place is nearer to one end
+/// of a face than the other, and that difference IS the gradient.
+///
+/// Placed relative to the model's own size, above and to one side, so
+/// a box in microns and the same box in millimetres light the same.
+fn lighting(at: Point3, normal: (i64, i64, i64), bounds: (Point3, Point3)) -> i64 {
+    let (low, high) = bounds;
+    let reach = (high.x - low.x).max(high.y - low.y).max(high.z - low.z).max(1);
+
+    // Over the viewer's shoulder, on the SAME side as the camera.
+    //
+    // The isometric view looks down (1, 1, 1) — the near corner of a
+    // box faces (-1, -1, +1) — so the visible faces point toward
+    // negative x, negative y and positive z. A light behind the model
+    // lights only the three faces the viewer cannot see, and every
+    // visible one falls to the ambient floor: a cube came out two flat
+    // sides at the same value with no gradient at all.
+    //
+    // CLOSE on purpose, about one model-width out. At twice the size
+    // the falloff across a face spanned six shades of 256 —
+    // technically a gradient, and invisible. The nearer the light, the
+    // more the angle to it turns between one end of a face and the
+    // other, and that turning is the whole effect.
+    //
+    // Off-centre in x and y rather than symmetric, so the two vertical
+    // faces of a box catch DIFFERENT amounts. A symmetric light makes
+    // them equal, and two adjacent faces at one value read as a single
+    // surface — the form stops being legible.
+    // Offset from the model's CENTRE by a direction, rather than by
+    // arithmetic on the bounds. The earlier version subtracted half a
+    // reach from a centre that was itself half a reach in, so the
+    // light landed at y = 0 — exactly in the plane of the front face,
+    // whose cosine was then precisely zero and whose brightness fell
+    // to the ambient floor. Two faces at 28 and 28.
+    let centre = Point3 {
+        x: low.x + (high.x - low.x) / 2,
+        y: low.y + (high.y - low.y) / 2,
+        z: low.z + (high.z - low.z) / 2,
+    };
+    // Toward the viewer and up.
+    //
+    // The viewer is at POSITIVE x and y. The projection is
+    // `screen_x = x - y`, `screen_y = (x + y) / 2 - z`, with depth
+    // `-(x + y + z)` where larger is nearer — so the nearest point is
+    // the one with the smallest sum, and the faces a viewer sees are
+    // the ones pointing along +x, +y and +z. A light on the negative
+    // side lights exactly the three faces that are hidden, and every
+    // visible one falls to the ambient floor: two sides at 28 and 28,
+    // with a correctly-shaded top.
+    //
+    // Deliberately NOT symmetric in x and y: a symmetric light gives
+    // the two vertical faces of a box the same brightness, and two
+    // adjacent faces at one value read as a single surface.
+    let light = Point3 {
+        x: centre.x + reach * 3 / 2,
+        y: centre.y + reach,
+        z: centre.z + reach * 2,
+    };
+
+    let to_light = ((light.x - at.x) as f64, (light.y - at.y) as f64, (light.z - at.z) as f64);
+    let distance = (to_light.0 * to_light.0 + to_light.1 * to_light.1 + to_light.2 * to_light.2).sqrt();
+    let length = ((normal.0 as f64).powi(2) + (normal.1 as f64).powi(2) + (normal.2 as f64).powi(2)).sqrt();
+    if distance == 0.0 || length == 0.0 {
+        return FULL;
+    }
+
+    let cosine = ((normal.0 as f64 * to_light.0
+        + normal.1 as f64 * to_light.1
+        + normal.2 as f64 * to_light.2)
+        / (distance * length))
+        .clamp(-1.0, 1.0);
+
+    // Ambient plus diffuse.
+    //
+    // The ambient share is small: with it at half, a face turned away
+    // and a face facing the light differed by only a quarter of their
+    // brightness, and a cube's three visible sides came out nearly the
+    // same shade — the solid read as one flat silhouette rather than
+    // three surfaces meeting. Onshape's cube separates them clearly,
+    // and the separation is what makes the form legible.
+    //
+    // Not zero either: a face turned fully away would then be black,
+    // and a black face beside a dark background reads as a hole.
+    let brightness = 0.30 + 0.85 * cosine.max(0.0);
+    (brightness * FULL as f64) as i64
+}
+
+#[allow(dead_code)]
 fn shade(a: Point3, b: Point3, c: Point3) -> [u8; 3] {
     // The face normal, as a cross product. i64 is enough: coordinates
     // reach 10^7 and this is a product of two, so 10^14.
@@ -614,7 +1002,74 @@ fn dot(image: &mut Image, at: Projected, radius: i64, colour: [u8; 3]) {
 }
 
 /// Renders a mesh, centred and scaled to fit.
+/// How many times larger the picture is drawn before being reduced.
+///
+/// Three, so every pixel of the result averages nine samples.
+///
+/// SUPERSAMPLING rather than a coverage formula. A formula has to
+/// approximate how much of a pixel a shape covers — distance to the
+/// nearest edge, a threshold at a half — and every threshold has a
+/// case it gets wrong. Three separate ones were tuned and retuned
+/// here: a corner came out brighter than the edges meeting it, a
+/// triangulation seam showed through a flat face, a fold beaded where
+/// the depth rounded against the stroke.
+///
+/// Sampling has no threshold. A boundary pixel gets exactly the
+/// fraction of samples that landed inside, corners and seams and folds
+/// alike, because there is no special case to get wrong — the geometry
+/// answers the question directly.
+///
+/// Three rather than two because a 2:1 isometric edge advances two
+/// pixels per row, so two samples across leaves the same steps; and
+/// rather than four because nine samples already put the error below
+/// what a byte of colour can show, and the cost is quadratic.
+const SUPERSAMPLE: usize = 3;
+
+/// Renders a mesh, centred and scaled to fit.
+///
+/// Drawn large and reduced, which is where the smoothing comes from.
 pub fn render(mesh: &Mesh, width: usize, height: usize, view: View) -> Image {
+    let large = render_flat(
+        mesh,
+        width * SUPERSAMPLE,
+        height * SUPERSAMPLE,
+        view,
+    );
+    reduce(&large, SUPERSAMPLE)
+}
+
+/// Averages a block of samples down to one pixel each.
+fn reduce(large: &Image, by: usize) -> Image {
+    let mut small = Image::new(large.width / by, large.height / by);
+    for y in 0..small.height {
+        for x in 0..small.width {
+            let mut total = [0u32; 3];
+            for dy in 0..by {
+                for dx in 0..by {
+                    let sample = large
+                        .at((x * by + dx) as i64, (y * by + dy) as i64)
+                        .unwrap_or(BACKGROUND);
+                    for channel in 0..3 {
+                        total[channel] += sample[channel] as u32;
+                    }
+                }
+            }
+            let samples = (by * by) as u32;
+            small.set(
+                x as i64,
+                y as i64,
+                [
+                    (total[0] / samples) as u8,
+                    (total[1] / samples) as u8,
+                    (total[2] / samples) as u8,
+                ],
+            );
+        }
+    }
+    small
+}
+
+fn render_flat(mesh: &Mesh, width: usize, height: usize, view: View) -> Image {
     // Everything drawn scales with the tile: a mark sized for 320
     // pixels is a speck at 2560, and one sized for 2560 is a blob at
     // 320. Taken from the width, against the size these numbers were
@@ -650,8 +1105,18 @@ pub fn render(mesh: &Mesh, width: usize, height: usize, view: View) -> Image {
     // no back — it is a line in space, and hiding half of it would hide
     // exactly the half a user is checking.
     if mesh.kind == MeshKind::Wire {
+        // Thick in SAMPLES, so the stroke survives the reduction: a
+        // line one sample wide averages to a ninth of a pixel of ink
+        // and all but vanishes.
         for segment in mesh.triangles.chunks_exact(2) {
-            line(&mut image, placed[segment[0]], placed[segment[1]], WIRE_COLOUR, 0);
+            thick_line(
+                &mut image,
+                placed[segment[0]],
+                placed[segment[1]],
+                WIRE_COLOUR,
+                0,
+                SUPERSAMPLE as i64,
+            );
         }
         // The vertices, after the segments and in front of them.
         //
@@ -675,7 +1140,12 @@ pub fn render(mesh: &Mesh, width: usize, height: usize, view: View) -> Image {
         return image;
     }
 
-    for corner in mesh.triangles.chunks_exact(3) {
+    // Where the model is, so the light can be placed relative to it
+    // rather than at a fixed point that falls inside a large solid and
+    // outside a small one.
+    let bounds = extent(mesh);
+
+    for (index, corner) in mesh.triangles.chunks_exact(3).enumerate() {
         let (a, b, c) = (
             placed[corner[0]],
             placed[corner[1]],
@@ -701,12 +1171,23 @@ pub fn render(mesh: &Mesh, width: usize, height: usize, view: View) -> Image {
         // Shaded from the MODEL points, not the projected ones: the
         // projection flattens one axis away, and a normal taken from it
         // would light two differently-facing surfaces the same.
-        let colour = shade(
+        let normal = face_normal(
             mesh.points[corner[0]],
             mesh.points[corner[1]],
             mesh.points[corner[2]],
         );
-        triangle(&mut image, a, b, c, colour);
+        let colour = FACE;
+        // How brightly each corner of this triangle is lit.
+        //
+        // From the corner's POSITION, not just the face's direction: a
+        // point light is nearer to one end of a face than the other,
+        // and that difference is the gradient across it.
+        let corner_light = [
+            lighting(mesh.points[corner[0]], normal, bounds),
+            lighting(mesh.points[corner[1]], normal, bounds),
+            lighting(mesh.points[corner[2]], normal, bounds),
+        ];
+        triangle(&mut image, a, b, c, colour, corner_light);
     }
 
     // The smallest bias that works, now that face depth is exact at
@@ -740,8 +1221,17 @@ pub fn render(mesh: &Mesh, width: usize, height: usize, view: View) -> Image {
     // crease detection, and here it needs no angles — two triangles of
     // one flat face have the same screen-space normal, so comparing
     // their winding and plane is enough.
+    // Drawn THICK, in supersample pixels.
+    //
+    // The picture is reduced by `SUPERSAMPLE` afterwards, so a stroke
+    // one sample wide becomes a ninth of a pixel of ink and all but
+    // vanishes — the edges faded to a spike of 115 against a face of
+    // 96, where the colour asked for is 226. To come out one pixel
+    // wide in the result, an edge has to be `SUPERSAMPLE` samples wide
+    // here.
+    let thickness = SUPERSAMPLE as i64;
     for (a, b) in outline(mesh, &placed) {
-        line(&mut image, placed[a], placed[b], EDGE_COLOUR, bias);
+        thick_line(&mut image, placed[a], placed[b], EDGE_COLOUR, bias, thickness);
     }
     let _ = &FACE;
 
@@ -848,7 +1338,27 @@ fn depth_step(placed: &[Projected]) -> i64 {
         bottom = bottom.max(point.y);
     }
     let span = (right - left).max(bottom - top).max(1);
-    ((near - far) / span).max(1) * 2
+
+    // Eight steps, not two.
+    //
+    // One step is what the depth changes between two ADJACENT pixels
+    // of a face, and two was chosen as a margin on that. But an edge
+    // and the face it bounds are not sampled at the same points: the
+    // stroke's dim half sits up to a pixel to the side of the bright
+    // one, and the face's depth there is interpolated from different
+    // barycentric weights. Two steps was not enough to cover that, so
+    // the dim pixel lost the comparison on about two rows in five and
+    // the fold came out as a bead rather than a line.
+    //
+    // Measured on a box: at two, one fold held `226, 145` on some rows
+    // and a bare `226` on the rest; at eight, every row holds
+    // `157, 226, 145`.
+    //
+    // Erring large is the right side. Too small dots the edge, which
+    // is a visible defect on every picture; too large only lets an
+    // edge show through a face it is very slightly behind, which needs
+    // two surfaces within eight depth steps to appear at all.
+    ((near - far) / span).max(1) * 8
 }
 
 /// Whether two triangles of a mesh lie in the same plane.

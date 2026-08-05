@@ -24,7 +24,7 @@ use std::path::Path;
 
 use compile::run::Ran;
 
-use draw::gallery::{write_gallery, Tile, TILE_HEIGHT, TILE_WIDTH};
+use draw::gallery::{tile_size, write_gallery, Tile};
 use draw::render::{render, Mesh, MeshKind, Point3, View};
 
 
@@ -32,7 +32,10 @@ use draw::render::{render, Mesh, MeshKind, Point3, View};
 ///
 /// Returns how many tiles it drew.
 pub fn render_file(ran: &[Ran], source: &Path) -> Result<usize, String> {
-    let mut tiles = Vec::new();
+    // Converted before anything is drawn, because how big to draw each
+    // one depends on how many there are: a file with a single picture
+    // gets a full-size one, a file with six gets a mosaic.
+    let mut scenes = Vec::new();
 
     for test in ran {
         let Some(mesh) = &test.mesh else {
@@ -64,26 +67,31 @@ pub fn render_file(ran: &[Ran], source: &Path) -> Result<usize, String> {
             ));
         }
 
-        tiles.push(Tile {
-            label: test.name.clone(),
-            // The view the test asked for, or isometric when it asked
-            // for none. The name was already checked to be one the
-            // renderer knows, so a failure here would be the two
-            // having drifted apart.
-            image: render(
-                &mesh,
-                TILE_WIDTH,
-                TILE_HEIGHT,
-                test.view
-                    .as_deref()
-                    .and_then(View::named)
-                    .unwrap_or(View::Isometric),
-            ),
-        });
+        // The view the test asked for, or isometric when it asked for
+        // none. The name was already checked to be one the renderer
+        // knows, so a failure here would be the two having drifted
+        // apart.
+        let view = test
+            .view
+            .as_deref()
+            .and_then(View::named)
+            .unwrap_or(View::Isometric);
+
+        scenes.push((test.name.clone(), mesh, view));
     }
 
-    if tiles.is_empty() {
+    if scenes.is_empty() {
         return Ok(0);
     }
+
+    let (width, height) = tile_size(scenes.len());
+    let tiles: Vec<Tile> = scenes
+        .into_iter()
+        .map(|(label, mesh, view)| Tile {
+            label,
+            image: render(&mesh, width, height, view),
+        })
+        .collect();
+
     write_gallery(&tiles, &source.with_extension("png"))
 }

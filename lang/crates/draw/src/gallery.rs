@@ -34,37 +34,42 @@ use crate::text::{draw_text, ellipsised, measure};
 /// Here rather than with the caller, because the mosaic is what has to
 /// lay them out: a tile size the gallery did not choose is a size it
 /// would have to be told about at every call.
-/// How big each rendered tile is.
+/// How big a tile is when a file draws only ONE of them.
 ///
-/// Sized so three across make a 2560-pixel mosaic: these pictures are
-/// looked at rather than glanced past, and a 320-pixel tile is one
-/// where a circle's steps and a stroke's placement are below what the
-/// screen can show.
+/// 1920x1080: a picture looked at on its own wants to fill a screen at
+/// 100%, and this is the size that does on an ordinary monitor without
+/// being reduced. Larger only helps on a 4K panel, and costs everyone
+/// else file size for detail their screen cannot show.
+pub const TILE_WIDTH: usize = 1920;
+pub const TILE_HEIGHT: usize = 1080;
+
+/// How big a tile is once there are several on the sheet.
 ///
-/// Everything else scales from here — the vertex marks, the label —
-/// so the proportions hold whatever this is set to.
-pub const TILE_WIDTH: usize = 840;
-pub const TILE_HEIGHT: usize = 680;
+/// Half, because a mosaic is never viewed at 100% — it is the thing you
+/// glance at to see whether anything looks wrong, and then you open the
+/// one that does. Sized for that glance, three across still make a
+/// sheet under 3000 pixels wide.
+pub const MOSAIC_TILE_WIDTH: usize = 960;
+pub const MOSAIC_TILE_HEIGHT: usize = 540;
+
+/// The tile size a file with `count` drawing tests should render at.
+///
+/// One picture gets the full size; more than one gets the mosaic size.
+/// Chosen HERE rather than by the caller, because the layout below is
+/// what has to agree with it — a size the gallery did not pick is one
+/// it would have to be told about and could disagree with.
+pub fn tile_size(count: usize) -> (usize, usize) {
+    if count <= 1 {
+        (TILE_WIDTH, TILE_HEIGHT)
+    } else {
+        (MOSAIC_TILE_WIDTH, MOSAIC_TILE_HEIGHT)
+    }
+}
 
 pub struct Tile {
     pub label: String,
     pub image: Image,
 }
-
-/// The gaps and the label, in proportion to the tile.
-///
-/// Derived rather than fixed, so raising the tile size does not leave
-/// a thin border and unreadable text around a large picture.
-const PADDING: usize = TILE_WIDTH / 27;
-const LABEL_HEIGHT: usize = TILE_WIDTH / 15;
-/// How tall the label text is, in pixels.
-///
-/// One size for every label, whatever it says. Shrinking a long one to
-/// fit would make the mosaic's captions vary in size according to how
-/// wordy each test's name happens to be, which reads as emphasis where
-/// none was meant — so a label too long is CUT instead, with an
-/// ellipsis saying so.
-pub const LABEL_SIZE: f32 = TILE_WIDTH as f32 / 28.0;
 
 const PAGE: [u8; 3] = [10, 11, 15];
 const FRAME: [u8; 3] = [38, 42, 52];
@@ -81,10 +86,28 @@ pub fn write_gallery(tiles: &[Tile], path: &Path) -> Result<usize, String> {
     let columns = (tiles.len() as f64).sqrt().ceil() as usize;
     let rows = tiles.len().div_ceil(columns);
 
-    let cell_width = TILE_WIDTH + PADDING;
-    let cell_height = TILE_HEIGHT + LABEL_HEIGHT + PADDING;
-    let width = columns * cell_width + PADDING;
-    let height = rows * cell_height + PADDING;
+    // Taken from the tiles themselves rather than from a constant. The
+    // caller renders at whatever `tile_size` said, and reading it back
+    // from the image is the only way the two cannot drift apart.
+    let tile_width = tiles.iter().map(|tile| tile.image.width).max().unwrap_or(1);
+    let tile_height = tiles.iter().map(|tile| tile.image.height).max().unwrap_or(1);
+
+    // The gaps and the label, in proportion to the tile — so a small
+    // tile does not get a wide border and unreadable text, and a large
+    // one does not get a hairline.
+    let padding = tile_width / 27;
+    let label_height = tile_width / 15;
+    // One text size for every label, whatever it says. Shrinking a long
+    // one to fit would make the captions vary in size according to how
+    // wordy each test's name happens to be, which reads as emphasis
+    // where none was meant — so a label too long is CUT instead, with
+    // an ellipsis saying so.
+    let label_size = tile_width as f32 / 28.0;
+
+    let cell_width = tile_width + padding;
+    let cell_height = tile_height + label_height + padding;
+    let width = columns * cell_width + padding;
+    let height = rows * cell_height + padding;
 
     let mut page = Image::new(width, height);
     page.fill(0, 0, width as i64, height as i64, PAGE);
@@ -92,16 +115,16 @@ pub fn write_gallery(tiles: &[Tile], path: &Path) -> Result<usize, String> {
     for (index, tile) in tiles.iter().enumerate() {
         let column = index % columns;
         let row = index / columns;
-        let left = PADDING + column * cell_width;
-        let top = PADDING + row * cell_height;
+        let left = padding + column * cell_width;
+        let top = padding + row * cell_height;
 
         // A frame slightly larger than the tile, so each picture reads as
         // a separate thing rather than as part of its neighbour.
         page.fill(
             left as i64 - 1,
             top as i64 - 1,
-            TILE_WIDTH as i64 + 2,
-            (TILE_HEIGHT + LABEL_HEIGHT) as i64 + 2,
+            tile_width as i64 + 2,
+            (tile_height + label_height) as i64 + 2,
             FRAME,
         );
 
@@ -111,15 +134,15 @@ pub fn write_gallery(tiles: &[Tile], path: &Path) -> Result<usize, String> {
         let text = &tile.label;
         // Cut to fit, with a little room either side so a full-width
         // caption does not touch the tile's edge.
-        let room = TILE_WIDTH.saturating_sub(PADDING * 2) as i64;
-        let shown = ellipsised(text, LABEL_SIZE, room);
-        let extent = measure(&shown, LABEL_SIZE);
-        let text_left = left as i64 + (TILE_WIDTH as i64 - extent.width) / 2;
+        let room = tile_width.saturating_sub(padding * 2) as i64;
+        let shown = ellipsised(text, label_size, room);
+        let extent = measure(&shown, label_size);
+        let text_left = left as i64 + (tile_width as i64 - extent.width) / 2;
 
         // Positioned by its BASELINE, sitting far enough below the
         // picture that a descender clears it.
-        let baseline = (top + TILE_HEIGHT + LABEL_HEIGHT) as i64 - extent.descent - 2;
-        draw_text(&mut page, &shown, text_left, baseline, LABEL_SIZE, LABEL);
+        let baseline = (top + tile_height + label_height) as i64 - extent.descent - 2;
+        draw_text(&mut page, &shown, text_left, baseline, label_size, LABEL);
     }
 
     write_png(&page, path)?;

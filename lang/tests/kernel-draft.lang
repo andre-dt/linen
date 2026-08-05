@@ -24,6 +24,34 @@ fn triangle() Draft
       point: Point(x: 100, y: 0)),
     point: Point(x: 0, y: 100))
 
+# The simplest open path there is: two points, one segment.
+#
+# A line is what every other draft is made of, and the one case where
+# nothing can be inferred from context — no corner, no winding, no
+# inside. Worth its own picture for exactly that reason: if a single
+# segment draws wrong, everything drawn from segments is wrong too.
+fn line() Draft
+  return add(
+    draft: add(draft: open_draft(), point: Point(x: 0 - 150, y: 0 - 100)),
+    point: Point(x: 150, y: 100))
+
+# An open path of several segments, turning both ways.
+#
+# The turns alternate on purpose. A polyline that only ever turns one
+# way is indistinguishable from part of a convex outline, and would
+# not show a sign error in whatever computes direction from one
+# segment to the next.
+fn polyline() Draft
+  return add(
+    draft: add(
+      draft: add(
+        draft: add(
+          draft: add(draft: open_draft(), point: Point(x: 0 - 150, y: 0)),
+          point: Point(x: 0 - 75, y: 100)),
+        point: Point(x: 0, y: 0)),
+      point: Point(x: 75, y: 100)),
+    point: Point(x: 150, y: 0))
+
 # An open path: a corner, going nowhere back.
 fn elbow() Draft
   return add(
@@ -186,10 +214,22 @@ test "winding shows up as the sign"
   throw "reversed, it does not" if winds_counter_clockwise(draft: reversed(draft: square()))
   throw "and the area flips sign" unless signed_area(draft: reversed(draft: square())) == 0 - 20000
 
+test draws normal to top "a line, the one segment everything is made of"
+  let l = line()
+  throw "it should not close" if is_closed(draft: l)
+  throw "it should have two points" unless count(draft: l) == 2
+  wire(points: flat(draft: l), segments: edges(draft: l))
+
 test draws normal to top "a notched profile"
   let n = notched()
   throw "it should be simple" unless is_simple(draft: n)
   wire(points: flat(draft: n), segments: edges(draft: n))
+
+test draws normal to top "a polyline, turning both ways"
+  let p = polyline()
+  throw "it should not close" if is_closed(draft: p)
+  throw "it should have five points" unless count(draft: p) == 5
+  wire(points: flat(draft: p), segments: edges(draft: p))
 
 test draws normal to top "a square draft"
   let s = square()

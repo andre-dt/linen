@@ -242,6 +242,18 @@ test "three collinear points have no circle"
     third: Point(x: 200, y: 0))
   throw "there is no centre" unless found.x == 0 - 1 and found.y == 0 - 1
 
+test draws normal to top "a circle through three points"
+  # The constructor that finds a centre rather than being given one.
+  # Drawn as the circle it determines: three points on a rim, and the
+  # rim they imply. If the centre were wrong the ring would miss them,
+  # which is the kind of thing a number does not show and a picture
+  # does.
+  let centre = arc_through(
+    first: Point(x: 0 - 150, y: 0),
+    second: Point(x: 0, y: 150),
+    third: Point(x: 150, y: 0))
+  draw(profile: circle_points(centre: centre, radius: 150, steps: 32))
+
 test draws normal to top "a circle, as a polygon of thirty-two"
   draw(profile: circle_points(centre: Point(x: 0, y: 0), radius: 150, steps: 32))
 
@@ -253,6 +265,9 @@ test draws normal to top "a coarse circle, so the steps show"
 
 test draws normal to top "a hexagon"
   draw(profile: regular_polygon(centre: Point(x: 0, y: 0), radius: 150, sides: 6))
+
+test draws normal to top "a rectangle about its centre"
+  draw(profile: rectangle_from_centre(centre: Point(x: 0, y: 0), width: 300, height: 200))
 
 test draws normal to top "a rectangle from two corners"
   draw(profile: rectangle_from_corners(
