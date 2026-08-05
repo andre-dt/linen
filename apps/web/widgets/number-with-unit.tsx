@@ -21,6 +21,7 @@ import type { ExpressionField } from "@linen/cad/features"
 import {
   FieldRoot, FieldBox, FieldClear, FieldPanelTrigger, FieldPanel,
 } from "./field-parts"
+import { WidgetLabel } from "./widget-label"
 
 interface Props {
   readonly field: ExpressionField
@@ -61,7 +62,7 @@ export function NumberWithUnit(props: Props) {
 
   return (
     <div class="widget widget-number">
-      <span class="widget-label">{props.field.label}</span>
+      <WidgetLabel label={props.field.label} help={props.field.help} />
 
       <FieldRoot
         invalid={props.error !== null}

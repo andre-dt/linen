@@ -31,12 +31,12 @@
 // =====================================================================
 
 import {
-  For, Show, Switch, Match, createMemo, createSignal, createEffect, on,
+  For, Show, Switch, Match, createMemo,
 } from "solid-js"
 import { createFloating } from "../widgets/floating"
 import { LucideIcon } from "../widgets/lucide-icon"
 import {
-  setField, applyTransition, stepTo,
+  setField, applyTransition,
   type CommandDefinition, type CommandStep, type FieldDefinition,
   type StepTransition, type PanelState,
 } from "@linen/cad/features"
@@ -73,6 +73,37 @@ export function CommandPanel(props: CommandPanelProps) {
     props.definition.steps.find((entry) => entry.id === props.panel.currentStep),
   )
 
+  /**
+   * The fields of every step walked, in the order they were reached.
+   *
+   * A field does not disappear when the machine moves on. The values are
+   * ONE map for the whole command — a step does not own its inputs, it
+   * only decides which become relevant — so a field already answered is
+   * still answered, and hiding it makes the user walk backwards to
+   * change it. Walking backwards is not free either: re-entering a step
+   * re-runs its guards, which can send the machine somewhere other than
+   * where it was.
+   *
+   * Deduplicated by NAME. A hub contributes its fields on every visit —
+   * draft's `tools` is in the path once per shape drawn — and its
+   * `construction` checkbox is one checkbox however many times it was
+   * passed through.
+   */
+  const walkedFields = createMemo<readonly FieldDefinition[]>(() => {
+    const seen = new Set<string>()
+    const fields: FieldDefinition[] = []
+    for (const id of [...props.panel.path, props.panel.currentStep]) {
+      const walked = props.definition.steps.find((entry) => entry.id === id)
+      if (!walked) continue
+      for (const field of walked.fields) {
+        if (seen.has(field.name)) continue
+        seen.add(field.name)
+        fields.push(field)
+      }
+    }
+    return fields
+  })
+
   // Dragged by the header, remembered across reloads. One key for every
   // command: the user positions "the designer", not a panel per feature,
   // and having extrude open somewhere else than draft would read as the
@@ -89,16 +120,7 @@ export function CommandPanel(props: CommandPanelProps) {
   //
   // Reset per step rather than per command: arriving at a fresh step
   // starts the same way, and carrying the flag forward would greet each
-  // new step with the errors of the one before it.
-  const [attempted, setAttempted] = createSignal(false)
-  createEffect(
-    on(
-      () => props.panel.currentStep,
-      () => setAttempted(false),
-      { defer: true },
-    ),
-  )
-
+ 
   return (
     <Show when={step()}>
       {(current) => (
@@ -123,48 +145,36 @@ export function CommandPanel(props: CommandPanelProps) {
             </div>
           </header>
 
-          {/* Breadcrumb of steps already walked. Clicking one goes back
-              without discarding the command — undo per step. */}
-          <Show when={props.panel.path.length > 0}>
-            <nav class="command-panel-path">
-              <For each={props.panel.path}>
-                {(id) => (
-                  <button
-                    class="command-panel-crumb"
-                    onClick={() => props.onChange(stepTo(props.panel, id, props.definition))}
-                  >
-                    {labelOfStep(props.definition, id)}
-                  </button>
-                )}
-              </For>
-              <span class="command-panel-crumb current">{current().label}</span>
-            </nav>
-          </Show>
-
-          <Show when={current().help}>
-            {(help) => <p class="command-panel-help">{help()}</p>}
-          </Show>
-
+          {/* EVERY field walked so far, not just the current step's.
+              
+              A field that vanishes when the machine moves on is a field
+              the user cannot correct without going back — and going
+              back is not free: the values are one map for the whole
+              command, so re-entering a step re-runs its guards and can
+              move the machine somewhere else. Leaving the fields on
+              screen makes correction a direct edit, which is what the
+              persistent value map was always for.
+              
+              Deduplicated by name, because a hub visited more than once
+              contributes its fields more than once — `tools` appears in
+              the path on every return, and its `construction` checkbox
+              is one checkbox however many times it was passed. */}
           <div class="command-panel-fields">
-            <For each={current().fields}>
+            <For each={walkedFields()}>
               {(field) => (
                 <Field
                   field={field}
                   value={props.panel.values.get(field.name)}
                   // Errors are SHOWN only once the user has tried to leave
-                  // the step. A field that is empty because it has not been
-                  // reached yet is not a mistake, and greeting an untouched
-                  // panel with "Plane is required" states the
-                  // obvious in the colour reserved for things going wrong.
+                  // NO "required" state on the field.
                   //
-                  // The machine still carries the error the whole time —
-                  // it is what blocks the transition. Only the display
-                  // waits.
-                  error={
-                    attempted()
-                      ? props.panel.errors.find((e) => e.field === field.name)?.message ?? null
-                      : null
-                  }
+                  // The machine already answers an emptied field by
+                  // walking back to the step that owns it, so the panel
+                  // is showing that step's question again — which says
+                  // the same thing as a red message, in the place the
+                  // user has to act anyway. Saying it twice makes the
+                  // second one noise.
+                  error={null}
                   onChange={(value) =>
                     props.onChange(setField(props.panel, field.name, value, props.definition))
                   }
@@ -179,10 +189,9 @@ export function CommandPanel(props: CommandPanelProps) {
             // complete. The machine would refuse it anyway; disabling
             // says so before the click rather than after.
             blocked={props.panel.errors.length > 0}
-            onApply={(transition) => {
-              setAttempted(true)
+            onApply={(transition) =>
               props.onChange(applyTransition(props.panel, transition.id, props.definition))
-            }}
+            }
           />
         </div>
       )}
@@ -190,8 +199,7 @@ export function CommandPanel(props: CommandPanelProps) {
   )
 }
 
-const labelOfStep = (definition: CommandDefinition<never, never>, id: string): string =>
-  definition.steps.find((step) => step.id === id)?.label ?? id
+
 
 /**
  * Layout by count: one transition is a plain advance, a handful are

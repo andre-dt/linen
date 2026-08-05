@@ -467,8 +467,14 @@ const SELECTED_COLOR: readonly [number, number, number] = [0.31, 0.56, 0.97]
 const PLANE_COLOR: readonly [number, number, number] = [0.62, 0.70, 0.82]
 const PLANE_ACTIVE_COLOR: readonly [number, number, number] = [0.44, 0.7, 1]
 
-/** Cap height of a plane's name, in millimetres. */
-const LABEL_HEIGHT_MM = 6
+/** Cap height of a plane's name, in millimetres.
+ *
+ *  A tenth of the plane's own width — the planes are 120mm across, and
+ *  a name has to be readable at the zoom where all three planes fit the
+ *  viewport, which is where a user starts. At 6mm it was 5%, small
+ *  enough that the word was legible only after zooming in, by which
+ *  point the plane it names is the only one on screen anyway. */
+const LABEL_HEIGHT_MM = 12
 const LABEL_COLOR: readonly [number, number, number] = [0.96, 0.97, 1]
 
 const SKETCH_COLOR: readonly [number, number, number] = [0.93, 0.95, 0.98]

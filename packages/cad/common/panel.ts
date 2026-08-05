@@ -81,17 +81,78 @@ export const setField = (
   value: unknown,
   command: CommandDefinition<never, never>,
 ): PanelState => {
-  const step = stepOf(command, state.currentStep)
-  // Only fields belonging to the CURRENT step are writable. A stale
-  // widget from a step already left must not rewrite the command.
-  if (!step?.fields.some((entry) => entry.name === field)) return state
+  // Writable if the field belongs to any step WALKED — the current one
+  // or one already passed.
+  //
+  // Not only the current step. The values are one map for the whole
+  // command, and the panel shows every field walked, so restricting
+  // writes to the current step made the panel display fields it then
+  // refused to change: clicking clear on the plane field did nothing,
+  // silently, because choosing a plane auto-advances past the step that
+  // owns it.
+  //
+  // A field of a step never reached is still refused. It is not part of
+  // this command yet, and accepting it would let a widget write a value
+  // the machine never asked for.
+  const walked = [...state.path, state.currentStep]
+  const owns = walked.some((id) =>
+    stepOf(command, id)?.fields.some((entry) => entry.name === field),
+  )
+  if (!owns) return state
 
   const values = new Map(state.values)
   values.set(field, value)
   // Writing a value can COMPLETE the step. Advancing here rather than
   // waiting for a click is what makes picking a plane one gesture
   // instead of two.
-  return advance(settle({ ...state, values }, command), command)
+  //
+  // And emptying one can UNCOMPLETE an earlier step, which is the same
+  // rule read backwards: the machine advanced because a guard fired on
+  // a value, so it retreats when that value goes away. Without this,
+  // "data-driven" would only be true in one direction — the panel would
+  // sit on a later step showing a blank field it had already walked
+  // past.
+  return advance(retreat(settle({ ...state, values }, command), command), command)
+}
+
+/**
+ * Walks back to the earliest step whose required fields are no longer
+ * filled.
+ *
+ * ONLY as far as that step. A field cleared deep in a command must not
+ * reset everything before it: the other values are still there, and
+ * discarding the walk would throw away work the user never asked to
+ * lose. Steps after the gap leave the path because they were reached
+ * through it — reaching them again is what filling it in will do.
+ *
+ * A no-op when every walked step is still satisfied, which is the
+ * ordinary case: most edits change a value without emptying it.
+ */
+const retreat = (
+  state: PanelState,
+  command: CommandDefinition<never, never>,
+): PanelState => {
+  const walked = [...state.path, state.currentStep]
+  const broken = walked.findIndex((id) => {
+    const step = stepOf(command, id)
+    return step !== undefined && missingFields(step, state.values).length > 0
+  })
+  if (broken < 0) return state
+
+  const target = walked[broken]
+  if (target === undefined || target === state.currentStep) return state
+
+  return settle({
+    ...state,
+    currentStep: target,
+    path: walked.slice(0, broken),
+    // The passes recorded while walking past the gap go too. A pass is
+    // a completed trip through a loop, and a trip made on an answer
+    // that has since been withdrawn is not one that happened.
+    passes: new Map(
+      [...state.passes].filter(([id]) => walked.slice(0, broken).includes(id)),
+    ),
+  }, command)
 }
 
 /**
@@ -377,7 +438,30 @@ const settle = (
   const step = stepOf(command, state.currentStep)
   if (!step) return { ...state, errors: [], canBuild: false }
 
-  const errors = missingFields(step, state.values)
+  // Every step WALKED is checked, not only the current one.
+  //
+  // A required field can be emptied after the machine has moved past
+  // the step that owns it — clearing the plane of a draft is exactly
+  // that. Checking only the current step left the command silently
+  // incomplete: the value was gone, the panel redrew the empty field,
+  // and nothing said so. `canBuild` even stayed true, offering to
+  // finish a draft with no plane.
+  //
+  // Deduplicated by field name for the same reason the panel
+  // deduplicates its fields: a hub is on the path once per visit, and
+  // its missing field is one error however many times it was passed.
+  const seen = new Set<string>()
+  const errors: PanelFieldError[] = []
+  for (const id of [...state.path, state.currentStep]) {
+    const walked = stepOf(command, id)
+    if (!walked) continue
+    for (const error of missingFields(walked, state.values)) {
+      if (seen.has(error.field)) continue
+      seen.add(error.field)
+      errors.push(error)
+    }
+  }
+
   const terminal =
     step.transitions.length === 0 ||
     step.transitions.some((transition) => transition.to === "")

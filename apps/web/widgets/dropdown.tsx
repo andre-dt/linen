@@ -16,6 +16,7 @@ import { Select, createListCollection } from "@ark-ui/solid/select"
 import { For, Show, createMemo } from "solid-js"
 import type { ChoiceField } from "@linen/cad/features"
 import { LucideIcon } from "./lucide-icon"
+import { WidgetLabel } from "./widget-label"
 
 interface Props {
   readonly field: ChoiceField
@@ -80,10 +81,6 @@ export function Dropdown(props: Props) {
         </Select.Positioner>
         <Select.HiddenSelect />
       </Select.Root>
-
-      <Show when={props.field.help}>
-        {(help) => <span class="widget-help">{help()}</span>}
-      </Show>
     </div>
   )
 }

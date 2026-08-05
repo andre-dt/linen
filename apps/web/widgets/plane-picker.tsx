@@ -16,26 +16,27 @@
 // clicking the hundredth plane in a real model; one path, learned once,
 // scales.
 //
-// The control is a READONLY input rather than a label: nothing is typed
-// here — the value arrives from a canvas click, and the pick is armed the
-// moment the step is current — but it still focuses, blinks a caret and
-// tabs like the fields beside it, because it is one of them. The mate
-// connector is this field's own extra button, which is exactly what a
-// custom decorator is for.
+// The control shows text and takes no keyboard: nothing is typed here —
+// the value arrives from a canvas click, and the pick is armed the
+// moment the step is current. So it is a span, not an input. An input
+// would sit in the tab order and blink a caret, promising an
+// interaction this field does not have. The mate connector is this
+// field's own extra button, which is exactly what a custom decorator is
+// for.
 //
 // Picking a FACE rather than a plane keeps the reference live: move the
 // body and the sketch follows.
 // =====================================================================
 
-import { Show, onMount, createEffect } from "solid-js"
+import { Show } from "solid-js"
 import type { PlaneField } from "@linen/cad/features"
 import { DATUM_PLANES } from "@linen/viewer"
-import { LucideIcon } from "./lucide-icon"
 import {
   FieldRoot, FieldBox, FieldClear, FieldIconButton, FieldPanelTrigger,
   FieldPanel, FieldPanelHeader,
 } from "./field-parts"
 import { useToast } from "../toast"
+import { WidgetLabel } from "./widget-label"
 
 /** The value this widget produces. Serializable, and shaped like the
  *  PlaneReference the draft input persists. */
@@ -84,20 +85,6 @@ export function PlanePicker(props: Props) {
   // arming — and a caret with nothing focused would be a promise the
   // panel had not kept. Only when still empty: a step revisited to change
   // something else should not yank focus back here.
-  let control!: HTMLInputElement
-  onMount(() => {
-    if (current() === null) control.focus()
-  })
-
-  // The displayed text, written as a PROPERTY rather than bound as the
-  // `value` attribute. The attribute is only the element's default — the
-  // browser applies it once, and from then on the DOM property is the
-  // truth — so a field bound that way stops tracking the panel the moment
-  // anything writes into it. Re-asserted on every change, the text cannot
-  // drift from the value the panel holds.
-  createEffect(() => {
-    control.value = current() ? nameOf(current()!) : ""
-  })
 
   const setOffset = (offset: number): void => {
     const value = current()
@@ -111,7 +98,7 @@ export function PlanePicker(props: Props) {
 
   return (
     <div class="widget widget-plane" onFocusIn={() => props.onFocus?.()}>
-      <span class="widget-label">{props.field.label}</span>
+      <WidgetLabel label={props.field.label} help={props.field.help} />
 
       <FieldRoot
         invalid={props.error !== null}
@@ -119,30 +106,29 @@ export function PlanePicker(props: Props) {
         onCommit={(value) => props.onChange?.(value)}
       >
         <FieldBox
-          leading={
-            <Show when={current()}>
-              <LucideIcon name="square" size={14} />
-            </Show>
-          }
+          // No leading glyph.
+          //
+          // It was a `square`, which is what a checkbox looks like — so
+          // a field holding "Right plane" read as an unchecked box
+          // labelled with a plane's name. The icon carried no
+          // information either: it was the same square for every plane,
+          // present only when a value was set, which the text already
+          // says.
           control={
-            // A real INPUT, not a label. The value is not typed — it comes
-            // from a canvas click — but the field is still one of a column
-            // of fields, and it should focus, carry a caret and tab like
-            // the ones beside it. A span would be dead to the keyboard and
-            // read as a different kind of thing.
+            // A SPAN, not an input.
             //
-            // `readonly` rather than `disabled`: disabled would take it out
-            // of the tab order and grey it out, which is the opposite of
-            // what this field is — perfectly editable, just not by typing.
-            <input
-              ref={control}
-              class="field-control"
-              readonly
-              placeholder="Select a plane or face"
-              // The pick is armed by the step, so focusing the field is
-              // enough; there is nothing to select or edit in the text.
-              onFocus={() => props.onFocus?.()}
-            />
+            // Nothing here is typed, selected or tabbed to: the value
+            // comes from a canvas click, and the step decides when the
+            // pick is armed. An input — even readonly — sits in the tab
+            // order, takes a caret and answers the keyboard, all of
+            // which promise an interaction this field does not have.
+            //
+            // The panel's fields read as labels that happen to hold a
+            // value, and the keyboard walks past them to the controls
+            // that actually take one.
+            <span class="field-value" classList={{ empty: current() === null }}>
+              {current() === null ? "Select a plane or face" : nameOf(current()!)}
+            </span>
           }
         >
           {/* Clear first — it renders itself only when there is a value,

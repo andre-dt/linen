@@ -16,6 +16,7 @@ import {
   FieldRoot, FieldBox, FieldClear, FieldIconButton, FieldPanelTrigger,
   FieldPanel,
 } from "./field-parts"
+import { WidgetLabel } from "./widget-label"
 
 interface Props {
   readonly field: ReferenceField
@@ -48,7 +49,7 @@ export function FeatureList(props: Props) {
 
   return (
     <div class="widget widget-feature-list">
-      <span class="widget-label">{props.field.label}</span>
+      <WidgetLabel label={props.field.label} help={props.field.help} />
 
       <FieldRoot
         invalid={props.error !== null}

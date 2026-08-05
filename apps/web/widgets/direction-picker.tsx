@@ -18,6 +18,7 @@ import {
   FieldPanel, FieldPanelHeader,
 } from "./field-parts"
 import { useToast } from "../toast"
+import { WidgetLabel } from "./widget-label"
 
 interface Props {
   readonly field: DirectionField
@@ -68,7 +69,7 @@ export function DirectionPicker(props: Props) {
 
   return (
     <div class="widget widget-direction">
-      <span class="widget-label">{props.field.label}</span>
+      <WidgetLabel label={props.field.label} help={props.field.help} />
 
       <FieldRoot
         invalid={props.error !== null}

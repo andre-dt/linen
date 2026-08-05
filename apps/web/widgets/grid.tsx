@@ -9,6 +9,7 @@
 import { For, createSignal } from "solid-js"
 import { Plus, X } from "../icons"
 import type { TableField } from "@linen/cad/features"
+import { WidgetLabel } from "./widget-label"
 
 interface Props {
   readonly field: TableField
@@ -28,7 +29,7 @@ export function Grid(props: Props) {
 
   return (
     <div class="widget widget-grid">
-      <span class="widget-label">{props.field.label}</span>
+      <WidgetLabel label={props.field.label} help={props.field.help} />
 
       <table class="grid">
         <thead>

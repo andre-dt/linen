@@ -375,15 +375,6 @@ body {
 }
 .command-panel-header.dragging { cursor: grabbing; }
 
-.command-panel-path {
-  display: flex;
-  gap: 4px;
-  padding: 0 14px 6px;
-  font-size: 11px;
-  color: var(--hud-text-faint);
-  flex-shrink: 0;
-}
-
 .command-panel-help {
   padding: 0 14px;
   margin: 0;
@@ -405,9 +396,15 @@ body {
   min-height: 0;
 }
 
+/* RIGHT-ALIGNED, and sized to their text.
+
+   A transition is a confirm — "Draw", "Finish" — and a confirm belongs
+   where a reader's eye ends. Stretched full width they read as the
+   subject of the panel rather than the way out of it. */
 .command-panel-transitions {
   display: flex;
-  gap: 4px;
+  justify-content: flex-end;
+  gap: 6px;
   padding: 8px 14px 12px;
   flex-shrink: 0;
 }
@@ -417,10 +414,10 @@ body {
 }
 
 .transition-button {
-  flex: 1;
-  padding: 5px 8px;
+  padding: 6px 14px;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
+  border-radius: 10px;
+  corner-shape: squircle;
   background: var(--surface-raised);
   color: var(--text);
   font-size: 12px;
@@ -443,19 +440,6 @@ body {
   color: var(--accent);
   font-weight: 600;
 }
-
-/* Breadcrumbs are clickable: each returns to a step already walked,
-   keeping everything entered — undo per step. */
-.command-panel-crumb {
-  appearance: none; border: none; background: transparent;
-  color: var(--hud-text-faint); font: inherit; font-size: 11px;
-  padding: 0 2px; cursor: pointer;
-}
-.command-panel-crumb:hover { color: var(--hud-text); text-decoration: underline; }
-.command-panel-crumb + .command-panel-crumb::before {
-  content: "›"; margin-right: 4px; color: var(--hud-text-faint);
-}
-.command-panel-crumb.current { color: var(--hud-text); cursor: default; }
 
 /* =====================================================================
    FIELD PARTS — the one shape every command-panel field takes.
@@ -495,33 +479,41 @@ body {
   padding: 0 var(--field-inset) 0 10px;
   border-radius: var(--field-radius);
   corner-shape: squircle;
-  /* A faint wash of the panel's own tint: white on a dark panel, black on
-     a light one, so the box reads as a raised slot on either without a
-     rule per material. Focus lightens it further. */
-  background: color-mix(in srgb, var(--hud-tint) calc(8% * var(--hud-tint-boost)), transparent);
-  /* At REST the value sits well back from full strength, so a column of
-     six fields reads as a list rather than six things shouting. 54% of
-     the ink — still 4.63:1 on the resting fill, so it reads easily, but
-     dim enough that the focused field is obviously the live one. */
-  color: color-mix(in srgb, var(--hud-ink) 54%, var(--hud-panel));
+  /* EMPTY is the quiet state: a faint wash of the panel's own tint —
+     white on a dark panel, black on a light one — and ink well back
+     from full strength. A column of unanswered fields reads as a list
+     of things still to do, not six boxes shouting. */
+  background: color-mix(in srgb, var(--hud-tint) calc(6% * var(--hud-tint-boost)), transparent);
+  color: color-mix(in srgb, var(--hud-ink) 46%, var(--hud-panel));
+  /* Nothing here takes the keyboard: the value comes from a canvas
+     click. An I-beam would invite typing that does nothing. */
+  cursor: default;
   transition: background 100ms ease, color 100ms ease;
 }
-/* FOCUS is the HUD's own blue, not another step of the wash. A field
-   being edited is the one thing on the panel the user is acting on, and
-   the blue says that at a glance where a slightly paler grey did not.
 
-   The blue is a RING, not a fill. Filling the box with solid accent turns
-   the field into a button — it shouts, and every decorator inside it
-   (which is a muted grey by design) lands on blue and stops reading.
-   Around the edge, the same colour says "this one is live" without
-   changing what the field IS.
-
-   The fill only steps up a little, and the text goes to full ink. */
-.field-box:focus-within {
-  background: color-mix(in srgb, var(--hud-tint) calc(14% * var(--hud-tint-boost)), transparent);
-  box-shadow: inset 0 0 0 1.5px var(--accent);
+/* FILLED is the state with contrast.
+   
+   An answered field steps forward — brighter fill, full ink — so
+   glancing down a column says which questions are done. That is what a
+   reader wants from a panel whose steps advance on their own; which
+   field happens to hold focus is not. */
+.field-box.filled {
+  background: color-mix(in srgb, var(--hud-tint) calc(13% * var(--hud-tint-boost)), transparent);
   color: var(--hud-ink);
 }
+/* NOTHING CHANGES ON FOCUS.
+   
+   Not the fill, not the ink, not a ring. A field in this panel is
+   focused for reasons the user did not choose — the machine arms a
+   pick, a step advances, a value is cleared and the walk goes back —
+   so highlighting the focused one draws the eye somewhere it was not
+   asked to look, several times per interaction.
+   
+   What a live field looks like is stated by its own widget: the plane
+   picker blinks a caret while a pick is armed. That is a deliberate
+   signal about one field, not a decoration applied to whichever
+   happens to hold focus. */
+
 .field-box.invalid { box-shadow: inset 0 0 0 1px var(--danger); }
 
 .field-control {
@@ -552,36 +544,12 @@ body {
    `readonly` alone gives no caret: the browser suppresses it, since there
    is nothing to type. But the caret is what says "this field is the live
    one, and a click in the canvas lands HERE" while a pick is armed — so
-   it is drawn back, as a real blinking bar rather than a static mark. */
-.field-control[readonly] {
-  /* A text cursor even though nothing is typed: the box behaves like a
-     text field — it focuses and blinks — and a default arrow here would
-     say otherwise. */
-  cursor: text;
-  caret-color: transparent;
-}
-.field-control[readonly]:focus {
-  caret-color: var(--hud-ink);
-}
-/* The blink. A caret drawn by the browser blinks on its own; this one is
-   ours, so the rhythm has to be too. Matches the platform's roughly
-   1.06s cycle closely enough to read as a system caret rather than as an
-   animation. */
-@keyframes field-caret-blink {
-  0%, 49% { caret-color: var(--hud-ink); }
-  50%, 100% { caret-color: transparent; }
-}
-.field-control[readonly]:focus {
-  animation: field-caret-blink 1.06s steps(1, end) infinite;
-}
-@media (prefers-reduced-motion: reduce) {
-  /* A blinking bar is exactly the kind of motion this setting is for.
-     Steady, so the focus cue survives without the flicker. */
-  .field-control[readonly]:focus { animation: none; caret-color: var(--hud-ink); }
-}
+/* The readonly-input rules are gone with the input.
+   
+   A field whose value comes from a canvas click is a span now: no tab
+   stop, no caret, no focus. What remains here is for `number-with-unit`,
+   the one field that is genuinely typed into. */
 
-/* A control that is not an input — a name, a prompt. Same metrics as one,
-   so the two kinds of field line up. */
 .field-value {
   flex: 1;
   min-width: 0;
@@ -786,6 +754,11 @@ body {
 .widget-label {
   color: var(--text-muted);
   font-size: 11px;
+  /* An ARROW over the name. Text takes an I-beam by default, which
+     invites a selection nobody wants to make — the label is a caption,
+     not content. */
+  cursor: default;
+  user-select: none;
 }
 
 .widget-input,
@@ -1402,12 +1375,6 @@ table.point-list {
 .hud-outline-item .hud-icon-button { opacity: 0; transition: opacity 100ms ease; }
 .hud-outline-item:hover .hud-icon-button,
 .hud-outline-item.active .hud-icon-button { opacity: 1; }
-/* A text tag, not the 26px square .hud-item-badge avatar. */
-.hud-outline-item .hud-item-badge {
-  width: auto; height: auto; padding: 1px 6px; border-radius: 6px;
-  font-size: 10px; font-weight: 500; text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
 .hud-item-open { font-size: 12px; color: var(--hud-text-faint); opacity: 0; transition: opacity 100ms ease; }
 .hud-item:hover .hud-item-open { opacity: 1; }
 

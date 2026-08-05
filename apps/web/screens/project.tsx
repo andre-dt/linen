@@ -407,11 +407,14 @@ export function Project(props: { auth: Auth }) {
                       data-status={element.status}
                       onClick={() => setDesigning(element.id)}
                     >
+                      {/* No "editing" badge. The Draft panel below IS
+                          the indicator: it is open for the element being
+                          edited and closed otherwise, so a badge saying
+                          the same thing is a second place for the same
+                          fact to be told — and two places disagree the
+                          moment one of them is missed. */}
                       <LucideIcon name={element.icon} size={14} />
                       <span class="hud-item-name">{element.label}</span>
-                      <Show when={element.status === "editing"}>
-                        <span class="hud-item-badge">editing</span>
-                      </Show>
                       <button
                         class="hud-icon-button"
                         aria-label={`Remove ${element.label}`}

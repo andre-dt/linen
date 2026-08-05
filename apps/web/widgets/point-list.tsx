@@ -18,6 +18,7 @@
 import { For, Show } from "solid-js"
 import { X } from "../icons"
 import type { PointListField } from "@linen/cad/features"
+import { WidgetLabel } from "./widget-label"
 
 /** One point, as stored. Strings because they are expressions. */
 export interface PointRow {
@@ -52,7 +53,7 @@ export function PointList(props: Props) {
 
   return (
     <div class="widget widget-point-list">
-      <span class="widget-label">{props.field.label}</span>
+      <WidgetLabel label={props.field.label} help={props.field.help} />
 
       <Show
         when={points().length > 0}

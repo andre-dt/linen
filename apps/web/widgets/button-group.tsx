@@ -9,6 +9,7 @@
 
 import { For } from "solid-js"
 import type { ChoiceField } from "@linen/cad/features"
+import { WidgetLabel } from "./widget-label"
 
 interface Props {
   readonly field: ChoiceField
@@ -20,7 +21,7 @@ interface Props {
 export function ButtonGroup(props: Props) {
   return (
     <div class="widget widget-button-group">
-      <span class="widget-label">{props.field.label}</span>
+      <WidgetLabel label={props.field.label} help={props.field.help} />
       <div class="button-group" role="radiogroup" aria-label={props.field.label}>
         <For each={props.field.options}>
           {(option) => (

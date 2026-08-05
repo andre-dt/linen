@@ -51,13 +51,20 @@ const steps: readonly CommandStep[] = [
   {
     id: "plane",
     label: "Plane",
-    help: "Select a plane or planar face in the canvas.",
+    // The instruction rides on the FIELD, not the step.
+    //
+    // A step's help was a paragraph above the fields, which is a block
+    // that appears and disappears as the machine walks — every step
+    // change moved everything below it. On the field it is a tooltip:
+    // present where the user is looking, and occupying no layout.
+    help: null,
     optional: false,
     fields: [
       {
         kind: "plane", name: "plane", label: "Plane",
         allowFace: true, allowOffset: true,
-        optional: false, help: null,
+        optional: false,
+        help: "Select a plane or planar face in the canvas.",
       },
     ],
     // DATA-DRIVEN: choosing a plane ends the step. There is nothing else

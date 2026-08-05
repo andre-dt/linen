@@ -175,28 +175,28 @@ export function FieldBox(props: FieldBoxProps) {
   const field = useField()
   let box!: HTMLDivElement
 
-  // The WHOLE box is the control's hit target, not just the glyphs of its
-  // text. A field whose padding is dead space makes the user aim at a few
-  // characters, and a readonly field — where the text may be a short
-  // placeholder in a wide box — is mostly padding.
+  // No focus stealing on mousedown.
   //
-  // The decorators are excluded: a press on the clear button or the
-  // chevron is that button's, and stealing focus for the input would
-  // fight the panel those buttons open.
-  const focusControl = (event: MouseEvent): void => {
-    if ((event.target as HTMLElement).closest(".field-decorators")) return
-    const control = box.querySelector<HTMLElement>(".field-control")
-    if (!control || control === event.target) return
-    event.preventDefault()
-    control.focus()
-  }
+  // These fields take no keyboard: the value arrives from a canvas
+  // click, and there is nothing in the box to focus. Reaching for a
+  // `.field-control` that is now a span moved focus nowhere and
+  // preventDefault swallowed the press for no gain.
 
   return (
     <Popover.Anchor
       ref={box}
       class="field-box"
-      classList={{ invalid: field.invalid() }}
-      onMouseDown={focusControl}
+      // FILLED or not, which is the distinction that matters here.
+      //
+      // Not focused: a field in this panel is focused for reasons the
+      // user did not choose — a step advances, a value is cleared and
+      // the walk goes back — so highlighting the focused one draws the
+      // eye somewhere it was not asked to look. Whether a field HAS an
+      // answer is what a reader actually wants to see down a column.
+      classList={{
+        invalid: field.invalid(),
+        filled: field.value() !== undefined && field.value() !== null,
+      }}
     >
       {props.leading}
       {props.control}
