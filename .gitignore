@@ -1,14 +1,9 @@
-node_modules/
-dist/
-build/
+.env
+.env.*.local
+.env.local
+.sessions.json
 .vite/
 *.node
-
-# Local environment: OAuth client ids and any future secrets. Never
-# commit these — the client id is public but secrets must not leak.
-.env
-.env.local
-.env.*.local
-
-# Dev session tokens (kernel), kept out of the repo.
-.sessions.json
+build/
+dist/
+node_modules/

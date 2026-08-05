@@ -27,54 +27,18 @@
 # from making a copy. The compiler is free to do it — which is the whole
 # point of immutable semantics with hidden mutation.
 
+shape Point
+  x i32
+  y i32
+
+shape Holder
+  items List<i32>
+
 fn empty_list() List<i32>
   return list()
 
 fn one_two_three() List<i32>
   return push(list: push(list: push(list: list(), value: 1), value: 2), value: 3)
-
-test "a new list is empty"
-  throw "an empty list has no elements" unless length(list: empty_list()) == 0
-
-test "pushing makes it longer"
-  let xs = push(list: list(), value: 7)
-  throw "one push means one element" unless length(list: xs) == 1
-  throw "the element should be what was pushed" unless at(list: xs, index: 0) == 7
-
-test "elements keep their order"
-  let xs = one_two_three()
-  throw "three pushes mean three elements" unless length(list: xs) == 3
-  throw "the first should be 1" unless at(list: xs, index: 0) == 1
-  throw "the second should be 2" unless at(list: xs, index: 1) == 2
-  throw "the third should be 3" unless at(list: xs, index: 2) == 3
-
-test "pushing does not change the list it was given"
-  # The property that makes this immutable rather than merely functional
-  # looking: `xs` is untouched, so a caller holding it sees what it
-  # always saw.
-  let xs = one_two_three()
-  let longer = push(list: xs, value: 4)
-  throw "the original should still be three" unless length(list: xs) == 3
-  throw "the new one should be four" unless length(list: longer) == 4
-
-test "two lists built from one do not alias"
-  # The property the whole model rests on. `b` and `c` share the prefix
-  # `a` holds, and each has its own tail; if `push` mutated, the second
-  # would overwrite the first's last element and both would read 40.
-  let a = push(list: push(list: list(), value: 1), value: 2)
-  let b = push(list: a, value: 30)
-  let c = push(list: a, value: 40)
-  throw "b keeps its own tail" unless at(list: b, index: 2) == 30
-  throw "c keeps its own tail" unless at(list: c, index: 2) == 40
-  throw "the shared prefix is intact" unless at(list: b, index: 0) == 1 and at(list: c, index: 1) == 2
-  throw "the list they came from is unchanged" unless length(list: a) == 2
-
-test "a list grows past any fixed size"
-  # The whole reason for List. An array would need its size written in
-  # the type, and topology does not know its size until it is built.
-  let xs = counted(upto: 100)
-  throw "it should hold a hundred" unless length(list: xs) == 100
-  throw "the last should be 99" unless at(list: xs, index: 99) == 99
 
 # Built by recursion, not by a loop with a running `built`.
 #
@@ -90,15 +54,21 @@ fn counting(from i32, upto i32, built List<i32>) List<i32>
     return built
   return counting(from: from + 1, upto: upto, built: push(list: built, value: from))
 
-test "a list of points"
-  # What topology is actually made of.
-  let points = push(list: push(list: list(), value: Point(x: 1, y: 2)), value: Point(x: 3, y: 4))
-  throw "two points" unless length(list: points) == 2
-  throw "the second should be (3,4)" unless at(list: points, index: 1).x == 3
+fn widen(n i32) i64
+  return n + 0
 
-shape Point
-  x i32
-  y i32
+# An i64 list has to say so. `list()` on its own has no element type, and
+# inferring one from a widened value would quietly make every list of
+# coordinates eight bytes wide.
+fn wide_list() List<i64>
+  return list()
+
+test "a list grows past any fixed size"
+  # The whole reason for List. An array would need its size written in
+  # the type, and topology does not know its size until it is built.
+  let xs = counted(upto: 100)
+  throw "it should hold a hundred" unless length(list: xs) == 100
+  throw "the last should be 99" unless at(list: xs, index: 99) == 99
 
 test "a list inside a shape inside a list"
   # Topology is nested this way — a Body holds Loops, and each Loop holds
@@ -115,6 +85,22 @@ test "a list inside a shape inside a list"
   throw "and its first element" unless at(list: held.items, index: 0) == 10
   throw "and its second" unless at(list: held.items, index: 1) == 20
 
+test "a list of points"
+  # What topology is actually made of.
+  let points = push(list: push(list: list(), value: Point(x: 1, y: 2)), value: Point(x: 3, y: 4))
+  throw "two points" unless length(list: points) == 2
+  throw "the second should be (3,4)" unless at(list: points, index: 1).x == 3
+
+test "a new list is empty"
+  throw "an empty list has no elements" unless length(list: empty_list()) == 0
+
+test "elements keep their order"
+  let xs = one_two_three()
+  throw "three pushes mean three elements" unless length(list: xs) == 3
+  throw "the first should be 1" unless at(list: xs, index: 0) == 1
+  throw "the second should be 2" unless at(list: xs, index: 1) == 2
+  throw "the third should be 3" unless at(list: xs, index: 2) == 3
+
 test "elements of every width can be read back"
   # The bug only showed for elements NARROWER than eight bytes, so a
   # list of i64 would have hidden it. Both widths, pinned.
@@ -123,15 +109,28 @@ test "elements of every width can be read back"
   let wide = push(list: push(list: wide_list(), value: widen(n: 1)), value: widen(n: 2))
   throw "an i64 list reads correctly" unless at(list: wide, index: 1) == 2
 
-fn widen(n i32) i64
-  return n + 0
+test "pushing does not change the list it was given"
+  # The property that makes this immutable rather than merely functional
+  # looking: `xs` is untouched, so a caller holding it sees what it
+  # always saw.
+  let xs = one_two_three()
+  let longer = push(list: xs, value: 4)
+  throw "the original should still be three" unless length(list: xs) == 3
+  throw "the new one should be four" unless length(list: longer) == 4
 
-# An i64 list has to say so. `list()` on its own has no element type, and
-# inferring one from a widened value would quietly make every list of
-# coordinates eight bytes wide.
-fn wide_list() List<i64>
-  return list()
+test "pushing makes it longer"
+  let xs = push(list: list(), value: 7)
+  throw "one push means one element" unless length(list: xs) == 1
+  throw "the element should be what was pushed" unless at(list: xs, index: 0) == 7
 
-shape Holder
-  items List<i32>
-
+test "two lists built from one do not alias"
+  # The property the whole model rests on. `b` and `c` share the prefix
+  # `a` holds, and each has its own tail; if `push` mutated, the second
+  # would overwrite the first's last element and both would read 40.
+  let a = push(list: push(list: list(), value: 1), value: 2)
+  let b = push(list: a, value: 30)
+  let c = push(list: a, value: 40)
+  throw "b keeps its own tail" unless at(list: b, index: 2) == 30
+  throw "c keeps its own tail" unless at(list: c, index: 2) == 40
+  throw "the shared prefix is intact" unless at(list: b, index: 0) == 1 and at(list: c, index: 1) == 2
+  throw "the list they came from is unchanged" unless length(list: a) == 2

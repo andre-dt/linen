@@ -1,0 +1,7 @@
+[package]
+name = "format"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+syntax.workspace = true

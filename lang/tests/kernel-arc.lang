@@ -1,0 +1,161 @@
+# ARCS AND CIRCLES — an edge that is not straight.
+#
+# The change that makes this a CAD kernel rather than a polygon editor.
+# Onshape keeps a circle as a circle: its radius is editable, it exports
+# as CIRCLE, and the triangles you see are a view of it. Discretising at
+# draw time would put a sixteen-sided polygon in git and lose the
+# radius, which is what parametric rules out.
+#
+# WHY CENTRE AND RADIUS SQUARED
+# -----------------------------
+# A circle through integer points rarely has an integer radius — a
+# circle through (0,0), (3,0) and (0,4) has radius 2.5 — but its radius
+# SQUARED is an integer whenever the centre is. So the kernel stores
+# the square, compares squares, and never takes a root: the same reason
+# `distance_squared` exists.
+#
+# WHY AN ARC IS AN EDGE, NOT A LOOP OF SEGMENTS
+# ---------------------------------------------
+# An arc's two ends are vertices like any edge's, so a face can be
+# bounded by a mixture of straight and curved edges with no special
+# case. Its middle is decided by the centre and the direction, which is
+# three integers rather than however many segments a tessellation would
+# have taken.
+
+from 'linen:brep' use Body, empty_body, add_vertex, add_edge, add_arc, edge_count, edge_from, edge_to, edge_is_arc, edge_centre_x, edge_centre_y, edge_centre_z, edge_clockwise, edge_radius_squared, vertex_x, vertex_y, release
+
+fn distance_squared_to(body Body, vertex i32, cx i32, cy i32) i64
+  let dx = vertex_x(body: body, index: vertex) - cx
+  let dy = vertex_y(body: body, index: vertex) - cy
+  return dx * dx + dy * dy
+
+test "a full circle is an arc that ends where it starts"
+  # One vertex used twice. It is how a circle is a normal edge rather
+  # than a special kind: the loop bounding a disc has one coedge, and
+  # the coedge runs from the vertex back to it.
+  let body = empty_body()
+  add_vertex(body: body, x: 100, y: 0, z: 0)
+  let edge = add_arc(body: body, from: 0, to: 0, cx: 0, cy: 0, cz: 0, clockwise: false)
+  throw "it is an arc" unless edge_is_arc(body: body, index: edge)
+  throw "from and to are the same vertex" unless edge_from(body: body, index: edge) == edge_to(body: body, index: edge)
+  throw "radius squared" unless edge_radius_squared(body: body, index: edge) == 10000
+  release(body: body)
+
+test "a straight edge has no centre to read"
+  # Asked anyway, it answers with something that cannot be mistaken for
+  # a centre. A zero would be the origin, which is a real place.
+  let body = empty_body()
+  add_vertex(body: body, x: 0, y: 0, z: 0)
+  add_vertex(body: body, x: 100, y: 0, z: 0)
+  let edge = add_edge(body: body, from: 0, to: 1)
+  throw "no radius" unless edge_radius_squared(body: body, index: edge) == 0 - 1
+  release(body: body)
+
+test "a straight edge says it is straight"
+  let body = empty_body()
+  add_vertex(body: body, x: 0, y: 0, z: 0)
+  add_vertex(body: body, x: 100, y: 0, z: 0)
+  let edge = add_edge(body: body, from: 0, to: 1)
+  throw "not an arc" if edge_is_arc(body: body, index: edge)
+  release(body: body)
+
+test "an arc keeps its centre"
+  let body = empty_body()
+  add_vertex(body: body, x: 100, y: 50, z: 0)
+  add_vertex(body: body, x: 0, y: 150, z: 0)
+  let edge = add_arc(body: body, from: 0, to: 1, cx: 0, cy: 50, cz: 0, clockwise: false)
+  throw "cx" unless edge_centre_x(body: body, index: edge) == 0
+  throw "cy" unless edge_centre_y(body: body, index: edge) == 50
+  throw "cz" unless edge_centre_z(body: body, index: edge) == 0
+  release(body: body)
+
+test "an arc knows which way it turns"
+  # The property that makes an arc an arc rather than a chord: two
+  # points and a centre name TWO arcs, and the direction is what picks
+  # one. Without it a quarter circle and its three-quarter complement
+  # are the same edge.
+  let body = empty_body()
+  add_vertex(body: body, x: 100, y: 0, z: 0)
+  add_vertex(body: body, x: 0, y: 100, z: 0)
+  let short = add_arc(body: body, from: 0, to: 1, cx: 0, cy: 0, cz: 0, clockwise: false)
+  let long = add_arc(body: body, from: 0, to: 1, cx: 0, cy: 0, cz: 0, clockwise: true)
+  throw "the first turns counter-clockwise" if edge_clockwise(body: body, index: short)
+  throw "the second turns clockwise" unless edge_clockwise(body: body, index: long)
+  release(body: body)
+
+test "an arc of zero radius is refused"
+  # Both ends at the centre. There is no circle, and the degenerate
+  # case is worth its own refusal rather than a radius of zero that
+  # later divides by itself.
+  let body = empty_body()
+  add_vertex(body: body, x: 50, y: 50, z: 0)
+  add_vertex(body: body, x: 50, y: 50, z: 0)
+  let edge = add_arc(body: body, from: 0, to: 1, cx: 50, cy: 50, cz: 0, clockwise: false)
+  throw "refused" unless edge == 0 - 1
+  release(body: body)
+
+test "an arc says it is an arc"
+  # A quarter circle from (100,0) to (0,100) about the origin.
+  let body = empty_body()
+  add_vertex(body: body, x: 100, y: 0, z: 0)
+  add_vertex(body: body, x: 0, y: 100, z: 0)
+  let edge = add_arc(body: body, from: 0, to: 1, cx: 0, cy: 0, cz: 0, clockwise: false)
+  throw "an arc" unless edge_is_arc(body: body, index: edge)
+  throw "it still names two vertices" unless edge_from(body: body, index: edge) == 0
+  throw "and the second" unless edge_to(body: body, index: edge) == 1
+  release(body: body)
+
+test "an arc whose ends disagree is refused"
+  # Not a circle about that centre, so not an edge. Refused rather than
+  # stored: a face bounded by it would have a boundary that does not
+  # close, and every later question about the face would be answered
+  # against geometry that is not there.
+  let body = empty_body()
+  add_vertex(body: body, x: 100, y: 0, z: 0)
+  add_vertex(body: body, x: 0, y: 200, z: 0)
+  let edge = add_arc(body: body, from: 0, to: 1, cx: 0, cy: 0, cz: 0, clockwise: false)
+  throw "it should have been refused" unless edge == 0 - 1
+  throw "and not stored" unless edge_count(body: body) == 0
+  release(body: body)
+
+test "an arc's radius is exact, squared"
+  # Squared and never rooted. A circle through integer points rarely
+  # has an integer radius, but its square always does when the centre
+  # is integer — so this is exact where a length would not be.
+  let body = empty_body()
+  add_vertex(body: body, x: 300, y: 400, z: 0)
+  add_vertex(body: body, x: 0, y: 500, z: 0)
+  let edge = add_arc(body: body, from: 0, to: 1, cx: 0, cy: 0, cz: 0, clockwise: false)
+  throw "300 squared plus 400 squared" unless edge_radius_squared(body: body, index: edge) == 250000
+  release(body: body)
+
+test "both ends of an arc are the same distance from its centre"
+  # What makes it a circular arc rather than an ellipse: if the two
+  # ends disagreed, no circle passes through both about that centre and
+  # the edge is not geometry at all.
+  let body = empty_body()
+  add_vertex(body: body, x: 500, y: 0, z: 0)
+  add_vertex(body: body, x: 300, y: 400, z: 0)
+  let edge = add_arc(body: body, from: 0, to: 1, cx: 0, cy: 0, cz: 0, clockwise: false)
+  throw "500 squared" unless edge_radius_squared(body: body, index: edge) == 250000
+
+  let start = distance_squared_to(body: body, vertex: 0, cx: 0, cy: 0)
+  let finish = distance_squared_to(body: body, vertex: 1, cx: 0, cy: 0)
+  throw "both ends are on the circle" unless start == finish
+  release(body: body)
+
+test "straight edges and arcs live in one list"
+  # The reason an arc is an EDGE rather than something beside it: a face
+  # bounded by a mixture needs no special case, and an index into the
+  # edges means the same thing whichever kind it names.
+  let body = empty_body()
+  add_vertex(body: body, x: 0, y: 0, z: 0)
+  add_vertex(body: body, x: 100, y: 0, z: 0)
+  add_vertex(body: body, x: 0, y: 100, z: 0)
+  let straight = add_edge(body: body, from: 0, to: 1)
+  let curved = add_arc(body: body, from: 1, to: 2, cx: 0, cy: 0, cz: 0, clockwise: false)
+  throw "two edges" unless edge_count(body: body) == 2
+  throw "they are numbered in order" unless straight == 0 and curved == 1
+  throw "the first is straight" if edge_is_arc(body: body, index: straight)
+  throw "the second is not" unless edge_is_arc(body: body, index: curved)
+  release(body: body)

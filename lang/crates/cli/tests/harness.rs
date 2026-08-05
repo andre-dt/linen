@@ -212,3 +212,87 @@ fn the_archive_defines_what_it_calls() {
          the runtime is missing from the archive, or a symbol name drifted"
     );
 }
+
+// =====================================================================
+// EVERY FILE IS IN THE CANONICAL ORDER.
+//
+//   the file's header comment, the imports, the shapes, the functions,
+//   the tests by title, the drawing tests by title
+//
+// Checked rather than trusted, because the ordering is only worth
+// having if it holds everywhere: a reader who has to check whether a
+// file follows it is back to reading the whole file.
+//
+// `linen format` puts a file right. This is what says someone ran it.
+// =====================================================================
+
+#[test]
+fn every_file_is_formatted() {
+    let files = lang_files();
+    let mut unformatted = Vec::new();
+
+    for file in &files {
+        let source = fs::read_to_string(file).expect("should read");
+        // A file that does not parse is not this test's business — the
+        // rejection cases are supposed not to.
+        let Ok(formatted) = format::rewrite(&source) else {
+            continue;
+        };
+        if formatted != source {
+            unformatted.push(name_of(file));
+        }
+    }
+
+    assert!(
+        unformatted.is_empty(),
+        "these files are not in the canonical order — run `linen format`:\n  {}",
+        unformatted.join("\n  ")
+    );
+}
+
+#[test]
+fn formatting_twice_changes_nothing_the_second_time() {
+    // A formatter that is not a fixed point is one nobody can run in a
+    // hook: every commit would show a diff, and the diff would be the
+    // formatter arguing with itself.
+    let source = "# A file.\n\n# What it does.\nfn b() i32\n  return 2\n\ntest \"z\"\n  throw \"x\" unless 1 == 1\n\ntest \"a\"\n  throw \"y\" unless 2 == 2\n";
+    let once = format::rewrite(source).expect("should format");
+    let twice = format::rewrite(&once).expect("should format again");
+    assert_eq!(once, twice, "the formatter does not settle");
+}
+
+#[test]
+fn formatting_sorts_the_tests() {
+    let source = "test \"zebra\"\n  throw \"x\" unless 1 == 1\n\ntest \"apple\"\n  throw \"y\" unless 2 == 2\n";
+    let formatted = format::rewrite(source).expect("should format");
+    let apple = formatted.find("apple").expect("apple is there");
+    let zebra = formatted.find("zebra").expect("zebra is there");
+    assert!(apple < zebra, "the tests are not in order:\n{formatted}");
+}
+
+#[test]
+fn formatting_puts_drawing_tests_last() {
+    let source = "test draws \"a picture\"\n  wire(points: list(), segments: list())\n\ntest \"zebra\"\n  throw \"x\" unless 1 == 1\n";
+    let formatted = format::rewrite(source).expect("should format");
+    let picture = formatted.find("a picture").expect("the drawing is there");
+    let zebra = formatted.find("zebra").expect("zebra is there");
+    assert!(
+        zebra < picture,
+        "a drawing test should come after the ones that only assert:\n{formatted}"
+    );
+}
+
+#[test]
+fn formatting_keeps_a_comment_with_what_it_explains() {
+    // The property the whole thing rests on. A comment and the
+    // declaration under it are one thing, so reordering must not put
+    // an explanation above something it was never about.
+    let source = "# About zebra.\ntest \"zebra\"\n  throw \"x\" unless 1 == 1\n\n# About apple.\ntest \"apple\"\n  throw \"y\" unless 2 == 2\n";
+    let formatted = format::rewrite(source).expect("should format");
+    let about_apple = formatted.find("# About apple.").expect("apple's comment is there");
+    let apple = formatted.find("test \"apple\"").expect("apple is there");
+    let about_zebra = formatted.find("# About zebra.").expect("zebra's comment is there");
+    let zebra = formatted.find("test \"zebra\"").expect("zebra is there");
+    assert!(about_apple < apple && apple < about_zebra && about_zebra < zebra,
+        "a comment was separated from its test:\n{formatted}");
+}

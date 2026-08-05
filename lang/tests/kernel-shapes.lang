@@ -1,0 +1,266 @@
+# DRAFT CONSTRUCTORS — the shapes a user actually draws.
+#
+# Onshape's sketch toolbar: rectangle by corners or by centre, circle by
+# centre-and-radius or by three points, regular polygon. None of them
+# are new kinds of geometry — each produces the same points and arcs a
+# user could have placed by hand — but each is one gesture instead of
+# ten, and the gesture is what a CAD system is.
+#
+# WHY THEY ARE FUNCTIONS AND NOT SHAPES
+# -------------------------------------
+# A rectangle IS a closed draft of four points. Storing "rectangle" as
+# its own kind would mean every later operation asking which kind it is,
+# and the answer never changing anything — a face bounded by four
+# straight edges is that whether a rectangle made it or not.
+#
+# What is lost is the parameter: an edited rectangle is four moved
+# points rather than a changed width. That belongs in the feature tree,
+# which records the CALL, not in the geometry it produced.
+
+from 'linen:draft' use Draft, count, point_at, is_closed, signed_area, is_simple, winds_counter_clockwise
+from 'linen:shapes' use rectangle_from_corners, rectangle_from_centre, square_from_centre, regular_polygon, circle_points, arc_through
+from 'linen:predicates' use Point
+
+# How many of a ring's points fall strictly inside the true circle.
+fn inside_count(ring Draft, radius i32, from i32, total i32) i32
+  if from >= count(draft: ring)
+    return total
+  let p = point_at(draft: ring, index: from)
+  let squared = p.x * p.x + p.y * p.y
+  let want = radius * radius
+  let more = if squared < want then 1 else 0
+  return inside_count(ring: ring, radius: radius, from: from + 1, total: total + more)
+
+fn all_on(ring Draft, radius i32, from i32) bool
+  if from >= count(draft: ring)
+    return true
+  let p = point_at(draft: ring, index: from)
+  let distance = p.x * p.x + p.y * p.y
+  let inner = (radius - 1) * (radius - 1)
+  let outer = (radius + 1) * (radius + 1)
+  if distance < inner or distance > outer
+    return false
+  return all_on(ring: ring, radius: radius, from: from + 1)
+
+# The draft as a wire: its points flattened, and its edges as pairs.
+fn draw(profile Draft)
+  wire(points: flat(draft: profile), segments: edges(draft: profile))
+
+fn flat(draft Draft) List<i32>
+  return flattening(draft: draft, from: 0, built: list())
+
+fn flattening(draft Draft, from i32, built List<i32>) List<i32>
+  if from >= count(draft: draft)
+    return built
+  let p = point_at(draft: draft, index: from)
+  return flattening(
+    draft: draft,
+    from: from + 1,
+    built: push(list: push(list: push(list: built, value: p.x), value: p.y), value: 0))
+
+fn edges(draft Draft) List<i32>
+  return edging(draft: draft, from: 0, built: list())
+
+fn edging(draft Draft, from i32, built List<i32>) List<i32>
+  let total = count(draft: draft)
+  if from >= total
+    return built
+  if is_closed(draft: draft) == false and from == total - 1
+    return built
+  let next = if from + 1 >= total then 0 else from + 1
+  return edging(
+    draft: draft,
+    from: from + 1,
+    built: push(list: push(list: built, value: from), value: next))
+
+test "a bigger polygon is a bigger polygon"
+  # Area grows with the square of the radius. Not asserted exactly —
+  # the vertices are rounded to microns — but a doubled radius has to
+  # give about four times the area, and anything else means the radius
+  # is not being used.
+  let small = regular_polygon(centre: Point(x: 0, y: 0), radius: 1000, sides: 12)
+  let large = regular_polygon(centre: Point(x: 0, y: 0), radius: 2000, sides: 12)
+  let ratio = signed_area(draft: large) / signed_area(draft: small)
+  throw "about four times" unless ratio == 4
+
+test "a circle as points closes on itself"
+  # For drawing, and for a profile that has to be a polygon: the
+  # kernel keeps a circle as an arc, and this is the view of it.
+  let ring = circle_points(centre: Point(x: 0, y: 0), radius: 1000, steps: 16)
+  throw "sixteen" unless count(draft: ring) == 16
+  throw "it closes" unless is_closed(draft: ring)
+  throw "and is simple" unless is_simple(draft: ring)
+  throw "and winds the right way" unless winds_counter_clockwise(draft: ring)
+
+test "a circle through three points finds its centre"
+  # The construction Onshape calls circle-by-three-points. The centre
+  # is where the perpendicular bisectors of two chords meet, which is
+  # exact arithmetic — no root anywhere.
+  let found = arc_through(
+    first: Point(x: 0, y: 0),
+    second: Point(x: 100, y: 0),
+    third: Point(x: 0, y: 100))
+  throw "the centre is the midpoint of the hypotenuse" unless found.x == 50 and found.y == 50
+
+test "a circle through three points on a known circle"
+  # Three points of a 500-radius circle about (100, 200), chosen so the
+  # arithmetic is exact.
+  let found = arc_through(
+    first: Point(x: 600, y: 200),
+    second: Point(x: 100, y: 700),
+    third: Point(x: 0 - 400, y: 200))
+  throw "x" unless found.x == 100
+  throw "y" unless found.y == 200
+
+test "a circle's points are not biased toward its centre"
+  # Rounding, not truncation. Truncating pulls EVERY vertex toward the
+  # origin — never away — so a polygon comes out uniformly small rather
+  # than scattered about the true circle.
+  #
+  # A bias is worse than a spread of the same size: it survives
+  # averaging, and it accumulates when shapes are built from other
+  # shapes.
+  #
+  # Counted rather than summed, because the counting is what shows it.
+  # Rounding leaves 48 of these 64 points inside the circle; truncating
+  # leaves 60 — almost all of them, which is the bias.
+  #
+  # The radius is 3333 rather than a round number on purpose: with a
+  # radius of 1000 the products rarely land near a half, so truncation
+  # and rounding agree at every vertex and the defect is invisible.
+  let ring = circle_points(centre: Point(x: 0, y: 0), radius: 3333, steps: 64)
+  let inside = inside_count(ring: ring, radius: 3333, from: 0, total: 0)
+  throw "too many points fall inside the circle" unless inside < 54
+
+test "a polygon of fewer than three sides is empty"
+  # Two points are not a polygon. Empty rather than a degenerate one,
+  # so a caller sees nothing rather than something that looks like a
+  # shape.
+  throw "two sides" unless count(draft: regular_polygon(centre: Point(x: 0, y: 0), radius: 100, sides: 2)) == 0
+  throw "none" unless count(draft: regular_polygon(centre: Point(x: 0, y: 0), radius: 100, sides: 0)) == 0
+
+test "a polygon of many sides is still simple"
+  let many = regular_polygon(centre: Point(x: 0, y: 0), radius: 5000, sides: 24)
+  throw "twenty-four" unless count(draft: many) == 24
+  throw "no edge crosses another" unless is_simple(draft: many)
+
+test "a polygon of zero radius is empty"
+  throw "no radius" unless count(draft: regular_polygon(centre: Point(x: 0, y: 0), radius: 0, sides: 6)) == 0
+
+test "a rectangle from a centre is centred on it"
+  let box = rectangle_from_centre(
+    centre: Point(x: 100, y: 50),
+    width: 300,
+    height: 200)
+  throw "four corners" unless count(draft: box) == 4
+  throw "left" unless point_at(draft: box, index: 0).x == 0 - 50
+  throw "bottom" unless point_at(draft: box, index: 0).y == 0 - 50
+  throw "right" unless point_at(draft: box, index: 2).x == 250
+  throw "top" unless point_at(draft: box, index: 2).y == 150
+  throw "the same area" unless signed_area(draft: box) == 120000
+
+test "a rectangle from two corners has four points"
+  let box = rectangle_from_corners(
+    first: Point(x: 0, y: 0),
+    second: Point(x: 300, y: 200))
+  throw "four corners" unless count(draft: box) == 4
+  throw "it closes" unless is_closed(draft: box)
+  throw "and is a real polygon" unless is_simple(draft: box)
+
+test "a rectangle winds counter-clockwise whichever corners are given"
+  # The property that makes it usable as a profile. A user dragging
+  # from the top right to the bottom left describes the same rectangle,
+  # and a profile that wound the other way would extrude inward.
+  let normal = rectangle_from_corners(first: Point(x: 0, y: 0), second: Point(x: 300, y: 200))
+  let reversed = rectangle_from_corners(first: Point(x: 300, y: 200), second: Point(x: 0, y: 0))
+  let mixed = rectangle_from_corners(first: Point(x: 0, y: 200), second: Point(x: 300, y: 0))
+  throw "dragged up and right" unless winds_counter_clockwise(draft: normal)
+  throw "dragged down and left" unless winds_counter_clockwise(draft: reversed)
+  throw "dragged across" unless winds_counter_clockwise(draft: mixed)
+
+test "a rectangle's area is its width by its height"
+  let box = rectangle_from_corners(first: Point(x: 0, y: 0), second: Point(x: 300, y: 200))
+  throw "doubled, so twice 300 by 200" unless signed_area(draft: box) == 120000
+
+test "a rectangle's corners are where they were asked for"
+  let box = rectangle_from_corners(
+    first: Point(x: 10, y: 20),
+    second: Point(x: 310, y: 220))
+  throw "the first corner" unless point_at(draft: box, index: 0).x == 10 and point_at(draft: box, index: 0).y == 20
+  throw "along x first" unless point_at(draft: box, index: 1).x == 310 and point_at(draft: box, index: 1).y == 20
+  throw "then the far corner" unless point_at(draft: box, index: 2).x == 310 and point_at(draft: box, index: 2).y == 220
+  throw "then back along y" unless point_at(draft: box, index: 3).x == 10 and point_at(draft: box, index: 3).y == 220
+
+test "a regular polygon has the sides it was asked for"
+  let hexagon = regular_polygon(centre: Point(x: 0, y: 0), radius: 1000, sides: 6)
+  throw "six" unless count(draft: hexagon) == 6
+  throw "it closes" unless is_closed(draft: hexagon)
+  throw "and is simple" unless is_simple(draft: hexagon)
+  throw "and winds the right way" unless winds_counter_clockwise(draft: hexagon)
+
+test "a regular polygon's first vertex is on the x axis"
+  # Fixed, so the same call gives the same polygon every time. A
+  # rotation chosen by anything else would make regeneration produce a
+  # different — equally valid — hexagon, and the feature tree would
+  # stop being deterministic.
+  let hexagon = regular_polygon(centre: Point(x: 0, y: 0), radius: 1000, sides: 6)
+  throw "at radius, on the axis" unless point_at(draft: hexagon, index: 0).x == 1000
+  throw "and at zero" unless point_at(draft: hexagon, index: 0).y == 0
+
+test "a square from a centre is as wide as it is tall"
+  let box = square_from_centre(centre: Point(x: 0, y: 0), side: 200)
+  throw "four corners" unless count(draft: box) == 4
+  throw "square" unless signed_area(draft: box) == 80000
+
+test "an odd width still centres exactly"
+  # 301 microns wide about the origin: the corners cannot both be whole
+  # halves, so one side takes the extra micron. Which side does not
+  # matter; that the WIDTH is exact does — a rectangle asked for 301
+  # that measures 300 is a part that does not fit.
+  let box = rectangle_from_centre(centre: Point(x: 0, y: 0), width: 301, height: 101)
+  let left = point_at(draft: box, index: 0).x
+  let right = point_at(draft: box, index: 2).x
+  throw "the width is exactly what was asked" unless right - left == 301
+  let bottom = point_at(draft: box, index: 0).y
+  let top = point_at(draft: box, index: 2).y
+  throw "and the height" unless top - bottom == 101
+
+test "every point of a circle is about the radius from the centre"
+  # About, not exactly: a circle through integer microns cannot have
+  # every point exactly on it. Within one micron is the most that can
+  # be asked, and it is what rounding to the nearest micron gives.
+  let ring = circle_points(centre: Point(x: 0, y: 0), radius: 1000, steps: 12)
+  throw "every point is on the circle" unless all_on(ring: ring, radius: 1000, from: 0)
+
+test "three collinear points have no circle"
+  # No circle passes through them, and the perpendicular bisectors are
+  # parallel. Answered as a point far outside any part rather than by
+  # dividing by zero.
+  let found = arc_through(
+    first: Point(x: 0, y: 0),
+    second: Point(x: 100, y: 0),
+    third: Point(x: 200, y: 0))
+  throw "there is no centre" unless found.x == 0 - 1 and found.y == 0 - 1
+
+test draws normal to top "a circle, as a polygon of thirty-two"
+  draw(profile: circle_points(centre: Point(x: 0, y: 0), radius: 150, steps: 32))
+
+test draws normal to top "a coarse circle, so the steps show"
+  # Eight steps: coarse on purpose. A circle kept as an arc can be
+  # drawn as finely or as coarsely as the moment wants, and this is
+  # what says the model is not the picture.
+  draw(profile: circle_points(centre: Point(x: 0, y: 0), radius: 150, steps: 8))
+
+test draws normal to top "a hexagon"
+  draw(profile: regular_polygon(centre: Point(x: 0, y: 0), radius: 150, sides: 6))
+
+test draws normal to top "a rectangle from two corners"
+  draw(profile: rectangle_from_corners(
+    first: Point(x: 0, y: 0),
+    second: Point(x: 300, y: 200)))
+
+test draws normal to top "a square about its centre"
+  draw(profile: square_from_centre(centre: Point(x: 0, y: 0), side: 240))
+
+test draws normal to top "a twelve-sided polygon"
+  draw(profile: regular_polygon(centre: Point(x: 0, y: 0), radius: 150, sides: 12))

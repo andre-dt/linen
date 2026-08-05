@@ -8,16 +8,13 @@
 # This is the storage model seen from the source: i32 is what a
 # coordinate is stored as, not a ceiling on what can be written.
 
+fn identity(n i64) i64
+  return n
+
 test "a literal wider than i32 survives"
   # 10^14 — the determinant of two coordinates at opposite ends of the
   # range. Truncated to i32 this is a completely different number.
   throw "the wide literal should equal itself" unless 100000000000000 == 100000000000000
-
-test "a product of two coordinates is exact"
-  # The case that matters: i32 * i32 overflows i32 at 47 mm by 47 mm, so
-  # this has to be computed in i64 AND compared against a literal that
-  # was not truncated on its way in.
-  throw "10^7 squared should be 10^14" unless 10000000 * 10000000 == 100000000000000
 
 test "a product just past the i32 ceiling"
   # 10^10, four times over the i32 limit. Small enough that a truncating
@@ -25,21 +22,24 @@ test "a product just past the i32 ceiling"
   # makes it worth pinning.
   throw "10^5 squared should be 10^10" unless 100000 * 100000 == 10000000000
 
-test "a wide negative literal"
-  throw "the negative should survive too" unless 0 - 100000000000000 == 0 - 100000000000000
-
-test "a wide literal in a binding"
-  let big = 100000000000000
-  throw "the binding should hold it" unless big == 100000000000000
-
-test "a wide value through a function"
-  throw "the parameter should hold it" unless identity(n: 100000000000000) == 100000000000000
-
-fn identity(n i64) i64
-  return n
+test "a product of two coordinates is exact"
+  # The case that matters: i32 * i32 overflows i32 at 47 mm by 47 mm, so
+  # this has to be computed in i64 AND compared against a literal that
+  # was not truncated on its way in.
+  throw "10^7 squared should be 10^14" unless 10000000 * 10000000 == 100000000000000
 
 test "a small literal is still i32"
   # The narrowest-that-holds-it rule cuts both ways: `1` stays i32, so
   # arithmetic on coordinates widens FROM the storage width, which is
   # what the model says happens.
   throw "small numbers still work" unless 1 + 1 == 2
+
+test "a wide literal in a binding"
+  let big = 100000000000000
+  throw "the binding should hold it" unless big == 100000000000000
+
+test "a wide negative literal"
+  throw "the negative should survive too" unless 0 - 100000000000000 == 0 - 100000000000000
+
+test "a wide value through a function"
+  throw "the parameter should hold it" unless identity(n: 100000000000000) == 100000000000000

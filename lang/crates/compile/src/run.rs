@@ -28,6 +28,8 @@ use crate::emit::{emit, EmitError};
 /// What one test did.
 pub struct Ran {
     pub name: String,
+    /// `normal to <name>` — where this test asked to be seen from.
+    pub view: Option<String>,
     /// The message of the throw that fired, or None if the test held.
     pub failed: Option<String>,
     /// The mesh it drew, if it is a `test draws` that reached its
@@ -197,6 +199,7 @@ pub fn run_tests(unit: &Unit, module_name: &str) -> Result<Vec<Ran>, EmitError> 
         };
         results.push(Ran {
             name: test.name.clone(),
+            view: test.view.clone(),
             failed,
             mesh: DRAWN.with(|drawn| drawn.borrow_mut().take()),
         });

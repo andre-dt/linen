@@ -31,19 +31,8 @@ fn sum_of(
   values [i32; 3]) i64
   return values[0] + values[1] + values[2]
 
-test "an array literal can wrap"
-  let box = corners(size: 100)
-  throw "the first corner is the origin" unless box[0].x == 0
-  throw "the third corner is far" unless box[2].x == 100 and box[2].y == 100
-
 test "a parameter list can wrap"
   throw "the sum should be 6" unless total(a: 1, b: 2, c: 3) == 6
-
-test "an argument list can wrap"
-  throw "wrapped arguments should work" unless total(
-    a: 10,
-    b: 20,
-    c: 30) == 60
 
 test "a plain array literal can wrap"
   let xs = [
@@ -51,6 +40,17 @@ test "a plain array literal can wrap"
     2,
     3]
   throw "the wrapped array should hold" unless sum_of(values: xs) == 6
+
+test "an argument list can wrap"
+  throw "wrapped arguments should work" unless total(
+    a: 10,
+    b: 20,
+    c: 30) == 60
+
+test "an array literal can wrap"
+  let box = corners(size: 100)
+  throw "the first corner is the origin" unless box[0].x == 0
+  throw "the third corner is far" unless box[2].x == 100 and box[2].y == 100
 
 test "wrapping does not change the value"
   let flat = [1, 2, 3]

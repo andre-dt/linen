@@ -1,4 +1,6 @@
 #~ an index is a number
+
+# ~ an index is a number
 test "t"
   let xs = push(list: list(), value: 1)
   throw "m" unless at(list: xs, index: true) == 1

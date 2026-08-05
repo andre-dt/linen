@@ -1,0 +1,385 @@
+# DRAFT CONSTRUCTORS — the shapes a user draws.
+#
+# Onshape's sketch toolbar: rectangle by corners or by centre, circle by
+# centre or by three points, regular polygon. None of these are new
+# kinds of geometry — each produces the same points a user could place
+# by hand — but each is one gesture instead of ten, and the gesture is
+# what a CAD system is.
+#
+# WHY THEY ARE FUNCTIONS AND NOT SHAPES
+# -------------------------------------
+# A rectangle IS a closed draft of four points. Storing "rectangle" as
+# its own kind would mean every later operation asking which kind it is
+# and the answer never changing anything: a face bounded by four
+# straight edges is that whether a rectangle made it or not.
+#
+# What is lost is the parameter — an edited rectangle is four moved
+# points rather than a changed width. That belongs in the feature tree,
+# which records the CALL, not in the geometry it produced.
+#
+# TRIGONOMETRY WITHOUT TRIGONOMETRY
+# ---------------------------------
+# A regular polygon's vertices are cosines, and this kernel has no
+# floating point and no cos. They come from a table of sines in
+# thousandths instead: a fixed table means the same call gives the same
+# polygon every time, which a library's cos does not guarantee across
+# platforms — and determinism is what the whole feature tree rests on.
+
+from 'linen:draft' use Draft, closed_draft, add, count, point_at
+from 'linen:predicates' use Point
+
+# --- rectangles -------------------------------------------------------
+
+# A rectangle from two opposite corners.
+#
+# Wound counter-clockwise whichever corners are given: a user dragging
+# from the top right describes the same rectangle as one dragging from
+# the bottom left, and a profile that wound the other way would extrude
+# inward.
+fn rectangle_from_corners(first Point, second Point) Draft
+  let left = smaller(a: first.x, b: second.x)
+  let right = larger(a: first.x, b: second.x)
+  let bottom = smaller(a: first.y, b: second.y)
+  let top = larger(a: first.y, b: second.y)
+  return add(
+    draft: add(
+      draft: add(
+        draft: add(draft: closed_draft(), point: Point(x: left, y: bottom)),
+        point: Point(x: right, y: bottom)),
+      point: Point(x: right, y: top)),
+    point: Point(x: left, y: top))
+
+fn smaller(a i32, b i32) i32
+  return if a < b then a else b
+
+fn larger(a i32, b i32) i32
+  return if a > b then a else b
+
+# A rectangle of a given size, centred on a point.
+#
+# The WIDTH is exact even when it is odd: 301 microns about the origin
+# cannot put both corners at a whole half, so one side takes the extra
+# micron. Which side does not matter; that the width is what was asked
+# does — a rectangle asked for 301 that measures 300 is a part that
+# does not fit.
+fn rectangle_from_centre(centre Point, width i32, height i32) Draft
+  let left = centre.x - width / 2
+  let bottom = centre.y - height / 2
+  return rectangle_from_corners(
+    first: Point(x: left, y: bottom),
+    second: Point(x: left + width, y: bottom + height))
+
+fn square_from_centre(centre Point, side i32) Draft
+  return rectangle_from_centre(centre: centre, width: side, height: side)
+
+# --- regular polygons -------------------------------------------------
+
+# A regular polygon of `sides` vertices on a circle of `radius`.
+#
+# The first vertex is on the +x axis, always. Fixed rather than chosen,
+# so the same call gives the same polygon every time — a rotation
+# picked by anything else would make regeneration produce a different,
+# equally valid, hexagon and the feature tree would stop being
+# deterministic.
+#
+# Fewer than three sides, or no radius, gives an EMPTY draft. Two points
+# are not a polygon, and returning something degenerate would look like
+# a shape to everything downstream.
+fn regular_polygon(centre Point, radius i32, sides i32) Draft
+  if sides < 3
+    return closed_draft()
+  if radius <= 0
+    return closed_draft()
+  return placing(centre: centre, radius: radius, sides: sides, at: 0, built: closed_draft())
+
+fn placing(centre Point, radius i32, sides i32, at i32, built Draft) Draft
+  if at >= sides
+    return built
+  # The angle of this vertex, in thousandths of a turn.
+  #
+  # ROUNDED, not truncated. A hexagon's vertices are at 166.67
+  # thousandths apart, and truncating puts them at 166, 333, 500 — so
+  # the sides come out unequal and the polygon is visibly lopsided.
+  # It showed up in the picture before it showed up in a number, which
+  # is what the pictures are for.
+  let turn = rounded_turn(at: at, sides: sides)
+  return placing(
+    centre: centre,
+    radius: radius,
+    sides: sides,
+    at: at + 1,
+    built: add(
+      draft: built,
+      point: Point(
+        x: centre.x + scaled(value: cosine(turn: turn), by: radius),
+        y: centre.y + scaled(value: sine(turn: turn), by: radius))))
+
+# Which thousandth of a turn a vertex sits at, rounded to nearest.
+fn rounded_turn(at i32, sides i32) i32
+  return (at * 2000 + sides) / (sides * 2)
+
+# `value` is in ten-thousandths; scale it by a radius and round.
+#
+# Rounded to the NEAREST micron rather than truncated: truncation pulls
+# every vertex toward the origin, which shrinks a polygon by up to a
+# micron on every side and is a bias rather than a spread.
+fn scaled(value i64, by i32) i32
+  let product = value * by
+  if product >= 0
+    return narrow(value: (product + 5000) / 10000)
+  return narrow(value: (product - 5000) / 10000)
+
+fn narrow(value i64) i32
+  return value
+
+# --- circles ----------------------------------------------------------
+
+# A circle as a closed polygon of `steps` points.
+#
+# For DRAWING, and for a profile that has to be a polygon. The kernel
+# keeps a circle as an arc — one edge with a centre and a radius — and
+# this is the view of it. Which is the point of keeping the arc: the
+# view can be as coarse or as fine as the moment needs, and the model
+# does not change.
+fn circle_points(centre Point, radius i32, steps i32) Draft
+  return regular_polygon(centre: centre, radius: radius, sides: steps)
+
+# The centre of the circle through three points.
+#
+# Where the perpendicular bisectors of two chords meet — exact
+# arithmetic, no root anywhere. Collinear points have no circle: their
+# bisectors are parallel, and the answer is (-1, -1), which is outside
+# any part rather than a division by zero.
+#
+#     |b|^2 - |a|^2  and  |c|^2 - |a|^2  give two linear equations,
+#     solved by Cramer's rule.
+fn arc_through(first Point, second Point, third Point) Point
+  let bx = widen(value: second.x - first.x)
+  let by = widen(value: second.y - first.y)
+  let cx = widen(value: third.x - first.x)
+  let cy = widen(value: third.y - first.y)
+
+  # Twice the signed area of the triangle. Zero when collinear, which
+  # is exactly when there is no circle.
+  let twice_area = bx * cy - by * cx
+  if twice_area == 0
+    return Point(x: 0 - 1, y: 0 - 1)
+
+  let b_squared = bx * bx + by * by
+  let c_squared = cx * cx + cy * cy
+
+  # The centre, relative to the first point, doubled — so the division
+  # below is the only one, and it is exact whenever the centre is a
+  # whole micron.
+  let ux = cy * b_squared - by * c_squared
+  let uy = bx * c_squared - cx * b_squared
+  let denominator = twice_area * 2
+
+  return Point(
+    x: narrow(value: widen32(value: first.x) + rounded(value: ux, by: denominator)),
+    y: narrow(value: widen32(value: first.y) + rounded(value: uy, by: denominator)))
+
+fn widen(value i32) i64
+  return value + 0
+
+fn widen32(value i32) i64
+  return value + 0
+
+# Division, rounded to the nearest rather than toward zero.
+#
+# Toward zero would pull a centre toward the first point, which is a
+# bias — and a circle centre half a micron out is a circle that misses
+# the points it was built from.
+fn rounded(value i64, by i64) i64
+  if by == 0
+    return 0
+  let half = if by > 0 then by / 2 else 0 - by / 2
+  if value >= 0
+    return (value + half) / by
+  return (value - half) / by
+
+# --- the sine table ---------------------------------------------------
+
+# Sine, in ten-thousandths, of an angle in thousandths of a turn.
+#
+# A TABLE rather than a library call. `cos` is floating point, and its
+# last bit differs between platforms and versions — so the same feature
+# tree would regenerate into slightly different geometry on a different
+# machine, and a topological name derived from a vertex would move.
+#
+# A table is the same everywhere forever. Sixteen entries covering a
+# quarter turn, with the rest by symmetry, and linear interpolation
+# between them: within about a micron at 10 mm, which is the tolerance
+# the whole kernel works to anyway.
+fn sine(turn i32) i64
+  let folded = turn % 1000
+  let positive = if folded < 0 then folded + 1000 else folded
+  if positive < 250
+    return quarter(turn: positive)
+  if positive < 500
+    return quarter(turn: 500 - positive)
+  if positive < 750
+    return 0 - quarter(turn: positive - 500)
+  return 0 - quarter(turn: 1000 - positive)
+
+fn cosine(turn i32) i64
+  return sine(turn: turn + 250)
+
+# Sine over the first quarter turn, 0 to 250 thousandths.
+#
+# Interpolated between sixty-four samples of sine at multiples of a
+# two-hundred-and-fifty-sixth of a turn.
+#
+# The angle is scaled by 64 BEFORE dividing, so a quarter turn — 250
+# thousandths — lands exactly on the last sample. Dividing directly
+# would leave a remainder there, and the sine of a quarter turn would
+# come out just under 1: a circle whose top is a micron low, on every
+# circle, always in the same direction.
+fn quarter(turn i32) i64
+  let scaled = turn * 64
+  let step = scaled / 250
+  let into = scaled % 250
+  let low = sample(index: step)
+  let high = sample(index: step + 1)
+  return low + (high - low) * into / 250
+
+# Sine at multiples of a two-hundred-and-fifty-sixth of a turn, in
+# ten-thousandths.
+#
+# Sixty-four samples over the quarter turn rather than sixteen. With
+# sixteen the interpolation was out by 1.3 microns at a radius of a
+# millimetre — enough that a point of a circle sat more than a micron
+# off it, which is more than this kernel's own tolerance. Sixty-four
+# brings it to 0.2.
+fn sample(index i32) i64
+  if index <= 0
+    return 0
+  if index == 1
+    return 245
+  if index == 2
+    return 491
+  if index == 3
+    return 736
+  if index == 4
+    return 980
+  if index == 5
+    return 1224
+  if index == 6
+    return 1467
+  if index == 7
+    return 1710
+  if index == 8
+    return 1951
+  if index == 9
+    return 2191
+  if index == 10
+    return 2430
+  if index == 11
+    return 2667
+  if index == 12
+    return 2903
+  if index == 13
+    return 3137
+  if index == 14
+    return 3369
+  if index == 15
+    return 3599
+  if index == 16
+    return 3827
+  if index == 17
+    return 4052
+  if index == 18
+    return 4276
+  if index == 19
+    return 4496
+  if index == 20
+    return 4714
+  if index == 21
+    return 4929
+  if index == 22
+    return 5141
+  if index == 23
+    return 5350
+  if index == 24
+    return 5556
+  if index == 25
+    return 5758
+  if index == 26
+    return 5957
+  if index == 27
+    return 6152
+  if index == 28
+    return 6344
+  if index == 29
+    return 6532
+  if index == 30
+    return 6716
+  if index == 31
+    return 6895
+  if index == 32
+    return 7071
+  if index == 33
+    return 7242
+  if index == 34
+    return 7410
+  if index == 35
+    return 7572
+  if index == 36
+    return 7730
+  if index == 37
+    return 7883
+  if index == 38
+    return 8032
+  if index == 39
+    return 8176
+  if index == 40
+    return 8315
+  if index == 41
+    return 8449
+  if index == 42
+    return 8577
+  if index == 43
+    return 8701
+  if index == 44
+    return 8819
+  if index == 45
+    return 8932
+  if index == 46
+    return 9040
+  if index == 47
+    return 9142
+  if index == 48
+    return 9239
+  if index == 49
+    return 9330
+  if index == 50
+    return 9415
+  if index == 51
+    return 9495
+  if index == 52
+    return 9569
+  if index == 53
+    return 9638
+  if index == 54
+    return 9700
+  if index == 55
+    return 9757
+  if index == 56
+    return 9808
+  if index == 57
+    return 9853
+  if index == 58
+    return 9892
+  if index == 59
+    return 9925
+  if index == 60
+    return 9952
+  if index == 61
+    return 9973
+  if index == 62
+    return 9988
+  if index == 63
+    return 9997
+  if index == 64
+    return 10000
+  return 10000

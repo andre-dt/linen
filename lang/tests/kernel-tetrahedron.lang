@@ -44,13 +44,6 @@ fn triangles() [i32; 12]
     1, 2, 3,
     2, 0, 3]
 
-test "six times the volume is the determinant"
-  # Not proportional to it — equal to it. That identity is why orient3d
-  # is the predicate a kernel is built on rather than one convenience
-  # among several.
-  let t = corners(size: 100)
-  throw "a tetrahedron of side 100 has a determinant" unless orient3d(a: t[0], b: t[1], c: t[2], d: t[3]) > 0
-
 test "a flattened tetrahedron has none"
   let flat = [
     Point3(x: 0, y: 0, z: 0),
@@ -70,20 +63,12 @@ test "every triangle faces outward"
     let c = t[indices[i * 3 + 2]]
     throw "a face winds the wrong way" unless orient3d(a: a, b: b, c: c, d: inside) < 0
 
-# A tetrahedron shows at most two faces from a fixed viewpoint — it has
-# four, and any direction has two of them turned away. These coordinates
-# were chosen by COUNTING how many survive back-face culling rather than
-# by reasoning about the shape: several arrangements leave only one, and
-# one face is a flat triangle on screen.
-
-test draws "a tetrahedron"
-  solid(
-    points: [
-      260, 260, 0,
-      0, 260, 0,
-      130, 0, 0,
-      130, 130, 260],
-    triangles: triangles())
+test "six times the volume is the determinant"
+  # Not proportional to it — equal to it. That identity is why orient3d
+  # is the predicate a kernel is built on rather than one convenience
+  # among several.
+  let t = corners(size: 100)
+  throw "a tetrahedron of side 100 has a determinant" unless orient3d(a: t[0], b: t[1], c: t[2], d: t[3]) > 0
 
 test draws "a flatter tetrahedron"
   solid(
@@ -92,4 +77,13 @@ test draws "a flatter tetrahedron"
       0, 300, 0,
       150, 0, 0,
       150, 150, 110],
+    triangles: triangles())
+
+test draws "a tetrahedron"
+  solid(
+    points: [
+      260, 260, 0,
+      0, 260, 0,
+      130, 0, 0,
+      130, 130, 260],
     triangles: triangles())

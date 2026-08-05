@@ -60,29 +60,27 @@ fn lower_of(a Point, b Point) Point
 fn lowest(points [Point; 4]) Point
   return lower_of(a: lower_of(a: lower_of(a: points[0], b: points[1]), b: points[2]), b: points[3])
 
-test "an array of points"
-  let square = [Point(x: 0, y: 0), Point(x: 10, y: 0), Point(x: 10, y: 10)]
-  throw "the first should be the origin" unless square[0].x == 0
-  throw "the second should be out along x" unless square[1].x == 10
-  throw "the third should be up along y" unless square[2].y == 10
-
 test "a counter-clockwise triangle has positive area"
   let triangle = [Point(x: 0, y: 0), Point(x: 1000, y: 0), Point(x: 0, y: 1000)]
   throw "should wind counter-clockwise" unless is_counter_clockwise(points: triangle)
   # 1000 x 1000 / 2, doubled back to 10^6.
   throw "twice the area should be 10^6" unless triangle_area(points: triangle) == 1000000
 
-test "reversing the points flips the sign"
-  let forward = [Point(x: 0, y: 0), Point(x: 1000, y: 0), Point(x: 0, y: 1000)]
-  let backward = [Point(x: 0, y: 1000), Point(x: 1000, y: 0), Point(x: 0, y: 0)]
-  throw "the area should be the same size" unless triangle_area(points: forward) == 0 - triangle_area(points: backward)
-  throw "the reverse should wind clockwise" if is_counter_clockwise(points: backward)
+test "a square by two triangles"
+  let square = [Point(x: 0, y: 0), Point(x: 100, y: 0), Point(x: 100, y: 100), Point(x: 0, y: 100)]
+  # 100 x 100, doubled.
+  throw "twice the area should be 20000" unless quad_area(points: square) == 20000
 
-test "three points on a line have exactly no area"
-  # The reason for integers, in one line: this is 0, not 1e-11, so
-  # "degenerate" is a fact rather than a threshold.
-  let flat = [Point(x: 0, y: 0), Point(x: 5000000, y: 5000000), Point(x: 10000000, y: 10000000)]
-  throw "a flat triangle should be degenerate" unless is_degenerate(points: flat)
+test "an array of points"
+  let square = [Point(x: 0, y: 0), Point(x: 10, y: 0), Point(x: 10, y: 10)]
+  throw "the first should be the origin" unless square[0].x == 0
+  throw "the second should be out along x" unless square[1].x == 10
+  throw "the third should be up along y" unless square[2].y == 10
+
+test "an array of points can be walked"
+  let triangle = [Point(x: 0, y: 0), Point(x: 10, y: 0), Point(x: 0, y: 10)]
+  for i in 0 .. 3
+    throw "no point should be far from the origin" unless triangle[i].x <= 10
 
 test "one micron of height is not degenerate"
   # The same three points, with the middle lifted by a single micron at
@@ -90,23 +88,25 @@ test "one micron of height is not degenerate"
   let nearly = [Point(x: 0, y: 0), Point(x: 5000000, y: 5000001), Point(x: 10000000, y: 10000000)]
   throw "a micron of height is still area" if is_degenerate(points: nearly)
 
+test "reversing the points flips the sign"
+  let forward = [Point(x: 0, y: 0), Point(x: 1000, y: 0), Point(x: 0, y: 1000)]
+  let backward = [Point(x: 0, y: 1000), Point(x: 1000, y: 0), Point(x: 0, y: 0)]
+  throw "the area should be the same size" unless triangle_area(points: forward) == 0 - triangle_area(points: backward)
+  throw "the reverse should wind clockwise" if is_counter_clockwise(points: backward)
+
 test "the area of a triangle at full range"
   # 10^7 by 10^7, doubled: 10^14. Five orders past what i32 holds, which
   # is why area is i64.
   let big = [Point(x: 0, y: 0), Point(x: 10000000, y: 0), Point(x: 0, y: 10000000)]
   throw "twice the area should be 10^14" unless triangle_area(points: big) == 100000000000000
 
-test "a square by two triangles"
-  let square = [Point(x: 0, y: 0), Point(x: 100, y: 0), Point(x: 100, y: 100), Point(x: 0, y: 100)]
-  # 100 x 100, doubled.
-  throw "twice the area should be 20000" unless quad_area(points: square) == 20000
-
 test "the lowest point of a set"
   let points = [Point(x: 5, y: 9), Point(x: 2, y: 3), Point(x: 8, y: 3), Point(x: 4, y: 7)]
   # Two share the lowest y, so the leftmost wins.
   throw "should find the lowest, leftmost" unless lowest(points: points).x == 2
 
-test "an array of points can be walked"
-  let triangle = [Point(x: 0, y: 0), Point(x: 10, y: 0), Point(x: 0, y: 10)]
-  for i in 0 .. 3
-    throw "no point should be far from the origin" unless triangle[i].x <= 10
+test "three points on a line have exactly no area"
+  # The reason for integers, in one line: this is 0, not 1e-11, so
+  # "degenerate" is a fact rather than a threshold.
+  let flat = [Point(x: 0, y: 0), Point(x: 5000000, y: 5000000), Point(x: 10000000, y: 10000000)]
+  throw "a flat triangle should be degenerate" unless is_degenerate(points: flat)

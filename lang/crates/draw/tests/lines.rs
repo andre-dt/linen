@@ -217,7 +217,7 @@ fn every_column_of_a_stroke_carries_one_pixel_of_ink() {
 // the same lie as one in the wrong place.
 // =====================================================================
 
-use draw::render::{render, Mesh, MeshKind, Point3};
+use draw::render::{render, Mesh, MeshKind, Point3, View};
 
 #[test]
 fn an_interior_edge_is_not_dotted() {
@@ -234,7 +234,7 @@ fn an_interior_edge_is_not_dotted() {
     // A boundary with holes in it is the same lie as one in the wrong
     // place, so it is measured here: along the edge, column by column.
     let mesh = box_mesh(400);
-    let image = render(&mesh, 320, 260);
+    let image = render(&mesh, 320, 260, View::Isometric);
 
     // The middle band, where the three interior edges of a box meet.
     let mut drawn = Vec::new();
@@ -288,4 +288,238 @@ fn box_mesh(size: i64) -> Mesh {
         ],
         kind: MeshKind::Solid,
     }
+}
+
+// =====================================================================
+// A VERTEX IS A DISC, NOT A SQUARE.
+//
+// A draft's points are what the draft IS — the segments between them
+// are derived — so they are drawn rather than left implied. Onshape
+// draws them as small round dots, and round is not decoration: a square
+// has corners that read as direction, and a point has none.
+//
+// Anti-aliased for the same reason the lines are. A three-pixel square
+// is visibly bigger along its diagonal than across its face, so a row
+// of vertices appears to change size as the path turns.
+// =====================================================================
+
+use draw::render::{dot_into, dot_sized};
+
+#[test]
+fn a_vertex_is_round() {
+    // The corners of the bounding box are lighter than the edges: that
+    // is what makes it a disc rather than a square.
+    let mut image = Image::new(24, 24);
+    dot_into(&mut image, (12, 12), INK);
+
+    let centre = ink(&image, 12, 12);
+    // One pixel out along an axis, and one pixel out diagonally. The
+    // diagonal is further from the centre — by a factor of root two —
+    // so a disc carries less ink there and a square carries the same.
+    let edge = ink(&image, 12, 11);
+    let corner = ink(&image, 11, 11);
+
+    assert!(centre > 200, "the middle should be solid, got {centre}");
+    assert!(
+        corner < edge,
+        "the corner of the bounding box carries {corner} and the edge {edge} — \
+         a square would carry the same at both"
+    );
+}
+
+#[test]
+fn a_vertex_is_symmetric() {
+    // Round means round in every direction. An asymmetric dot puts the
+    // apparent point somewhere the geometry is not, which is the same
+    // defect as an off-centre line.
+    let mut image = Image::new(24, 24);
+    dot_into(&mut image, (12, 12), INK);
+
+    for offset in 1..=4 {
+        let right = ink(&image, 12 + offset, 12);
+        let left = ink(&image, 12 - offset, 12);
+        let below = ink(&image, 12, 12 + offset);
+        let above = ink(&image, 12, 12 - offset);
+        assert_eq!(right, left, "the dot is lopsided in x at {offset} out");
+        assert_eq!(below, above, "the dot is lopsided in y at {offset} out");
+        assert_eq!(right, below, "the dot is wider than it is tall at {offset} out");
+    }
+}
+
+#[test]
+fn a_vertex_fades_at_its_rim() {
+    // Anti-aliased, so a dot has no jagged outline. Without it a
+    // three-pixel disc is a plus sign.
+    let mut image = Image::new(24, 24);
+    dot_into(&mut image, (12, 12), INK);
+
+    let mut partial = 0;
+    for y in 8..=16 {
+        for x in 8..=16 {
+            let amount = ink(&image, x, y);
+            if amount > 0 && amount < 200 {
+                partial += 1;
+            }
+        }
+    }
+    assert!(
+        partial >= 8,
+        "only {partial} pixels are partly covered — the rim is hard, not faded"
+    );
+}
+
+#[test]
+fn a_vertex_is_small() {
+    // Small enough to mark a point rather than to be a shape. A dot as
+    // big as the gap between two vertices reads as a blob.
+    let mut image = Image::new(32, 32);
+    dot_into(&mut image, (16, 16), INK);
+
+    for x in 0..32 {
+        for y in 0..32 {
+            let far = (x - 16) * (x - 16) + (y - 16) * (y - 16);
+            if far > 16 {
+                assert_eq!(
+                    ink(&image, x, y),
+                    0,
+                    "({x},{y}) is more than four pixels out and still has ink"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_wire_marks_its_vertices() {
+    // A draft's points are what the draft IS — the segments between
+    // them are derived — so they are drawn rather than left implied.
+    //
+    // Measured rather than looked at: a dot on a straight run of a
+    // wire is the same colour as the line and reads as part of it, so
+    // the eye cannot tell whether it is there. What can be told is that
+    // the pixel AT the vertex is fuller than the line either side.
+    let mesh = Mesh {
+        points: vec![
+            Point3 { x: 0, y: 0, z: 0 },
+            Point3 { x: 400, y: 0, z: 0 },
+            Point3 { x: 400, y: 300, z: 0 },
+            Point3 { x: 0, y: 300, z: 0 },
+        ],
+        triangles: vec![0, 1, 1, 2, 2, 3, 3, 0],
+        kind: MeshKind::Wire,
+    };
+    let image = render(&mesh, 200, 160, View::Top);
+
+    // The wire's corners in screen space: the extremes of the drawn
+    // ink. A dot makes each corner thicker than the runs leading to it.
+    let mut left = i64::MAX;
+    let mut right = i64::MIN;
+    let mut top = i64::MAX;
+    let mut bottom = i64::MIN;
+    for y in 0..160 {
+        for x in 0..200 {
+            if ink(&image, x, y) > 40 {
+                left = left.min(x);
+                right = right.max(x);
+                top = top.min(y);
+                bottom = bottom.max(y);
+            }
+        }
+    }
+
+    // How much ink sits within two pixels of a corner, against the same
+    // patch taken from the middle of an edge.
+    let patch = |cx: i64, cy: i64| {
+        let mut sum = 0i64;
+        for y in cy - 2..=cy + 2 {
+            for x in cx - 2..=cx + 2 {
+                sum += ink(&image, x, y);
+            }
+        }
+        sum
+    };
+
+    let corner = patch(left + 1, top + 1);
+    let middle = patch((left + right) / 2, top + 1);
+    assert!(
+        corner > middle,
+        "a corner carries {corner} of ink and a straight run {middle} — \
+         the vertex is not being marked"
+    );
+}
+
+#[test]
+fn a_vertex_is_the_same_shape_at_any_size() {
+    // The dot scales with the tile. At 320 pixels wide a 2.5-pixel disc
+    // reads as a square — there are not enough pixels for the rim to
+    // fall anywhere but the corners — and at 2560 the same disc is a
+    // speck.
+    //
+    // What must not change is the SHAPE: round at both sizes, and
+    // round means the corner of its bounding box is lighter than the
+    // edge, whatever the radius.
+    for radius in [5i64, 10, 20] {
+        let mut image = Image::new(64, 64);
+        dot_sized(&mut image, (32, 32), radius, INK);
+
+        let out = (radius / 4).max(1);
+        let edge = ink(&image, 32, 32 - out);
+        let corner = ink(&image, 32 - out, 32 - out);
+        assert!(
+            corner < edge,
+            "at radius {radius} the corner carries {corner} and the edge {edge} — \
+             that is a square, not a disc"
+        );
+
+        // And symmetric, at every size.
+        for offset in 1..=(radius / 4).max(1) {
+            assert_eq!(
+                ink(&image, 32 + offset, 32),
+                ink(&image, 32 - offset, 32),
+                "lopsided in x at radius {radius}"
+            );
+            assert_eq!(
+                ink(&image, 32, 32 + offset),
+                ink(&image, 32 - offset, 32),
+                "taller than it is wide at radius {radius}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_written_png_is_compressed() {
+    // The mosaics are 2560 pixels across and go into git. Uncompressed
+    // they are twelve megabytes each, which is not a file anyone wants
+    // in a history — and the content is flat colour on a flat
+    // background, which is the easiest thing there is to compress.
+    let mut image = Image::new(800, 600);
+    // Something with real content: a solid and its outline.
+    for x in 100..700 {
+        for y in 200..400 {
+            image.set(x, y, [96, 146, 226]);
+        }
+    }
+    let bytes = draw::render::encode_png(&image);
+
+    let raw = 800 * 600 * 3;
+    assert!(
+        bytes.len() < raw / 8,
+        "the PNG is {} bytes for {raw} of pixels — barely compressed at all",
+        bytes.len()
+    );
+}
+
+#[test]
+fn a_compressed_png_still_says_what_it_is() {
+    // Compression that corrupts the file is worse than none. The
+    // signature and the dimensions have to survive it.
+    let image = Image::new(64, 48);
+    let bytes = draw::render::encode_png(&image);
+
+    assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "not a PNG");
+    let width = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+    let height = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+    assert_eq!(width, 64);
+    assert_eq!(height, 48);
 }

@@ -1,15 +1,8 @@
 # Every operator against every other, in both orders. Precedence bugs
 # hide in the pairs nobody thought to write down.
 
-test "multiplication and division bind tighter than addition"
-  throw "2 + 3 * 4 should be 14" unless 2 + 3 * 4 == 14
-  throw "3 * 4 + 2 should be 14" unless 3 * 4 + 2 == 14
-  throw "2 + 12 / 4 should be 5" unless 2 + 12 / 4 == 5
-  throw "12 / 4 + 2 should be 5" unless 12 / 4 + 2 == 5
-
-test "remainder binds like multiplication"
-  throw "2 + 7 % 4 should be 5" unless 2 + 7 % 4 == 5
-  throw "7 % 4 + 2 should be 5" unless 7 % 4 + 2 == 5
+test "a long chain keeps its shape"
+  throw "1 + 2 * 3 - 4 / 2 should be 5" unless 1 + 2 * 3 - 4 / 2 == 5
 
 test "arithmetic binds tighter than comparison"
   throw "1 + 1 should be 2" unless 1 + 1 == 2
@@ -18,22 +11,11 @@ test "arithmetic binds tighter than comparison"
   throw "5 should be less than 2 * 3" unless 5 < 2 * 3
   throw "10 - 5 should not be 4" unless 10 - 5 != 4
 
-test "same-precedence operators group to the left"
-  # The classic slip: right-associating these gives 9, 2 and 4.
-  throw "10 - 3 - 2 should be 5" unless 10 - 3 - 2 == 5
-  throw "100 / 5 / 2 should be 10" unless 100 / 5 / 2 == 10
-  throw "20 - 5 + 3 should be 18" unless 20 - 5 + 3 == 18
-  throw "2 * 6 / 3 should be 4" unless 2 * 6 / 3 == 4
-
-test "parentheses beat everything"
-  throw "(2 + 3) * 4 should be 20" unless (2 + 3) * 4 == 20
-  throw "2 * (3 + 4) should be 14" unless 2 * (3 + 4) == 14
-  throw "(10 - 3) - 2 should be 5" unless (10 - 3) - 2 == 5
-  throw "10 - (3 - 2) should be 9" unless 10 - (3 - 2) == 9
-
-test "nested parentheses"
-  throw "((1 + 2) * (3 + 4)) should be 21" unless ((1 + 2) * (3 + 4)) == 21
-  throw "(((7))) should be 7" unless (((7))) == 7
+test "multiplication and division bind tighter than addition"
+  throw "2 + 3 * 4 should be 14" unless 2 + 3 * 4 == 14
+  throw "3 * 4 + 2 should be 14" unless 3 * 4 + 2 == 14
+  throw "2 + 12 / 4 should be 5" unless 2 + 12 / 4 == 5
+  throw "12 / 4 + 2 should be 5" unless 12 / 4 + 2 == 5
 
 test "negation binds tighter than arithmetic"
   throw "-5 + 1 should be -4" unless -5 + 1 == -4
@@ -43,5 +25,23 @@ test "negation binds tighter than arithmetic"
 test "negation stacks"
   throw "- -5 should be 5" unless - -5 == 5
 
-test "a long chain keeps its shape"
-  throw "1 + 2 * 3 - 4 / 2 should be 5" unless 1 + 2 * 3 - 4 / 2 == 5
+test "nested parentheses"
+  throw "((1 + 2) * (3 + 4)) should be 21" unless ((1 + 2) * (3 + 4)) == 21
+  throw "(((7))) should be 7" unless (((7))) == 7
+
+test "parentheses beat everything"
+  throw "(2 + 3) * 4 should be 20" unless (2 + 3) * 4 == 20
+  throw "2 * (3 + 4) should be 14" unless 2 * (3 + 4) == 14
+  throw "(10 - 3) - 2 should be 5" unless (10 - 3) - 2 == 5
+  throw "10 - (3 - 2) should be 9" unless 10 - (3 - 2) == 9
+
+test "remainder binds like multiplication"
+  throw "2 + 7 % 4 should be 5" unless 2 + 7 % 4 == 5
+  throw "7 % 4 + 2 should be 5" unless 7 % 4 + 2 == 5
+
+test "same-precedence operators group to the left"
+  # The classic slip: right-associating these gives 9, 2 and 4.
+  throw "10 - 3 - 2 should be 5" unless 10 - 3 - 2 == 5
+  throw "100 / 5 / 2 should be 10" unless 100 / 5 / 2 == 10
+  throw "20 - 5 + 3 should be 18" unless 20 - 5 + 3 == 18
+  throw "2 * 6 / 3 should be 4" unless 2 * 6 / 3 == 4

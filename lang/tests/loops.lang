@@ -4,15 +4,24 @@
 # `0 .. n` means "n times", which is the thing people write, and two
 # adjacent ranges meet without overlapping.
 
-test "a while that never runs"
-  while false
-    throw "this body should never run" if true
-  throw "true should hold" unless true
-
 test "a for over a small range"
   for i in 0 .. 3
     throw "i should be at least 0" unless i >= 0
     throw "i should be less than 3" unless i < 3
+
+test "a loop inside an if"
+  if true
+    for i in 0 .. 2
+      throw "i should be less than 2" unless i < 2
+  else
+    throw "this body should never run" if true
+
+test "a range from expressions"
+  let low = 1
+  let high = 3
+  for i in low .. high
+    throw "i should be at least low" unless i >= low
+    throw "i should be less than high" unless i < high
 
 test "a range that is empty"
   # start == end visits nothing, which is what makes `0 .. n` safe when
@@ -26,22 +35,16 @@ test "a range that starts above zero"
     throw "i should be at least 5" unless i >= 5
     throw "i should be less than 8" unless i < 8
 
-test "the loop variable is visible in the body"
-  for i in 1 .. 2
-    throw "i should be 1" unless i == 1
+test "a while that never runs"
+  while false
+    throw "this body should never run" if true
+  throw "true should hold" unless true
 
-test "a range from expressions"
-  let low = 1
-  let high = 3
-  for i in low .. high
-    throw "i should be at least low" unless i >= low
-    throw "i should be less than high" unless i < high
-
-test "loops nest"
-  for i in 0 .. 2
-    for j in 0 .. 2
-      throw "i + j should be at least 0" unless i + j >= 0
-      throw "i + j should be at most 2" unless i + j <= 2
+test "a while with a condition that is already false"
+  let done = true
+  while not done
+    throw "this body should never run" if true
+  throw "done should hold" unless done
 
 test "an if inside a loop"
   for i in 0 .. 3
@@ -50,15 +53,12 @@ test "an if inside a loop"
     else
       throw "i should be more than 0" unless i > 0
 
-test "a loop inside an if"
-  if true
-    for i in 0 .. 2
-      throw "i should be less than 2" unless i < 2
-  else
-    throw "this body should never run" if true
+test "loops nest"
+  for i in 0 .. 2
+    for j in 0 .. 2
+      throw "i + j should be at least 0" unless i + j >= 0
+      throw "i + j should be at most 2" unless i + j <= 2
 
-test "a while with a condition that is already false"
-  let done = true
-  while not done
-    throw "this body should never run" if true
-  throw "done should hold" unless done
+test "the loop variable is visible in the body"
+  for i in 1 .. 2
+    throw "i should be 1" unless i == 1

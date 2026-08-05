@@ -13,3 +13,4 @@
 
 pub mod gallery;
 pub mod render;
+pub mod text;

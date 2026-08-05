@@ -125,10 +125,44 @@ fn write_step(body: BodyHandle) -> String {
     for index in 0..edges {
         let from = brep::linen_edge_from(body, index);
         let to = brep::linen_edge_to(body, index);
-        // The curve is `*` — unspecified. Every edge here is a straight
-        // line between its vertices, and writing a LINE entity that
-        // says exactly that would be three more entities repeating what
-        // the vertices already fix. It is where curves will go.
+
+        if brep::linen_edge_is_arc(body, index) {
+            // A CIRCLE, so the curve survives.
+            //
+            // Without it an arc would be written as a straight edge and
+            // read back as a chord — every count correct and the
+            // geometry wrong, which is the kind of loss only a test
+            // catches.
+            //
+            // STEP writes a circle as a placement and a radius. The
+            // radius is a real, and this kernel's is exact only as a
+            // SQUARE — a circle through integer points rarely has an
+            // integer radius. So the square rides in a comment beside
+            // it, the same way a face's plane does: another system
+            // reads the radius and computes, this kernel reads the
+            // square back and keeps it exact.
+            let cx = brep::linen_edge_centre_x(body, index);
+            let cy = brep::linen_edge_centre_y(body, index);
+            let cz = brep::linen_edge_centre_z(body, index);
+            let squared = brep::linen_edge_radius_squared(body, index);
+            let clockwise = brep::linen_edge_clockwise(body, index);
+            text.push_str(&format!(
+                "#{}=EDGE_CURVE('',#{},#{},*,{});/* arc {},{},{},{} */\n",
+                edge + index,
+                vertex + from,
+                vertex + to,
+                if clockwise { ".F." } else { ".T." },
+                cx,
+                cy,
+                cz,
+                squared
+            ));
+            continue;
+        }
+
+        // A straight edge. The curve is `*` — unspecified — because a
+        // LINE entity would be three more entities repeating what the
+        // two vertices already fix exactly.
         text.push_str(&format!(
             "#{}=EDGE_CURVE('',#{},#{},*,.T.);\n",
             edge + index,
@@ -257,6 +291,21 @@ fn read_step(text: &str, body: BodyHandle) {
         ) else {
             continue;
         };
+
+        // An arc, if the writer left its centre and squared radius.
+        //
+        // Absent — a file from another system — makes it straight, which
+        // is what an `EDGE_CURVE` with no curve is. Reading someone
+        // else's CIRCLE entity is the next piece; guessing at one now
+        // would be worse than saying so.
+        if let Some(arc) = arc_after(text, &arguments) {
+            let clockwise = arguments.contains(".F.");
+            let made = brep::linen_add_arc(body, from, to, arc[0], arc[1], arc[2], clockwise);
+            if made >= 0 {
+                edge_of.push((number, made));
+                continue;
+            }
+        }
         edge_of.push((number, brep::linen_add_edge(body, from, to)));
     }
 
@@ -298,6 +347,28 @@ fn read_step(text: &str, body: BodyHandle) {
         // kernel wrote anyway.
         let plane = plane_after(text, &arguments).unwrap_or([0, 1, 2]);
         brep::linen_add_face(body, ring, plane[0], plane[1], plane[2]);
+    }
+}
+
+/// The `/* arc cx,cy,cz,r2 */` comment following an edge.
+///
+/// The squared radius is read but not returned: `add_arc` recomputes it
+/// from the endpoints, and a file claiming a radius its endpoints do
+/// not have is one where the endpoints win. They are the geometry; the
+/// radius is derived from it.
+fn arc_after(text: &str, arguments: &str) -> Option<[i32; 3]> {
+    let at = text.find(arguments)?;
+    let rest = &text[at + arguments.len()..];
+    let start = rest.find("/* arc ")? + "/* arc ".len();
+    let end = rest[start..].find(" */")? + start;
+    let numbers: Vec<i64> = rest[start..end]
+        .split(',')
+        .filter_map(|word| word.trim().parse().ok())
+        .collect();
+    if numbers.len() == 4 {
+        Some([numbers[0] as i32, numbers[1] as i32, numbers[2] as i32])
+    } else {
+        None
     }
 }
 

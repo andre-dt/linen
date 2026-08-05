@@ -1,4 +1,6 @@
 #~ an index is a number
+
+# ~ an index is a number
 test "t"
   let xs = [1, 2, 3]
   throw "m" unless xs[true] == 1

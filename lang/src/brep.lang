@@ -37,8 +37,24 @@ driver fn empty_body() Body
 # Adds a vertex and returns its index.
 driver fn add_vertex(body Body, x i32, y i32, z i32) i32
 
-# Adds an edge between two vertices and returns its index.
+# Adds a straight edge between two vertices and returns its index.
 driver fn add_edge(body Body, from i32, to i32) i32
+
+# Adds a CIRCULAR ARC and returns its index, or -1 if it is not one.
+#
+# Two points and a centre name two arcs — the short way round and the
+# long way — so `clockwise` is what picks one. Without it a quarter
+# circle and its three-quarter complement would be the same edge.
+#
+# A full circle is `from` and `to` naming the SAME vertex. That is what
+# makes a circle an ordinary edge rather than a special kind: the loop
+# bounding a disc has one coedge, running from the vertex back to it.
+#
+# REFUSED, NOT STORED, when the two ends are not the same distance from
+# the centre, or when that distance is zero. Neither is a circular arc,
+# and a face bounded by one would have a boundary that does not close —
+# with every later question answered against geometry that is not there.
+driver fn add_arc(body Body, from i32, to i32, cx i32, cy i32, cz i32, clockwise bool) i32
 
 # Adds a coedge — an edge as one face uses it — and returns its index.
 #
@@ -80,9 +96,32 @@ driver fn vertex_x(body Body, index i32) i32
 driver fn vertex_y(body Body, index i32) i32
 driver fn vertex_z(body Body, index i32) i32
 
-# The two ends of an edge.
+# The two ends of an edge — the same question for both kinds.
 driver fn edge_from(body Body, index i32) i32
 driver fn edge_to(body Body, index i32) i32
+
+# Whether this edge curves.
+driver fn edge_is_arc(body Body, index i32) bool
+
+# An arc's centre. Zero for a straight edge, which is why
+# `edge_is_arc` is asked first: the origin is a real place.
+driver fn edge_centre_x(body Body, index i32) i32
+driver fn edge_centre_y(body Body, index i32) i32
+driver fn edge_centre_z(body Body, index i32) i32
+
+# Which way an arc turns, seen from the side its plane's normal points.
+driver fn edge_clockwise(body Body, index i32) bool
+
+# An arc's radius, SQUARED, or -1 for a straight edge.
+#
+# Squared and never rooted. A circle through integer points rarely has
+# an integer radius — one through (0,0), (3,0) and (0,4) has radius 2.5
+# — but its square is an integer whenever the centre is. So the kernel
+# stores the square and compares squares, the same reason
+# `distance_squared` exists.
+#
+# i64, because a radius reaches 10^7 microns and its square 10^14.
+driver fn edge_radius_squared(body Body, index i32) i64
 
 # Which edge a coedge uses, and which way it runs along it.
 driver fn coedge_edge(body Body, index i32) i32

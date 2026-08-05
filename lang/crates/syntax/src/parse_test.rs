@@ -11,8 +11,8 @@ use crate::lex::lex;
 use crate::parse::parse;
 
 fn tree(source: &str) -> Unit {
-    let tokens = lex(source).expect("should lex");
-    parse(&tokens).expect("should parse")
+    let (tokens, comments) = crate::lex::lex_with_comments(source).expect("should lex");
+    crate::parse::parse_with_comments(&tokens, &comments).expect("should parse")
 }
 
 fn error(source: &str) -> String {
@@ -247,4 +247,69 @@ fn a_construction_and_a_call_read_alike() {
         thrown("test \"t\"\n  throw \"m\" unless Point(x: 1, y: 2).x == 1\n"),
         "(Point(x: 1, y: 2).x == 1)"
     );
+}
+
+// =====================================================================
+// A COMMENT BELONGS TO WHAT IT EXPLAINS.
+//
+// The block of `#` lines above a function or a test is part of that
+// declaration, not something floating beside it. Kept on the AST node,
+// so anything that reorders or reformats a file carries the
+// explanation with the thing explained — rather than each such tool
+// guessing at the attachment, and guessing differently.
+// =====================================================================
+
+#[test]
+fn a_function_keeps_the_comment_above_it() {
+    let unit = tree("# What it does.\n# And why.\nfn f() i32\n  return 1\n");
+    let Item::Function(function) = &unit.items[0] else {
+        panic!("expected a function");
+    };
+    assert_eq!(
+        function.comment.as_deref(),
+        Some("What it does.\nAnd why."),
+        "the block above a function is its own"
+    );
+}
+
+#[test]
+fn a_test_keeps_the_comment_above_it() {
+    let unit = tree("# Why this matters.\ntest \"t\"\n  throw \"x\" unless 1 == 1\n");
+    let Item::Test(test) = &unit.items[0] else {
+        panic!("expected a test");
+    };
+    assert_eq!(test.comment.as_deref(), Some("Why this matters."));
+}
+
+#[test]
+fn a_blank_line_separates_a_comment_from_what_follows() {
+    // A comment with a blank line under it is not attached: it is
+    // about the file, or about the section, and moving it with the
+    // next declaration would put it somewhere it does not belong.
+    let unit = tree("# About the file.\n\nfn f() i32\n  return 1\n");
+    let Item::Function(function) = &unit.items[0] else {
+        panic!("expected a function");
+    };
+    assert_eq!(
+        function.comment, None,
+        "a blank line means the comment was not about this function"
+    );
+}
+
+#[test]
+fn a_declaration_without_a_comment_has_none() {
+    let unit = tree("fn f() i32\n  return 1\n");
+    let Item::Function(function) = &unit.items[0] else {
+        panic!("expected a function");
+    };
+    assert_eq!(function.comment, None);
+}
+
+#[test]
+fn a_shape_keeps_its_comment() {
+    let unit = tree("# A point in the plane.\nshape Point\n  x i32\n  y i32\n");
+    let Item::Shape(shape) = &unit.items[0] else {
+        panic!("expected a shape");
+    };
+    assert_eq!(shape.comment.as_deref(), Some("A point in the plane."));
 }

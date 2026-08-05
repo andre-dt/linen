@@ -30,14 +30,39 @@ pub struct LexError {
 }
 
 pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
-    Lexer::new(source).run()
+    Ok(lex_with_comments(source)?.0)
 }
+
+/// The tokens, and the comment block attached to each declaration.
+///
+/// Separate from `lex` because most callers do not care: a comment is
+/// not syntax, and the parser's view of the stream is the same either
+/// way. What needs it is anything that REWRITES a file — reordering,
+/// formatting — where an explanation separated from what it explains is
+/// the thing that must not happen.
+pub fn lex_with_comments(source: &str) -> Result<(Vec<Token>, Comments), LexError> {
+    let lexer = Lexer::new(source);
+    lexer.run_with_comments()
+}
+
+/// Which token index each comment block belongs to.
+pub type Comments = Vec<(usize, String)>;
 
 struct Lexer<'a> {
     source: &'a [u8],
     /// Where the next character comes from.
     at: usize,
     tokens: Vec<Token>,
+    /// The comment lines gathered since the last blank line, waiting
+    /// for the declaration they explain.
+    pending_comment: Vec<String>,
+    /// Which token index each comment block attaches to.
+    ///
+    /// By INDEX rather than as a token, so the parser's view of the
+    /// stream is unchanged: a comment is not syntax, it is a note about
+    /// a piece of syntax, and making it a token would mean every rule
+    /// that skips whitespace also skipping this.
+    comments: Vec<(usize, Option<String>)>,
     /// How many brackets are open — `(` and `[` that have not been
     /// closed.
     ///
@@ -62,11 +87,24 @@ impl<'a> Lexer<'a> {
             source: source.as_bytes(),
             at: 0,
             tokens: Vec::new(),
+            pending_comment: Vec::new(),
+            comments: Vec::new(),
             levels: vec![0],
         }
     }
 
-    fn run(mut self) -> Result<Vec<Token>, LexError> {
+    fn run_with_comments(self) -> Result<(Vec<Token>, Comments), LexError> {
+        let (tokens, comments) = self.run_inner()?;
+        Ok((
+            tokens,
+            comments
+                .into_iter()
+                .filter_map(|(at, text)| text.map(|text| (at, text)))
+                .collect(),
+        ))
+    }
+
+    fn run_inner(mut self) -> Result<(Vec<Token>, Vec<(usize, Option<String>)>), LexError> {
         while self.at < self.source.len() {
             self.line()?;
         }
@@ -82,7 +120,7 @@ impl<'a> Lexer<'a> {
             self.push(TokenKind::Dedent, self.at, self.at);
         }
         self.push(TokenKind::End, self.at, self.at);
-        Ok(self.tokens)
+        Ok((self.tokens, self.comments))
     }
 
     /// One logical line: its indentation, then its tokens, then the
@@ -97,11 +135,42 @@ impl<'a> Lexer<'a> {
         // indent rule so that a blank line inside a block — which has no
         // indentation to speak of — cannot close it.
         if self.at_line_end() {
-            self.skip_to_next_line();
+            // A comment line JOINS the block being gathered; a truly
+            // blank line ENDS it.
+            //
+            // That distinction is what makes a comment belong to the
+            // declaration under it: a block with a blank line between
+            // it and the next `fn` is about the file or the section,
+            // and carrying it along with that function would put it
+            // somewhere it was never about.
+            if self.peek() == Some(b'#') {
+                let start = self.at + 1;
+                self.skip_to_next_line();
+                let mut line = self.slice(start, self.at).trim_end().to_string();
+                if line.starts_with(' ') {
+                    line.remove(0);
+                }
+                self.pending_comment.push(line);
+            } else {
+                self.skip_to_next_line();
+                self.pending_comment.clear();
+            }
             return Ok(());
         }
 
         self.apply_layout(width, indent_start)?;
+
+        // The comment block gathered above this line now belongs to
+        // whatever the line declares. Taken here rather than at the end
+        // of the line, so a comment INSIDE a declaration's body — which
+        // explains a statement, not the declaration — does not attach
+        // to the next one.
+        let comment = if self.pending_comment.is_empty() {
+            None
+        } else {
+            Some(std::mem::take(&mut self.pending_comment).join("\n"))
+        };
+        self.comments.push((self.tokens.len(), comment));
 
         // Tokens until the line ends — or, while a bracket is open,
         // straight past the end of the line and on through the next.

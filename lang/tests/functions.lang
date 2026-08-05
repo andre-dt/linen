@@ -12,8 +12,8 @@ fn zero() i32
 test "calls a function"
   throw "double(n: 21) should be 42" unless double(n: 21) == 42
 
-test "passes several arguments"
-  throw "add(a: 20, b: 22) should be 42" unless add(a: 20, b: 22) == 42
+test "calls inside arithmetic"
+  throw "double(n: 3) + add(a: 1, b: 1) should be 8" unless double(n: 3) + add(a: 1, b: 1) == 8
 
 test "calls with no arguments"
   throw "zero() should be 0" unless zero() == 0
@@ -21,5 +21,5 @@ test "calls with no arguments"
 test "nests calls"
   throw "double(n: add(a: 1, b: 2)) should be 6" unless double(n: add(a: 1, b: 2)) == 6
 
-test "calls inside arithmetic"
-  throw "double(n: 3) + add(a: 1, b: 1) should be 8" unless double(n: 3) + add(a: 1, b: 1) == 8
+test "passes several arguments"
+  throw "add(a: 20, b: 22) should be 42" unless add(a: 20, b: 22) == 42

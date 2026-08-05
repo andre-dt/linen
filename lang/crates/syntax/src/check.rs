@@ -346,6 +346,7 @@ struct Program {
 pub fn check(unit: &Unit) -> Result<(), CheckError> {
     let program = program_of(unit)?;
     check_names(unit)?;
+    check_views(unit)?;
     check_against(unit, &program)
 }
 
@@ -446,6 +447,50 @@ fn crosses(of: Type, program: &Program) -> bool {
             }),
         _ => false,
     }
+}
+
+/// The views a camera can be placed at without anything being built.
+///
+/// The six standard planes. A face of a solid and a plane built at run
+/// time are the other two kinds, and they arrive here as names too —
+/// which is why this is a resolution step rather than a keyword in the
+/// grammar. Adding them means extending this list's lookup, not the
+/// parser.
+const STANDARD_VIEWS: [&str; 7] = [
+    "isometric", "top", "bottom", "front", "back", "right", "left",
+];
+
+/// `normal to <name>` — the name has to resolve to something.
+///
+/// A name that does not is a mistake: a misspelled plane, a face that
+/// was renamed. Defaulting to another view would hide it — the picture
+/// would come out fine, of the wrong thing, which is the one failure a
+/// drawing test cannot catch by being looked at.
+fn check_views(unit: &Unit) -> Result<(), CheckError> {
+    for item in &unit.items {
+        let Item::Test(test) = item else {
+            continue;
+        };
+        let Some(view) = &test.view else {
+            continue;
+        };
+        if STANDARD_VIEWS.contains(&view.name.as_str()) {
+            continue;
+        }
+        // A binding cannot be checked here — it is scoped to a body
+        // that has not been walked yet — so a name that is neither a
+        // standard view nor a declared shape is refused. Faces of
+        // solids join by being nameable at this point.
+        return Err(CheckError {
+            message: format!(
+                "there is nothing called `{}` to look at; the views are {}",
+                view.name,
+                STANDARD_VIEWS.join(", ")
+            ),
+            span: view.span,
+        });
+    }
+    Ok(())
 }
 
 fn check_names(unit: &Unit) -> Result<(), CheckError> {

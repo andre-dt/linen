@@ -77,6 +77,12 @@ pub struct Compiled<'context> {
 
 pub struct CompiledTest {
     pub name: String,
+    /// `normal to <name>` — where the camera looks from, as written.
+    ///
+    /// Carried as the NAME rather than as a resolved view: the
+    /// renderer is what knows the projections, and a second copy of
+    /// the mapping here would be a second place for them to disagree.
+    pub view: Option<String>,
     pub symbol: String,
     /// The message of each `throw`, indexed by what the test returns —
     /// entry 0 is the throw that returns 1. Kept on this side rather
@@ -543,6 +549,7 @@ impl<'a, 'context> Emitter<'a, 'context> {
 
         Ok(CompiledTest {
             name: test.name.clone(),
+            view: test.view.as_ref().map(|view| view.name.clone()),
             symbol,
             messages,
         })

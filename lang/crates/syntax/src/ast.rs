@@ -62,6 +62,15 @@ pub struct ImportedName {
 /// attached.
 #[derive(Debug, PartialEq)]
 pub struct Shape {
+    /// The comment block written above this, as one string with the
+    /// `#` and one leading space stripped from each line.
+    ///
+    /// Part of the declaration rather than something beside it: a
+    /// comment explains the thing under it, so the two move together
+    /// whatever reorders the file. `None` when there was none, or when
+    /// a blank line separated them — which means the comment was about
+    /// the file or the section, not about this.
+    pub comment: Option<String>,
     pub name: String,
     /// Type parameters, empty for the ordinary case. `shape Pair<T>`.
     pub generics: Vec<GenericParameter>,
@@ -89,6 +98,15 @@ pub struct GenericParameter {
 
 #[derive(Debug, PartialEq)]
 pub struct Function {
+    /// The comment block written above this, as one string with the
+    /// `#` and one leading space stripped from each line.
+    ///
+    /// Part of the declaration rather than something beside it: a
+    /// comment explains the thing under it, so the two move together
+    /// whatever reorders the file. `None` when there was none, or when
+    /// a blank line separated them — which means the comment was about
+    /// the file or the section, not about this.
+    pub comment: Option<String>,
     pub name: String,
     /// `export fn` — part of the boundary this unit presents to whoever
     /// links it.
@@ -152,16 +170,48 @@ pub struct TypeName {
     pub span: Span,
 }
 
+/// What `normal to <name>` named.
+#[derive(Debug, PartialEq, Clone)]
+pub struct ViewName {
+    pub name: String,
+    pub span: Span,
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Test {
+    /// The comment block written above this, as one string with the
+    /// `#` and one leading space stripped from each line.
+    ///
+    /// Part of the declaration rather than something beside it: a
+    /// comment explains the thing under it, so the two move together
+    /// whatever reorders the file. `None` when there was none, or when
+    /// a blank line separated them — which means the comment was about
+    /// the file or the section, not about this.
+    pub comment: Option<String>,
     pub name: String,
-    /// `test draws "..."` — this test produces a solid, and the runner
+    /// `test draws "..."` — this test produces geometry, and the runner
     /// renders it to a tile in the file's mosaic.
     ///
     /// A modifier on `test` rather than a keyword of its own, because it
     /// IS a test: it asserts, it can throw, it fails the suite. Drawing
     /// is something it does as well, not instead.
     pub draws: bool,
+    /// `test draws normal to front "..."` — where the camera looks
+    /// from.
+    ///
+    /// Named rather than given as angles, and named in the TEST rather
+    /// than chosen by the renderer: a draft is 2D, and seeing one in
+    /// isometric distorts the thing being judged — a square arrives as
+    /// a rhombus and nothing about it can be read.
+    ///
+    /// The name is not resolved here. A plane, a face of a solid and a
+    /// plane built at run time are all things a camera can look at, and
+    /// which of them a name means is a question for a later pass — so
+    /// the parser takes a name and the checker insists it exists.
+    ///
+    /// `None` means isometric: the default, and right for a solid,
+    /// which has no single plane to be normal to.
+    pub view: Option<ViewName>,
     pub body: Vec<Statement>,
     pub span: Span,
 }

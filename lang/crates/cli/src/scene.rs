@@ -25,7 +25,7 @@ use std::path::Path;
 use compile::run::Ran;
 
 use draw::gallery::{write_gallery, Tile, TILE_HEIGHT, TILE_WIDTH};
-use draw::render::{render, Mesh, MeshKind, Point3};
+use draw::render::{render, Mesh, MeshKind, Point3, View};
 
 
 /// Renders every drawing test of one file into a mosaic beside it.
@@ -66,7 +66,19 @@ pub fn render_file(ran: &[Ran], source: &Path) -> Result<usize, String> {
 
         tiles.push(Tile {
             label: test.name.clone(),
-            image: render(&mesh, TILE_WIDTH, TILE_HEIGHT),
+            // The view the test asked for, or isometric when it asked
+            // for none. The name was already checked to be one the
+            // renderer knows, so a failure here would be the two
+            // having drifted apart.
+            image: render(
+                &mesh,
+                TILE_WIDTH,
+                TILE_HEIGHT,
+                test.view
+                    .as_deref()
+                    .and_then(View::named)
+                    .unwrap_or(View::Isometric),
+            ),
         });
     }
 

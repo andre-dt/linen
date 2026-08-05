@@ -14,14 +14,15 @@ fn sign(n i64) i32
 fn describe(n i32) i32
   return if n == 0 then 100 else if n == 1 then 200 else if n == 2 then 300 else 400
 
+test "a nested conditional in a binding"
+  let n = 0 - 3
+  let sign_of = if n > 0 then 1 else if n < 0 then 0 - 1 else 0
+  throw "the binding should hold -1" unless sign_of == 0 - 1
+
 test "a three-way sign"
   throw "positive should be 1" unless sign(n: 5) == 1
   throw "negative should be -1" unless sign(n: 0 - 5) == 0 - 1
   throw "zero should be 0" unless sign(n: 0) == 0
-
-test "the sign of a wide value"
-  throw "a large positive is still 1" unless sign(n: 100000000000000) == 1
-  throw "a large negative is still -1" unless sign(n: 0 - 100000000000000) == 0 - 1
 
 test "conditionals nest more than twice"
   throw "the first arm" unless describe(n: 0) == 100
@@ -29,7 +30,6 @@ test "conditionals nest more than twice"
   throw "the third arm" unless describe(n: 2) == 300
   throw "the last arm" unless describe(n: 9) == 400
 
-test "a nested conditional in a binding"
-  let n = 0 - 3
-  let sign_of = if n > 0 then 1 else if n < 0 then 0 - 1 else 0
-  throw "the binding should hold -1" unless sign_of == 0 - 1
+test "the sign of a wide value"
+  throw "a large positive is still 1" unless sign(n: 100000000000000) == 1
+  throw "a large negative is still -1" unless sign(n: 0 - 100000000000000) == 0 - 1

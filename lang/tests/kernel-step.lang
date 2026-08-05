@@ -1,205 +1,7 @@
 # STEP — writing a body out and reading it back.
 
 from 'linen:step' use serialize, parse, bytes_of
-from 'linen:brep' use Body, empty_body, add_vertex, add_edge, add_coedge, add_loop, extend_loop, add_face, vertex_count, edge_count, face_count, loop_count, coedge_count, vertex_x, vertex_y, vertex_z, edge_from, edge_to, coedge_start, coedge_end, loop_size, loop_coedge, face_outer, face_a, face_b, face_c, release
-
-test "a STEP file starts and ends the way the standard says"
-  # ISO 10303-21 fixes the first and last lines. A reader that does not
-  # find them rejects the file before looking at anything else.
-  let body = triangle_body()
-  let bytes = serialize(body: body)
-  throw "there should be a file" unless length(list: bytes) > 0
-  throw "it starts with I" unless at(list: bytes, index: 0) == 73
-  throw "then S" unless at(list: bytes, index: 1) == 83
-  throw "then O" unless at(list: bytes, index: 2) == 79
-  release(body: body)
-
-test "an empty body still makes a valid file"
-  # A file with no geometry is not a broken file. It has a header and a
-  # data section holding nothing, and a reader gets an empty body back
-  # rather than an error.
-  let body = empty_body()
-  let bytes = serialize(body: body)
-  throw "a header at least" unless length(list: bytes) > 100
-  let back = parse(bytes: bytes)
-  throw "nothing came back" unless vertex_count(body: back) == 0
-  throw "and no faces" unless face_count(body: back) == 0
-  release(body: body)
-  release(body: back)
-
-test "a vertex survives the round trip"
-  let body = empty_body()
-  add_vertex(body: body, x: 10, y: 20, z: 30)
-  let back = parse(bytes: serialize(body: body))
-  throw "one vertex" unless vertex_count(body: back) == 1
-  throw "x" unless vertex_x(body: back, index: 0) == 10
-  throw "y" unless vertex_y(body: back, index: 0) == 20
-  throw "z" unless vertex_z(body: back, index: 0) == 30
-  release(body: body)
-  release(body: back)
-
-test "coordinates at the edge of the range survive"
-  # 10 metres in microns, positive and negative. If the writer formatted
-  # through anything lossy, this is where it would show.
-  let body = empty_body()
-  add_vertex(body: body, x: 10000000, y: 0 - 10000000, z: 1)
-  let back = parse(bytes: serialize(body: body))
-  throw "ten metres" unless vertex_x(body: back, index: 0) == 10000000
-  throw "minus ten metres" unless vertex_y(body: back, index: 0) == 0 - 10000000
-  throw "one micron" unless vertex_z(body: back, index: 0) == 1
-  release(body: body)
-  release(body: back)
-
-test "an edge survives the round trip"
-  let body = empty_body()
-  add_vertex(body: body, x: 0, y: 0, z: 0)
-  add_vertex(body: body, x: 100, y: 0, z: 0)
-  add_edge(body: body, from: 0, to: 1)
-  let back = parse(bytes: serialize(body: body))
-  throw "one edge" unless edge_count(body: back) == 1
-  throw "from the first" unless edge_from(body: back, index: 0) == 0
-  throw "to the second" unless edge_to(body: back, index: 0) == 1
-  release(body: body)
-  release(body: back)
-
-test "a coedge keeps its direction"
-  # The property that makes a BREP a BREP. If the writer dropped
-  # `forward`, both faces sharing an edge would walk it the same way and
-  # the solid would be inside out — with every count still correct.
-  let body = empty_body()
-  add_vertex(body: body, x: 0, y: 0, z: 0)
-  add_vertex(body: body, x: 100, y: 0, z: 0)
-  add_edge(body: body, from: 0, to: 1)
-  add_coedge(body: body, edge: 0, forward: true)
-  add_coedge(body: body, edge: 0, forward: false)
-
-  let back = parse(bytes: serialize(body: body))
-  throw "two coedges" unless coedge_count(body: back) == 2
-  throw "the forward one starts at 0" unless coedge_start(body: back, index: 0) == 0
-  throw "and ends at 1" unless coedge_end(body: back, index: 0) == 1
-  throw "the reversed one starts at 1" unless coedge_start(body: back, index: 1) == 1
-  throw "and ends at 0" unless coedge_end(body: back, index: 1) == 0
-  release(body: body)
-  release(body: back)
-
-test "a loop keeps its coedges in order"
-  # Order is geometry here: the same coedges in a different order bound
-  # a different region.
-  let body = triangle_body()
-  let back = parse(bytes: serialize(body: body))
-  throw "one loop" unless loop_count(body: back) == 1
-  throw "three coedges" unless loop_size(body: back, ring: 0) == 3
-  throw "first" unless loop_coedge(body: back, ring: 0, position: 0) == 0
-  throw "second" unless loop_coedge(body: back, ring: 0, position: 1) == 1
-  throw "third" unless loop_coedge(body: back, ring: 0, position: 2) == 2
-  release(body: body)
-  release(body: back)
-
-test "a face keeps its loop and its plane"
-  # The plane's vertices are NOT the loop's first three here — 2, 0, 1
-  # rather than 0, 1, 2 — because a triangle whose plane happens to
-  # match the fallback would pass with the plane thrown away entirely.
-  #
-  # It is also the case that matters: the plane's orientation decides
-  # which way the face points, so three vertices in the wrong order
-  # describe the same plane facing backwards.
-  let body = empty_body()
-  add_vertex(body: body, x: 0, y: 0, z: 0)
-  add_vertex(body: body, x: 100, y: 0, z: 0)
-  add_vertex(body: body, x: 0, y: 100, z: 0)
-  add_edge(body: body, from: 0, to: 1)
-  add_edge(body: body, from: 1, to: 2)
-  add_edge(body: body, from: 2, to: 0)
-  let ring = add_loop(body: body)
-  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: 0, forward: true))
-  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: 1, forward: true))
-  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: 2, forward: true))
-  add_face(body: body, outer: ring, a: 2, b: 0, c: 1)
-
-  let back = parse(bytes: serialize(body: body))
-  throw "one face" unless face_count(body: back) == 1
-  throw "it bounds loop 0" unless face_outer(body: back, index: 0) == 0
-  throw "the plane's first vertex is 2, not 0" unless face_a(body: back, index: 0) == 2
-  throw "then 0" unless face_b(body: back, index: 0) == 0
-  throw "then 1" unless face_c(body: back, index: 0) == 1
-  release(body: body)
-  release(body: back)
-
-test "the whole triangle survives"
-  # Every count at once. Each of the tests above could pass while the
-  # file dropped a different level, and this is the one that says the
-  # topology arrived whole.
-  let body = triangle_body()
-  let back = parse(bytes: serialize(body: body))
-  throw "vertices" unless vertex_count(body: back) == 3
-  throw "edges" unless edge_count(body: back) == 3
-  throw "coedges" unless coedge_count(body: back) == 3
-  throw "loops" unless loop_count(body: back) == 1
-  throw "faces" unless face_count(body: back) == 1
-  release(body: body)
-  release(body: back)
-
-test "writing a body twice gives the same bytes"
-  # Determinism, which the whole project rests on: the same body must
-  # serialise identically every time, or a commit would differ from
-  # itself and a diff would show changes nobody made.
-  let body = triangle_body()
-  let first = serialize(body: body)
-  let second = serialize(body: body)
-  throw "same length" unless length(list: first) == length(list: second)
-  throw "same bytes" unless same(a: first, b: second, from: 0)
-  release(body: body)
-
-test "a round trip is stable"
-  # Writing what was read gives the same file. If it did not, the
-  # reader and the writer disagree about something, and repeated
-  # save-open cycles would drift.
-  let body = triangle_body()
-  let once = serialize(body: body)
-  let twice = serialize(body: parse(bytes: once))
-  throw "same length" unless length(list: once) == length(list: twice)
-  throw "same bytes" unless same(a: once, b: twice, from: 0)
-  release(body: body)
-
-test "nonsense parses to nothing rather than to something wrong"
-  # A reader that guesses is worse than one that refuses: a body built
-  # from garbage looks like geometry and is not.
-  let junk = push(list: push(list: push(list: list(), value: 104), value: 105), value: 10)
-  let back = parse(bytes: junk)
-  throw "no vertices" unless vertex_count(body: back) == 0
-  throw "no faces" unless face_count(body: back) == 0
-  release(body: back)
-
-test "entities without the header are not read"
-  # A file that has real STEP entities in it but no `ISO-10303-21;` is
-  # not a STEP file, and reading its entities anyway would accept
-  # anything with the right-looking lines in it.
-  #
-  # Without the header check this passes for the wrong reason — junk
-  # produces nothing whether it is checked or not — so this one carries
-  # a genuine entity.
-  let back = parse(bytes: headerless_point())
-  throw "the entity should not have been read" unless vertex_count(body: back) == 0
-  release(body: back)
-
-test "the same entity WITH a header is read"
-  # The other half: without it, the test above would pass even if the
-  # reader were broken outright.
-  let back = parse(bytes: joined(a: header(), b: headerless_point()))
-  throw "the entity should have been read" unless vertex_count(body: back) == 1
-  throw "at the coordinates it named" unless vertex_x(body: back, index: 0) == 7
-  release(body: back)
-
-test "a fractional coordinate is refused, not rounded"
-  # This kernel stores microns as INTEGERS. Accepting `0.5` would move
-  # a vertex somewhere it was not — silently, which is the failure the
-  # whole integer model exists to remove.
-  #
-  # Refused means the point is not read, so the vertex referencing it is
-  # not either.
-  let back = parse(bytes: joined(a: header(), b: fractional_point()))
-  throw "half a micron is not a coordinate" unless vertex_count(body: back) == 0
-  release(body: back)
+from 'linen:brep' use Body, empty_body, add_vertex, add_edge, add_coedge, add_loop, extend_loop, add_face, vertex_count, edge_count, face_count, loop_count, coedge_count, vertex_x, vertex_y, vertex_z, edge_from, edge_to, add_arc, edge_is_arc, edge_centre_x, edge_centre_y, edge_centre_z, edge_clockwise, edge_radius_squared, coedge_start, coedge_end, loop_size, loop_coedge, face_outer, face_a, face_b, face_c, release
 
 # `ISO-10303-21;\nDATA;\n` — the least a reader needs to accept a file.
 fn header() List<i32>
@@ -246,3 +48,252 @@ fn triangle_body() Body
 
   add_face(body: body, outer: ring, a: a, b: b, c: c)
   return body
+
+test "a body of both kinds keeps them apart"
+  let body = empty_body()
+  add_vertex(body: body, x: 0, y: 0, z: 0)
+  add_vertex(body: body, x: 100, y: 0, z: 0)
+  add_vertex(body: body, x: 0, y: 100, z: 0)
+  add_edge(body: body, from: 0, to: 1)
+  add_arc(body: body, from: 1, to: 2, cx: 0, cy: 0, cz: 0, clockwise: false)
+
+  let back = parse(bytes: serialize(body: body))
+  throw "two edges" unless edge_count(body: back) == 2
+  throw "the first is straight" if edge_is_arc(body: back, index: 0)
+  throw "the second is an arc" unless edge_is_arc(body: back, index: 1)
+  throw "and kept its radius" unless edge_radius_squared(body: back, index: 1) == 10000
+
+test "a coedge keeps its direction"
+  # The property that makes a BREP a BREP. If the writer dropped
+  # `forward`, both faces sharing an edge would walk it the same way and
+  # the solid would be inside out — with every count still correct.
+  let body = empty_body()
+  add_vertex(body: body, x: 0, y: 0, z: 0)
+  add_vertex(body: body, x: 100, y: 0, z: 0)
+  add_edge(body: body, from: 0, to: 1)
+  add_coedge(body: body, edge: 0, forward: true)
+  add_coedge(body: body, edge: 0, forward: false)
+
+  let back = parse(bytes: serialize(body: body))
+  throw "two coedges" unless coedge_count(body: back) == 2
+  throw "the forward one starts at 0" unless coedge_start(body: back, index: 0) == 0
+  throw "and ends at 1" unless coedge_end(body: back, index: 0) == 1
+  throw "the reversed one starts at 1" unless coedge_start(body: back, index: 1) == 1
+  throw "and ends at 0" unless coedge_end(body: back, index: 1) == 0
+  release(body: body)
+  release(body: back)
+
+test "a face keeps its loop and its plane"
+  # The plane's vertices are NOT the loop's first three here — 2, 0, 1
+  # rather than 0, 1, 2 — because a triangle whose plane happens to
+  # match the fallback would pass with the plane thrown away entirely.
+  #
+  # It is also the case that matters: the plane's orientation decides
+  # which way the face points, so three vertices in the wrong order
+  # describe the same plane facing backwards.
+  let body = empty_body()
+  add_vertex(body: body, x: 0, y: 0, z: 0)
+  add_vertex(body: body, x: 100, y: 0, z: 0)
+  add_vertex(body: body, x: 0, y: 100, z: 0)
+  add_edge(body: body, from: 0, to: 1)
+  add_edge(body: body, from: 1, to: 2)
+  add_edge(body: body, from: 2, to: 0)
+  let ring = add_loop(body: body)
+  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: 0, forward: true))
+  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: 1, forward: true))
+  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: 2, forward: true))
+  add_face(body: body, outer: ring, a: 2, b: 0, c: 1)
+
+  let back = parse(bytes: serialize(body: body))
+  throw "one face" unless face_count(body: back) == 1
+  throw "it bounds loop 0" unless face_outer(body: back, index: 0) == 0
+  throw "the plane's first vertex is 2, not 0" unless face_a(body: back, index: 0) == 2
+  throw "then 0" unless face_b(body: back, index: 0) == 0
+  throw "then 1" unless face_c(body: back, index: 0) == 1
+  release(body: body)
+  release(body: back)
+
+test "a fractional coordinate is refused, not rounded"
+  # This kernel stores microns as INTEGERS. Accepting `0.5` would move
+  # a vertex somewhere it was not — silently, which is the failure the
+  # whole integer model exists to remove.
+  #
+  # Refused means the point is not read, so the vertex referencing it is
+  # not either.
+  let back = parse(bytes: joined(a: header(), b: fractional_point()))
+  throw "half a micron is not a coordinate" unless vertex_count(body: back) == 0
+  release(body: back)
+
+test "a loop keeps its coedges in order"
+  # Order is geometry here: the same coedges in a different order bound
+  # a different region.
+  let body = triangle_body()
+  let back = parse(bytes: serialize(body: body))
+  throw "one loop" unless loop_count(body: back) == 1
+  throw "three coedges" unless loop_size(body: back, ring: 0) == 3
+  throw "first" unless loop_coedge(body: back, ring: 0, position: 0) == 0
+  throw "second" unless loop_coedge(body: back, ring: 0, position: 1) == 1
+  throw "third" unless loop_coedge(body: back, ring: 0, position: 2) == 2
+  release(body: body)
+  release(body: back)
+
+test "a round trip is stable"
+  # Writing what was read gives the same file. If it did not, the
+  # reader and the writer disagree about something, and repeated
+  # save-open cycles would drift.
+  let body = triangle_body()
+  let once = serialize(body: body)
+  let twice = serialize(body: parse(bytes: once))
+  throw "same length" unless length(list: once) == length(list: twice)
+  throw "same bytes" unless same(a: once, b: twice, from: 0)
+  release(body: body)
+
+test "a STEP file starts and ends the way the standard says"
+  # ISO 10303-21 fixes the first and last lines. A reader that does not
+  # find them rejects the file before looking at anything else.
+  let body = triangle_body()
+  let bytes = serialize(body: body)
+  throw "there should be a file" unless length(list: bytes) > 0
+  throw "it starts with I" unless at(list: bytes, index: 0) == 73
+  throw "then S" unless at(list: bytes, index: 1) == 83
+  throw "then O" unless at(list: bytes, index: 2) == 79
+  release(body: body)
+
+test "a straight edge does not become an arc"
+  let body = empty_body()
+  add_vertex(body: body, x: 0, y: 0, z: 0)
+  add_vertex(body: body, x: 100, y: 0, z: 0)
+  add_edge(body: body, from: 0, to: 1)
+
+  let back = parse(bytes: serialize(body: body))
+  throw "still straight" if edge_is_arc(body: back, index: 0)
+
+test "a vertex survives the round trip"
+  let body = empty_body()
+  add_vertex(body: body, x: 10, y: 20, z: 30)
+  let back = parse(bytes: serialize(body: body))
+  throw "one vertex" unless vertex_count(body: back) == 1
+  throw "x" unless vertex_x(body: back, index: 0) == 10
+  throw "y" unless vertex_y(body: back, index: 0) == 20
+  throw "z" unless vertex_z(body: back, index: 0) == 30
+  release(body: body)
+  release(body: back)
+
+test "an arc keeps which way it turns"
+  # Two points and a centre name two arcs. If the direction were
+  # dropped, half the circles in a file would come back as their own
+  # complements.
+  let body = empty_body()
+  add_vertex(body: body, x: 100, y: 0, z: 0)
+  add_vertex(body: body, x: 0, y: 100, z: 0)
+  add_arc(body: body, from: 0, to: 1, cx: 0, cy: 0, cz: 0, clockwise: true)
+
+  let back = parse(bytes: serialize(body: body))
+  throw "clockwise" unless edge_clockwise(body: back, index: 0)
+
+test "an arc survives the round trip"
+  # Without this the writer would emit a straight EDGE_CURVE for an arc
+  # and the circle would come back as a chord — with every count
+  # correct, which is what makes it the kind of loss a test has to
+  # catch rather than an eye.
+  let body = empty_body()
+  add_vertex(body: body, x: 300, y: 400, z: 0)
+  add_vertex(body: body, x: 0, y: 500, z: 0)
+  add_arc(body: body, from: 0, to: 1, cx: 0, cy: 0, cz: 0, clockwise: false)
+
+  let back = parse(bytes: serialize(body: body))
+  throw "one edge" unless edge_count(body: back) == 1
+  throw "it is an arc" unless edge_is_arc(body: back, index: 0)
+  throw "its centre" unless edge_centre_x(body: back, index: 0) == 0 and edge_centre_y(body: back, index: 0) == 0
+  throw "its radius, squared and exact" unless edge_radius_squared(body: back, index: 0) == 250000
+
+test "an edge survives the round trip"
+  let body = empty_body()
+  add_vertex(body: body, x: 0, y: 0, z: 0)
+  add_vertex(body: body, x: 100, y: 0, z: 0)
+  add_edge(body: body, from: 0, to: 1)
+  let back = parse(bytes: serialize(body: body))
+  throw "one edge" unless edge_count(body: back) == 1
+  throw "from the first" unless edge_from(body: back, index: 0) == 0
+  throw "to the second" unless edge_to(body: back, index: 0) == 1
+  release(body: body)
+  release(body: back)
+
+test "an empty body still makes a valid file"
+  # A file with no geometry is not a broken file. It has a header and a
+  # data section holding nothing, and a reader gets an empty body back
+  # rather than an error.
+  let body = empty_body()
+  let bytes = serialize(body: body)
+  throw "a header at least" unless length(list: bytes) > 100
+  let back = parse(bytes: bytes)
+  throw "nothing came back" unless vertex_count(body: back) == 0
+  throw "and no faces" unless face_count(body: back) == 0
+  release(body: body)
+  release(body: back)
+
+test "coordinates at the edge of the range survive"
+  # 10 metres in microns, positive and negative. If the writer formatted
+  # through anything lossy, this is where it would show.
+  let body = empty_body()
+  add_vertex(body: body, x: 10000000, y: 0 - 10000000, z: 1)
+  let back = parse(bytes: serialize(body: body))
+  throw "ten metres" unless vertex_x(body: back, index: 0) == 10000000
+  throw "minus ten metres" unless vertex_y(body: back, index: 0) == 0 - 10000000
+  throw "one micron" unless vertex_z(body: back, index: 0) == 1
+  release(body: body)
+  release(body: back)
+
+test "entities without the header are not read"
+  # A file that has real STEP entities in it but no `ISO-10303-21;` is
+  # not a STEP file, and reading its entities anyway would accept
+  # anything with the right-looking lines in it.
+  #
+  # Without the header check this passes for the wrong reason — junk
+  # produces nothing whether it is checked or not — so this one carries
+  # a genuine entity.
+  let back = parse(bytes: headerless_point())
+  throw "the entity should not have been read" unless vertex_count(body: back) == 0
+  release(body: back)
+
+test "nonsense parses to nothing rather than to something wrong"
+  # A reader that guesses is worse than one that refuses: a body built
+  # from garbage looks like geometry and is not.
+  let junk = push(list: push(list: push(list: list(), value: 104), value: 105), value: 10)
+  let back = parse(bytes: junk)
+  throw "no vertices" unless vertex_count(body: back) == 0
+  throw "no faces" unless face_count(body: back) == 0
+  release(body: back)
+
+test "the same entity WITH a header is read"
+  # The other half: without it, the test above would pass even if the
+  # reader were broken outright.
+  let back = parse(bytes: joined(a: header(), b: headerless_point()))
+  throw "the entity should have been read" unless vertex_count(body: back) == 1
+  throw "at the coordinates it named" unless vertex_x(body: back, index: 0) == 7
+  release(body: back)
+
+test "the whole triangle survives"
+  # Every count at once. Each of the tests above could pass while the
+  # file dropped a different level, and this is the one that says the
+  # topology arrived whole.
+  let body = triangle_body()
+  let back = parse(bytes: serialize(body: body))
+  throw "vertices" unless vertex_count(body: back) == 3
+  throw "edges" unless edge_count(body: back) == 3
+  throw "coedges" unless coedge_count(body: back) == 3
+  throw "loops" unless loop_count(body: back) == 1
+  throw "faces" unless face_count(body: back) == 1
+  release(body: body)
+  release(body: back)
+
+test "writing a body twice gives the same bytes"
+  # Determinism, which the whole project rests on: the same body must
+  # serialise identically every time, or a commit would differ from
+  # itself and a diff would show changes nobody made.
+  let body = triangle_body()
+  let first = serialize(body: body)
+  let second = serialize(body: body)
+  throw "same length" unless length(list: first) == length(list: second)
+  throw "same bytes" unless same(a: first, b: second, from: 0)
+  release(body: body)

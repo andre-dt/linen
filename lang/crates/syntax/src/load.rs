@@ -34,8 +34,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::ast::{Item, Unit};
-use crate::lex::lex;
-use crate::parse::parse;
 use crate::token::Span;
 
 #[derive(Debug, PartialEq)]
@@ -119,12 +117,14 @@ impl Loader<'_> {
             file: path.clone(),
         })?;
 
-        let tokens = lex(&source).map_err(|error| LoadError {
-            message: error.message,
-            span: error.span,
-            file: path.clone(),
+        let (tokens, comments) = crate::lex::lex_with_comments(&source).map_err(|error| {
+            LoadError {
+                message: error.message,
+                span: error.span,
+                file: path.clone(),
+            }
         })?;
-        let unit = parse(&tokens).map_err(|error| LoadError {
+        let unit = crate::parse::parse_with_comments(&tokens, &comments).map_err(|error| LoadError {
             message: error.message,
             span: error.span,
             file: path.clone(),

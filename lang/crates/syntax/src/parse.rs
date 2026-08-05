@@ -28,12 +28,38 @@ pub struct ParseError {
 }
 
 pub fn parse(tokens: &[Token]) -> Result<Unit, ParseError> {
-    Parser { tokens, at: 0 }.unit()
+    Parser { tokens, at: 0, comments: &[] }.unit()
+}
+
+/// Parses with the comment blocks the lexer gathered, so each
+/// declaration carries the one written above it.
+///
+/// A comment and what it explains are ONE thing. Attaching them here
+/// rather than leaving it to whatever reads the file means every tool
+/// that reorders or reformats gets it right without deciding again —
+/// and deciding differently.
+pub fn parse_with_comments(
+    tokens: &[Token],
+    comments: &crate::lex::Comments,
+) -> Result<Unit, ParseError> {
+    Parser { tokens, at: 0, comments }.unit()
 }
 
 struct Parser<'a> {
     tokens: &'a [Token],
     at: usize,
+    /// Comment blocks, by the token index they precede.
+    comments: &'a [(usize, String)],
+}
+
+impl Parser<'_> {
+    /// The comment written above the declaration starting here.
+    fn comment_here(&self) -> Option<String> {
+        self.comments
+            .iter()
+            .find(|(at, _)| *at == self.at)
+            .map(|(_, text)| text.clone())
+    }
 }
 
 impl<'a> Parser<'a> {
@@ -62,6 +88,10 @@ impl<'a> Parser<'a> {
     }
 
     fn item(&mut self) -> Result<Item, ParseError> {
+        // Taken HERE, before anything is consumed: the comment belongs
+        // to the declaration that starts at this token, and every path
+        // below advances past it.
+        let comment = self.comment_here();
         // `export fn` — the only thing `export` may precede. A shape is
         // reachable through an exported signature or not at all, and a
         // test is never part of a boundary.
@@ -70,7 +100,7 @@ impl<'a> Parser<'a> {
             if self.peek_name() != Some("fn") {
                 return Err(self.error_here("expected `fn` after `export`"));
             }
-            return Ok(Item::Function(self.function(true, false)?));
+            return Ok(Item::Function(self.function(true, false, comment)?));
         }
 
         // `driver fn` — a signature bound to Rust. Not combinable with
@@ -81,20 +111,25 @@ impl<'a> Parser<'a> {
             if self.peek_name() != Some("fn") {
                 return Err(self.error_here("expected `fn` after `driver`"));
             }
-            return Ok(Item::Function(self.function(false, true)?));
+            return Ok(Item::Function(self.function(false, true, comment)?));
         }
         match self.peek_name() {
             Some("from") => Ok(Item::Import(self.import()?)),
-            Some("fn") => Ok(Item::Function(self.function(false, false)?)),
-            Some("shape") => Ok(Item::Shape(self.shape()?)),
-            Some("test") => Ok(Item::Test(self.test()?)),
+            Some("fn") => Ok(Item::Function(self.function(false, false, comment)?)),
+            Some("shape") => Ok(Item::Shape(self.shape(comment)?)),
+            Some("test") => Ok(Item::Test(self.test(comment)?)),
             _ => Err(self.error_here(
                 "expected `from`, `fn`, `export fn`, `driver fn`, `shape` or `test` at the top level",
             )),
         }
     }
 
-    fn function(&mut self, exported: bool, driver: bool) -> Result<Function, ParseError> {
+    fn function(
+        &mut self,
+        exported: bool,
+        driver: bool,
+        comment: Option<String>,
+    ) -> Result<Function, ParseError> {
         let start = self.span_here();
         self.advance(); // fn
         let name_span = self.span_here();
@@ -156,7 +191,7 @@ impl<'a> Parser<'a> {
             self.block()?
         };
         let span = start.to(self.span_before());
-        Ok(Function { name, exported, driver, generics, parameters, result, body, span })
+        Ok(Function { name, comment, exported, driver, generics, parameters, result, body, span })
     }
 
     fn parameter(&mut self) -> Result<Parameter, ParseError> {
@@ -193,7 +228,7 @@ impl<'a> Parser<'a> {
     }
 
     /// `shape Name` with its fields indented under it.
-    fn shape(&mut self) -> Result<Shape, ParseError> {
+    fn shape(&mut self, comment: Option<String>) -> Result<Shape, ParseError> {
         let start = self.span_here();
         self.advance(); // shape
         let name_span = self.span_here();
@@ -250,7 +285,7 @@ impl<'a> Parser<'a> {
                 span: late.span,
             });
         }
-        Ok(Shape { name, generics, fields, span: start.to(self.span_before()) })
+        Ok(Shape { name, comment, generics, fields, span: start.to(self.span_before()) })
     }
 
     /// `<T, U>` after a name, or nothing.
@@ -371,7 +406,7 @@ impl<'a> Parser<'a> {
         Ok(Import { path, names, span })
     }
 
-    fn test(&mut self) -> Result<Test, ParseError> {
+    fn test(&mut self, comment: Option<String>) -> Result<Test, ParseError> {
         let start = self.span_here();
         self.advance(); // test
 
@@ -381,6 +416,26 @@ impl<'a> Parser<'a> {
         if draws {
             self.advance();
         }
+
+        // `normal to <name>` — where the camera looks from.
+        //
+        // Only after `draws`, because a test that draws nothing has no
+        // camera to place. Read as a phrase rather than as an argument
+        // list: it is part of the sentence describing the test.
+        let view = if draws && self.peek_name() == Some("normal") {
+            self.advance();
+            if self.peek_name() != Some("to") {
+                return Err(self.error_here(
+                    "`normal` names what it is normal to, as in `normal to front`",
+                ));
+            }
+            self.advance();
+            let span = self.span_here();
+            let name = self.name("a plane or a face to look at")?;
+            Some(ViewName { name, span })
+        } else {
+            None
+        };
 
         let name = match &self.peek().kind {
             TokenKind::Text(text) => {
@@ -400,7 +455,7 @@ impl<'a> Parser<'a> {
 
         let body = self.block()?;
         let span = start.to(self.span_before());
-        Ok(Test { name, draws, body, span })
+        Ok(Test { name, comment, draws, view, body, span })
     }
 
     // --- blocks and statements --------------------------------------------

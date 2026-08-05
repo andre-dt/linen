@@ -7,13 +7,6 @@ test "adds and subtracts"
   throw "2 + 2 should be 4" unless 2 + 2 == 4
   throw "10 - 3 should be 7" unless 10 - 3 == 7
 
-test "multiplication binds tighter than addition"
-  throw "2 + 3 * 4 should be 14" unless 2 + 3 * 4 == 14
-  throw "2 * 3 + 4 should be 10" unless 2 * 3 + 4 == 10
-
-test "parentheses override precedence"
-  throw "(2 + 3) * 4 should be 20" unless (2 + 3) * 4 == 20
-
 test "arithmetic groups to the left"
   # 10 - 3 - 2 is 5, not 9. Right-associating subtraction is the classic
   # slip in a precedence-climbing parser.
@@ -27,10 +20,17 @@ test "compares"
   throw "3 should be at least 3" unless 3 >= 3
   throw "1 should not be 2" unless 1 != 2
 
+test "divides and takes remainders"
+  throw "7 / 2 should be 3" unless 7 / 2 == 3
+  throw "7 % 2 should be 1" unless 7 % 2 == 1
+
+test "multiplication binds tighter than addition"
+  throw "2 + 3 * 4 should be 14" unless 2 + 3 * 4 == 14
+  throw "2 * 3 + 4 should be 10" unless 2 * 3 + 4 == 10
+
 test "negates"
   throw "-5 + 1 should be -4" unless -5 + 1 == -4
   throw "-(5 + 1) should be -6" unless -(5 + 1) == -6
 
-test "divides and takes remainders"
-  throw "7 / 2 should be 3" unless 7 / 2 == 3
-  throw "7 % 2 should be 1" unless 7 % 2 == 1
+test "parentheses override precedence"
+  throw "(2 + 3) * 4 should be 20" unless (2 + 3) * 4 == 20

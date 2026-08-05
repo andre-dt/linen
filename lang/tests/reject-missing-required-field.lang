@@ -1,4 +1,6 @@
 #~ has no default, so it must be given
+
+# ~ has no default, so it must be given
 shape Point
   x i32
   y i32

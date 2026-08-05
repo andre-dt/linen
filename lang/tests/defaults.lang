@@ -16,18 +16,11 @@ fn step(from i32, by i32 = 1) i32
 fn between(low i32 = 0, high i32 = 10) i32
   return high - low
 
-test "an optional parameter may be left out"
-  throw "the default should apply" unless greet() == 1
+fn offset(x i32, by i32 = 4 + 6) i32
+  return x + by
 
-test "an optional parameter may be given"
-  throw "the argument should win over the default" unless greet(times: 5) == 5
-
-test "required first, then optional"
-  throw "by should default to 1" unless step(from: 10) == 11
-  throw "by should be used when given" unless step(from: 10, by: 5) == 15
-
-test "every optional may be left out"
-  throw "both defaults should apply" unless between() == 10
+test "a default can be an expression"
+  throw "the default should be evaluated" unless offset(x: 1) == 11
 
 test "a later optional may be given alone"
   # `low` is skipped, `high` is given. Unambiguous because arguments run
@@ -38,8 +31,15 @@ test "a later optional may be given alone"
 test "an earlier optional may be given alone"
   throw "high should default to 10" unless between(low: 4) == 6
 
-test "a default can be an expression"
-  throw "the default should be evaluated" unless offset(x: 1) == 11
+test "an optional parameter may be given"
+  throw "the argument should win over the default" unless greet(times: 5) == 5
 
-fn offset(x i32, by i32 = 4 + 6) i32
-  return x + by
+test "an optional parameter may be left out"
+  throw "the default should apply" unless greet() == 1
+
+test "every optional may be left out"
+  throw "both defaults should apply" unless between() == 10
+
+test "required first, then optional"
+  throw "by should default to 1" unless step(from: 10) == 11
+  throw "by should be used when given" unless step(from: 10, by: 5) == 15

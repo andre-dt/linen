@@ -1,4 +1,6 @@
 #~ has no field called
+
+# ~ has no field called
 shape Point
   x i32
   y i32

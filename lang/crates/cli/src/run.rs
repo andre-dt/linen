@@ -678,7 +678,7 @@ const SOURCE_DIRECTORY: &str = "src";
 /// Where tests live when no path is given. Fixed, not configurable: a
 /// project that can put its tests anywhere is a project where nobody is
 /// sure `linen test` ran all of them.
-const TEST_DIRECTORY: &str = "tests";
+pub const TEST_DIRECTORY: &str = "tests";
 
 /// The files a command should work on: what was named, or the command's
 /// default directory found by walking UP from here.
@@ -688,7 +688,7 @@ const TEST_DIRECTORY: &str = "tests";
 /// Looking only in the current directory would mean `linen test` works in
 /// the project root and nowhere else — including from the very
 /// subdirectory the user is editing in.
-fn sources(options: &Options, default: &str) -> Result<Vec<PathBuf>, String> {
+pub fn sources(options: &Options, default: &str) -> Result<Vec<PathBuf>, String> {
     if let Some(path) = &options.path {
         if path.is_file() {
             return Ok(vec![path.clone()]);
@@ -787,7 +787,7 @@ fn collect(directory: &Path) -> Vec<PathBuf> {
     files
 }
 
-fn display(file: &Path) -> String {
+pub fn display(file: &Path) -> String {
     file.display().to_string()
 }
 

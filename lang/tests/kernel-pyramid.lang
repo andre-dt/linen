@@ -48,11 +48,13 @@ fn triangles() [i32; 18]
     2, 3, 4,
     3, 0, 4]
 
-test "the apex sits above the centre of the base"
-  let pyramid = corners(width: 200, depth: 200, height: 150)
-  throw "the apex should be centred in x" unless pyramid[4].x == 100
-  throw "the apex should be centred in y" unless pyramid[4].y == 100
-  throw "the apex should be at height" unless pyramid[4].z == 150
+fn flat(p [Point3; 5]) [i32; 15]
+  return [
+    p[0].x, p[0].y, p[0].z,
+    p[1].x, p[1].y, p[1].z,
+    p[2].x, p[2].y, p[2].z,
+    p[3].x, p[3].y, p[3].z,
+    p[4].x, p[4].y, p[4].z]
 
 test "every triangle faces outward"
   # The centroid of a pyramid is a quarter of the way up, not half — so
@@ -67,22 +69,25 @@ test "every triangle faces outward"
     let c = pyramid[indices[t * 3 + 2]]
     throw "a triangle winds the wrong way" unless faces_outward(a: a, b: b, c: c, centre: inside)
 
-test "the base is flat"
-  let pyramid = corners(width: 200, depth: 200, height: 150)
-  throw "all four base corners share a height" unless pyramid[0].z == 0 and pyramid[1].z == 0 and pyramid[2].z == 0 and pyramid[3].z == 0
-
 test "no sloping face is degenerate"
   let pyramid = corners(width: 200, depth: 200, height: 150)
   let far = Point3(x: 0 - 1000, y: 0 - 1000, z: 0 - 1000)
   throw "a sloping face has no area" if orient3d(a: pyramid[0], b: pyramid[1], c: pyramid[4], d: far) == 0
 
-fn flat(p [Point3; 5]) [i32; 15]
-  return [
-    p[0].x, p[0].y, p[0].z,
-    p[1].x, p[1].y, p[1].z,
-    p[2].x, p[2].y, p[2].z,
-    p[3].x, p[3].y, p[3].z,
-    p[4].x, p[4].y, p[4].z]
+test "the apex sits above the centre of the base"
+  let pyramid = corners(width: 200, depth: 200, height: 150)
+  throw "the apex should be centred in x" unless pyramid[4].x == 100
+  throw "the apex should be centred in y" unless pyramid[4].y == 100
+  throw "the apex should be at height" unless pyramid[4].z == 150
+
+test "the base is flat"
+  let pyramid = corners(width: 200, depth: 200, height: 150)
+  throw "all four base corners share a height" unless pyramid[0].z == 0 and pyramid[1].z == 0 and pyramid[2].z == 0 and pyramid[3].z == 0
+
+test draws "a spire"
+  let pyramid = corners(width: 100, depth: 100, height: 340)
+  throw "it should be taller than it is wide" unless pyramid[4].z > pyramid[1].x * 3
+  solid(points: flat(p: pyramid), triangles: triangles())
 
 test draws "a square pyramid"
   let pyramid = corners(width: 240, depth: 240, height: 200)
@@ -92,9 +97,4 @@ test draws "a square pyramid"
 test draws "a squat pyramid"
   let pyramid = corners(width: 300, depth: 300, height: 90)
   throw "it should be wider than it is tall" unless pyramid[4].z * 3 < pyramid[1].x
-  solid(points: flat(p: pyramid), triangles: triangles())
-
-test draws "a spire"
-  let pyramid = corners(width: 100, depth: 100, height: 340)
-  throw "it should be taller than it is wide" unless pyramid[4].z > pyramid[1].x * 3
   solid(points: flat(p: pyramid), triangles: triangles())

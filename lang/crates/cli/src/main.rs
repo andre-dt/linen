@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 mod scene;
+mod format;
 mod report;
 mod run;
 
@@ -29,6 +30,7 @@ linen — the compiler
 usage:
   linen build [path]      compile — ./src unless a path is given
   linen test  [path]      compile and run tests — ./tests unless a path is given
+  linen format [path]     put tests in the canonical order
   linen clean             remove the build directory
 
 options:
@@ -73,6 +75,7 @@ fn dispatch(arguments: &[String]) -> Result<ExitCode, String> {
         // Not in the usage text: it is how `test` is implemented, not
         // something to reach for.
         "test-file" => run::test_file(&Options::parse(rest)?),
+        "format" => format::format(&Options::parse(rest)?),
         "clean" => run::clean(),
         other => Err(format!(
             "`{other}` is not a command. Try `build`, `test` or `clean`."

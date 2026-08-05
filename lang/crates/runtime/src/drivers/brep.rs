@@ -74,10 +74,30 @@ pub struct VertexValue {
     pub z: i32,
 }
 
+/// An edge: two vertices, and how it gets between them.
+///
+/// One type for both kinds rather than two lists, so a face bounded by
+/// a mixture needs no special case and an index into the edges means
+/// the same thing whichever it names.
 #[derive(Clone, Copy)]
 struct Edge {
     from: i32,
     to: i32,
+    /// The arc this edge follows, or None when it runs straight.
+    arc: Option<Arc>,
+}
+
+/// What makes an edge curve.
+///
+/// The radius is SQUARED and never rooted: a circle through integer
+/// points rarely has an integer radius, but its square is an integer
+/// whenever the centre is.
+#[derive(Clone, Copy)]
+struct Arc {
+    centre: VertexValue,
+    /// Which of the two arcs between the endpoints this one is.
+    clockwise: bool,
+    radius_squared: i64,
 }
 
 #[derive(Clone, Copy)]
@@ -179,6 +199,13 @@ pub fn table() -> Vec<(&'static str, usize)> {
         ("empty_body", linen_empty_body as *const () as usize),
         ("add_vertex", linen_add_vertex as *const () as usize),
         ("add_edge", linen_add_edge as *const () as usize),
+        ("add_arc", linen_add_arc as *const () as usize),
+        ("edge_is_arc", linen_edge_is_arc as *const () as usize),
+        ("edge_centre_x", linen_edge_centre_x as *const () as usize),
+        ("edge_centre_y", linen_edge_centre_y as *const () as usize),
+        ("edge_centre_z", linen_edge_centre_z as *const () as usize),
+        ("edge_clockwise", linen_edge_clockwise as *const () as usize),
+        ("edge_radius_squared", linen_edge_radius_squared as *const () as usize),
         ("add_coedge", linen_add_coedge as *const () as usize),
         ("add_loop", linen_add_loop as *const () as usize),
         ("extend_loop", linen_extend_loop as *const () as usize),
@@ -233,9 +260,73 @@ pub extern "C" fn linen_add_vertex(body: BodyHandle, x: i32, y: i32, z: i32) -> 
 #[no_mangle]
 pub extern "C" fn linen_add_edge(body: BodyHandle, from: i32, to: i32) -> i32 {
     write(body, |data| {
-        data.edges.push(Edge { from, to });
+        data.edges.push(Edge { from, to, arc: None });
         (data.edges.len() - 1) as i32
     })
+}
+
+/// A circular arc, or -1 when the arguments do not describe one.
+///
+/// Both ends have to be the same distance from the centre, and that
+/// distance cannot be zero. Neither case is a circular arc, and storing
+/// one would give a face a boundary that does not close — every later
+/// question about it answered against geometry that is not there.
+///
+/// Checked here rather than trusted, because this is where both ends
+/// and the centre are known at once. A caller cannot check it as
+/// cheaply: it would have to read the vertices back out first.
+#[no_mangle]
+pub extern "C" fn linen_add_arc(
+    body: BodyHandle,
+    from: i32,
+    to: i32,
+    cx: i32,
+    cy: i32,
+    cz: i32,
+    clockwise: bool,
+) -> i32 {
+    write(body, |data| {
+        let centre = VertexValue { x: cx, y: cy, z: cz };
+        let (Some(start), Some(finish)) = (
+            data.vertices.get(from.max(0) as usize).copied(),
+            data.vertices.get(to.max(0) as usize).copied(),
+        ) else {
+            return -1;
+        };
+
+        let radius_squared = distance_squared(start, centre);
+        if radius_squared == 0 {
+            // Both ends at the centre. There is no circle, and the
+            // degenerate case deserves its own refusal rather than a
+            // radius of zero that something later divides by.
+            return -1;
+        }
+        if distance_squared(finish, centre) != radius_squared {
+            return -1;
+        }
+
+        data.edges.push(Edge {
+            from,
+            to,
+            arc: Some(Arc {
+                centre,
+                clockwise,
+                radius_squared,
+            }),
+        });
+        (data.edges.len() - 1) as i32
+    })
+}
+
+/// The squared distance between two points, exactly.
+///
+/// i64, because a coordinate reaches 10^7 microns and the square of a
+/// difference reaches 10^14 — well past i32 and nowhere near i64.
+fn distance_squared(from: VertexValue, to: VertexValue) -> i64 {
+    let dx = (from.x - to.x) as i64;
+    let dy = (from.y - to.y) as i64;
+    let dz = (from.z - to.z) as i64;
+    dx * dx + dy * dy + dz * dz
 }
 
 #[no_mangle]
@@ -343,6 +434,73 @@ pub extern "C" fn linen_edge_from(body: BodyHandle, index: i32) -> i32 {
 pub extern "C" fn linen_edge_to(body: BodyHandle, index: i32) -> i32 {
     read(body, -1, |data| {
         data.edges.get(index.max(0) as usize).map(|e| e.to).unwrap_or(-1)
+    })
+}
+
+/// Whether this edge curves.
+#[no_mangle]
+pub extern "C" fn linen_edge_is_arc(body: BodyHandle, index: i32) -> bool {
+    read(body, false, |data| {
+        data.edges
+            .get(index.max(0) as usize)
+            .is_some_and(|edge| edge.arc.is_some())
+    })
+}
+
+/// An arc's centre, one coordinate at a time — three i32s cannot cross
+/// as a struct.
+///
+/// Zero for a straight edge, which is why `edge_is_arc` is asked first:
+/// the origin is a real place, so zero cannot mean absence.
+#[no_mangle]
+pub extern "C" fn linen_edge_centre_x(body: BodyHandle, index: i32) -> i32 {
+    centre_of(body, index).map(|centre| centre.x).unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn linen_edge_centre_y(body: BodyHandle, index: i32) -> i32 {
+    centre_of(body, index).map(|centre| centre.y).unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn linen_edge_centre_z(body: BodyHandle, index: i32) -> i32 {
+    centre_of(body, index).map(|centre| centre.z).unwrap_or(0)
+}
+
+fn centre_of(body: BodyHandle, index: i32) -> Option<VertexValue> {
+    read(body, None, |data| {
+        data.edges
+            .get(index.max(0) as usize)
+            .and_then(|edge| edge.arc)
+            .map(|arc| arc.centre)
+    })
+}
+
+/// Which way an arc turns.
+///
+/// Two points and a centre name TWO arcs — the short way and the long
+/// way — and this is what picks one.
+#[no_mangle]
+pub extern "C" fn linen_edge_clockwise(body: BodyHandle, index: i32) -> bool {
+    read(body, false, |data| {
+        data.edges
+            .get(index.max(0) as usize)
+            .and_then(|edge| edge.arc)
+            .is_some_and(|arc| arc.clockwise)
+    })
+}
+
+/// An arc's radius squared, or -1 for a straight edge.
+///
+/// -1 rather than 0, because zero is a radius a caller might believe.
+#[no_mangle]
+pub extern "C" fn linen_edge_radius_squared(body: BodyHandle, index: i32) -> i64 {
+    read(body, -1, |data| {
+        data.edges
+            .get(index.max(0) as usize)
+            .and_then(|edge| edge.arc)
+            .map(|arc| arc.radius_squared)
+            .unwrap_or(-1)
     })
 }
 

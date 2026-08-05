@@ -29,9 +29,10 @@ fn is_odd(n i32) bool
 test "a base case that returns immediately"
   throw "countdown(n: 0) should be 0" unless countdown(n: 0) == 0
 
-test "recursion terminates"
-  throw "countdown(n: 5) should be 0" unless countdown(n: 5) == 0
-  throw "countdown(n: 20) should be 0" unless countdown(n: 20) == 0
+test "a recursion that branches twice"
+  throw "fibonacci(n: 0) should be 0" unless fibonacci(n: 0) == 0
+  throw "fibonacci(n: 1) should be 1" unless fibonacci(n: 1) == 1
+  throw "fibonacci(n: 7) should be 13" unless fibonacci(n: 7) == 13
 
 test "an accumulating recursion"
   throw "sum_to(n: 0) should be 0" unless sum_to(n: 0) == 0
@@ -44,18 +45,17 @@ test "factorial"
   throw "factorial(n: 1) should be 1" unless factorial(n: 1) == 1
   throw "factorial(n: 5) should be 120" unless factorial(n: 5) == 120
 
-test "a recursion that branches twice"
-  throw "fibonacci(n: 0) should be 0" unless fibonacci(n: 0) == 0
-  throw "fibonacci(n: 1) should be 1" unless fibonacci(n: 1) == 1
-  throw "fibonacci(n: 7) should be 13" unless fibonacci(n: 7) == 13
+test "mutual recursion"
+  throw "is_even(n: 0) should hold" unless is_even(n: 0)
+  throw "is_odd(n: 1) should hold" unless is_odd(n: 1)
+  throw "is_even(n: 10) should hold" unless is_even(n: 10)
+  throw "is_even(n: 7) should not hold" if is_even(n: 7)
 
 test "recursion on two arguments"
   throw "gcd(a: 12, b: 8) should be 4" unless gcd(a: 12, b: 8) == 4
   throw "gcd(a: 17, b: 5) should be 1" unless gcd(a: 17, b: 5) == 1
   throw "power(base: 2, exponent: 8) should be 256" unless power(base: 2, exponent: 8) == 256
 
-test "mutual recursion"
-  throw "is_even(n: 0) should hold" unless is_even(n: 0)
-  throw "is_odd(n: 1) should hold" unless is_odd(n: 1)
-  throw "is_even(n: 10) should hold" unless is_even(n: 10)
-  throw "is_even(n: 7) should not hold" if is_even(n: 7)
+test "recursion terminates"
+  throw "countdown(n: 5) should be 0" unless countdown(n: 5) == 0
+  throw "countdown(n: 20) should be 0" unless countdown(n: 20) == 0

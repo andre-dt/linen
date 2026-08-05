@@ -15,33 +15,6 @@
 from 'linen:bytes' use digits, ascii
 from 'linen:ascii' use comma, newline, open_bracket
 
-test "a number becomes its decimal digits"
-  # The one thing integer arithmetic alone cannot do, and the reason
-  # drivers exist at all: a STEP file is mostly numbers written as text.
-  let out = digits(value: 120)
-  throw "three digits" unless length(list: out) == 3
-  throw "one" unless at(list: out, index: 0) == 49
-  throw "two" unless at(list: out, index: 1) == 50
-  throw "zero" unless at(list: out, index: 2) == 48
-
-test "a negative number keeps its sign"
-  let out = digits(value: 0 - 7)
-  throw "two bytes" unless length(list: out) == 2
-  throw "a minus" unless at(list: out, index: 0) == 45
-  throw "then seven" unless at(list: out, index: 1) == 55
-
-test "zero is one digit, not none"
-  let out = digits(value: 0)
-  throw "one byte" unless length(list: out) == 1
-  throw "the digit zero" unless at(list: out, index: 0) == 48
-
-test "a number at the edge of the range"
-  # 10 metres in microns, which is the largest coordinate the kernel
-  # admits. Eight digits, and none of them lost.
-  let out = digits(value: 10000000)
-  throw "eight digits" unless length(list: out) == 8
-  throw "it starts with one" unless at(list: out, index: 0) == 49
-
 test "a fixed fragment comes back as bytes"
   throw "a comma is one byte" unless length(list: comma()) == 1
   throw "and it is a comma" unless at(list: comma(), index: 0) == 44
@@ -53,3 +26,30 @@ test "a fragment that does not exist is empty"
   # as a malformed file, which the round-trip catches — better than a
   # crash with no test name attached.
   throw "nothing came back" unless length(list: ascii(of: 9999)) == 0
+
+test "a negative number keeps its sign"
+  let out = digits(value: 0 - 7)
+  throw "two bytes" unless length(list: out) == 2
+  throw "a minus" unless at(list: out, index: 0) == 45
+  throw "then seven" unless at(list: out, index: 1) == 55
+
+test "a number at the edge of the range"
+  # 10 metres in microns, which is the largest coordinate the kernel
+  # admits. Eight digits, and none of them lost.
+  let out = digits(value: 10000000)
+  throw "eight digits" unless length(list: out) == 8
+  throw "it starts with one" unless at(list: out, index: 0) == 49
+
+test "a number becomes its decimal digits"
+  # The one thing integer arithmetic alone cannot do, and the reason
+  # drivers exist at all: a STEP file is mostly numbers written as text.
+  let out = digits(value: 120)
+  throw "three digits" unless length(list: out) == 3
+  throw "one" unless at(list: out, index: 0) == 49
+  throw "two" unless at(list: out, index: 1) == 50
+  throw "zero" unless at(list: out, index: 2) == 48
+
+test "zero is one digit, not none"
+  let out = digits(value: 0)
+  throw "one byte" unless length(list: out) == 1
+  throw "the digit zero" unless at(list: out, index: 0) == 48

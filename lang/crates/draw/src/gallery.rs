@@ -19,7 +19,8 @@
 
 use std::path::Path;
 
-use crate::render::{draw_text, text_width, write_png, Image};
+use crate::render::{write_png, Image};
+use crate::text::{draw_text, ellipsised, measure};
 
 
 /// One entry: a rendered image and what to call it.
@@ -33,17 +34,37 @@ use crate::render::{draw_text, text_width, write_png, Image};
 /// Here rather than with the caller, because the mosaic is what has to
 /// lay them out: a tile size the gallery did not choose is a size it
 /// would have to be told about at every call.
-pub const TILE_WIDTH: usize = 320;
-pub const TILE_HEIGHT: usize = 260;
+/// How big each rendered tile is.
+///
+/// Sized so three across make a 2560-pixel mosaic: these pictures are
+/// looked at rather than glanced past, and a 320-pixel tile is one
+/// where a circle's steps and a stroke's placement are below what the
+/// screen can show.
+///
+/// Everything else scales from here — the vertex marks, the label —
+/// so the proportions hold whatever this is set to.
+pub const TILE_WIDTH: usize = 840;
+pub const TILE_HEIGHT: usize = 680;
 
 pub struct Tile {
     pub label: String,
     pub image: Image,
 }
 
-const PADDING: usize = 12;
-const LABEL_HEIGHT: usize = 22;
-const LABEL_SCALE: usize = 2;
+/// The gaps and the label, in proportion to the tile.
+///
+/// Derived rather than fixed, so raising the tile size does not leave
+/// a thin border and unreadable text around a large picture.
+const PADDING: usize = TILE_WIDTH / 27;
+const LABEL_HEIGHT: usize = TILE_WIDTH / 15;
+/// How tall the label text is, in pixels.
+///
+/// One size for every label, whatever it says. Shrinking a long one to
+/// fit would make the mosaic's captions vary in size according to how
+/// wordy each test's name happens to be, which reads as emphasis where
+/// none was meant — so a label too long is CUT instead, with an
+/// ellipsis saying so.
+pub const LABEL_SIZE: f32 = TILE_WIDTH as f32 / 28.0;
 
 const PAGE: [u8; 3] = [10, 11, 15];
 const FRAME: [u8; 3] = [38, 42, 52];
@@ -88,16 +109,17 @@ pub fn write_gallery(tiles: &[Tile], path: &Path) -> Result<usize, String> {
 
         // Centred under its picture.
         let text = &tile.label;
-        let width_of_text = text_width(text, LABEL_SCALE);
-        let text_left = left + TILE_WIDTH.saturating_sub(width_of_text) / 2;
-        draw_text(
-            &mut page,
-            text,
-            text_left as i64,
-            (top + TILE_HEIGHT + 6) as i64,
-            LABEL_SCALE,
-            LABEL,
-        );
+        // Cut to fit, with a little room either side so a full-width
+        // caption does not touch the tile's edge.
+        let room = TILE_WIDTH.saturating_sub(PADDING * 2) as i64;
+        let shown = ellipsised(text, LABEL_SIZE, room);
+        let extent = measure(&shown, LABEL_SIZE);
+        let text_left = left as i64 + (TILE_WIDTH as i64 - extent.width) / 2;
+
+        // Positioned by its BASELINE, sitting far enough below the
+        // picture that a descender clears it.
+        let baseline = (top + TILE_HEIGHT + LABEL_HEIGHT) as i64 - extent.descent - 2;
+        draw_text(&mut page, &shown, text_left, baseline, LABEL_SIZE, LABEL);
     }
 
     write_png(&page, path)?;

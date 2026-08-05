@@ -60,7 +60,7 @@ impl Image {
         }
     }
 
-    fn set(&mut self, x: i64, y: i64, colour: [u8; 3]) {
+    pub fn set(&mut self, x: i64, y: i64, colour: [u8; 3]) {
         if x < 0 || y < 0 || x >= self.width as i64 || y >= self.height as i64 {
             return;
         }
@@ -77,6 +77,32 @@ impl Image {
             return None;
         }
         Some(self.pixels[y as usize * self.width + x as usize])
+    }
+
+    /// Mixes `colour` into a pixel by `coverage`, out of 255, with no
+    /// depth test at all.
+    ///
+    /// For text, which is not geometry: a label sits on top of the
+    /// picture, and asking whether it is in front of anything would be
+    /// asking a question that has no answer.
+    pub fn blend_over(&mut self, x: i64, y: i64, coverage: i64, colour: [u8; 3]) {
+        if x < 0 || y < 0 || x >= self.width as i64 || y >= self.height as i64 {
+            return;
+        }
+        let coverage = coverage.clamp(0, 255);
+        if coverage == 0 {
+            return;
+        }
+        let at = y as usize * self.width + x as usize;
+        let behind = self.pixels[at];
+        let mix = |ink: u8, under: u8| -> u8 {
+            ((ink as i64 * coverage + under as i64 * (255 - coverage)) / 255) as u8
+        };
+        self.pixels[at] = [
+            mix(colour[0], behind[0]),
+            mix(colour[1], behind[1]),
+            mix(colour[2], behind[2]),
+        ];
     }
 
     /// Mixes `colour` into a pixel by `coverage`, out of `FULL`.
@@ -185,7 +211,73 @@ struct Projected {
 /// `(x + y) / 2` would throw away a half-pixel and make two points that
 /// differ by one micron land on the same pixel in one direction but not
 /// the other.
-fn project(point: Point3, scale: i64) -> Projected {
+/// Where the camera looks from.
+///
+/// Named in the TEST rather than chosen here, because it is a question
+/// about what is being shown: a draft is 2D, and seeing one in
+/// isometric distorts the thing being judged — a square arrives as a
+/// rhombus and nothing about it can be read. A solid, having no single
+/// plane, wants isometric.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum View {
+    /// The 2:1 integer isometric. Right for a solid.
+    Isometric,
+    /// Straight down one axis, so a plane perpendicular to it appears
+    /// at true size and shape.
+    Top,
+    Bottom,
+    Front,
+    Back,
+    Right,
+    Left,
+}
+
+impl View {
+    /// The view a name means, or None if it names nothing.
+    ///
+    /// Parsed here rather than in the compiler, so the set of views and
+    /// the projections that implement them cannot disagree: adding one
+    /// means adding it in both places at once, in this file.
+    pub fn named(name: &str) -> Option<View> {
+        Some(match name {
+            "isometric" => View::Isometric,
+            "top" => View::Top,
+            "bottom" => View::Bottom,
+            "front" => View::Front,
+            "back" => View::Back,
+            "right" => View::Right,
+            "left" => View::Left,
+            _ => return None,
+        })
+    }
+}
+
+fn project(point: Point3, scale: i64, view: View) -> Projected {
+    // An orthographic view down one axis: the two remaining
+    // coordinates are the screen, and the one looked along is the
+    // depth. Nothing is foreshortened, which is the point — a square
+    // on that plane arrives as a square, at true size.
+    //
+    // Screen y runs DOWN, so the world axis that runs up is negated.
+    // Without it every drawing normal to a plane comes out mirrored,
+    // and a profile's winding reads backwards.
+    if view != View::Isometric {
+        let (x, y, depth) = match view {
+            View::Top => (point.x, -point.y, point.z),
+            View::Bottom => (point.x, point.y, -point.z),
+            View::Front => (point.x, -point.z, -point.y),
+            View::Back => (-point.x, -point.z, point.y),
+            View::Right => (point.y, -point.z, point.x),
+            View::Left => (-point.y, -point.z, -point.x),
+            View::Isometric => unreachable!("handled above"),
+        };
+        return Projected {
+            x: x * scale / 1000,
+            y: y * scale / 1000,
+            depth,
+        };
+    }
+
     let x = point.x - point.y;
     let y = (point.x + point.y) - 2 * point.z;
     Projected {
@@ -461,16 +553,73 @@ const WIRE_COLOUR: [u8; 3] = [246, 198, 108];
 /// It is also the only way to see a point that two collinear segments
 /// pass straight through, which is exactly the kind of thing worth
 /// noticing in a profile.
-fn dot(image: &mut Image, at: Projected, colour: [u8; 3]) {
-    for dy in -1..=1 {
-        for dx in -1..=1 {
-            image.set(at.x + dx, at.y + dy, colour);
+/// A vertex, for a test that only cares about pixels.
+pub fn dot_into(image: &mut Image, at: (i64, i64), colour: [u8; 3]) {
+    dot(image, Projected { x: at.0, y: at.1, depth: i64::MAX }, VERTEX_RADIUS, colour);
+}
+
+/// A vertex of a given radius, in quarter-pixels.
+pub fn dot_sized(image: &mut Image, at: (i64, i64), radius: i64, colour: [u8; 3]) {
+    dot(image, Projected { x: at.0, y: at.1, depth: i64::MAX }, radius, colour);
+}
+
+/// How big a vertex is, in quarter-pixels, at the standard tile size.
+///
+/// Scaled with the tile rather than fixed: at 320 pixels across a
+/// two-and-a-half-pixel disc reads as a square — there are not enough
+/// pixels for its rim to fall anywhere but the corners — and at 2560 it
+/// is a speck. The mark should look the same whatever the tile is.
+pub const VERTEX_RADIUS: i64 = 5;
+
+/// A vertex: a small anti-aliased DISC.
+///
+/// Round rather than square, the way Onshape draws one. A square has
+/// corners, and corners read as direction — a point has none. It is
+/// also visibly bigger along its diagonal than across its face, so a
+/// row of vertices appears to change size as the path turns.
+///
+/// Coverage from the distance to the centre, in the same integer
+/// fractions the lines use. A pixel whose centre is inside the radius
+/// is full; one straddling the rim takes the share its distance earns.
+fn dot(image: &mut Image, at: Projected, radius: i64, colour: [u8; 3]) {
+    // In quarter-pixels, so the rim falls between whole pixels and the
+    // disc is not a plus sign.
+    let radius = radius.max(2);
+    const SCALE: i64 = 4;
+
+    let reach = (radius / SCALE) + 1;
+    for dy in -reach..=reach {
+        for dx in -reach..=reach {
+            // The distance from the pixel's CENTRE to the dot's, in
+            // quarter-pixels. Squared, so nothing is rooted.
+            let far = (dx * SCALE) * (dx * SCALE) + (dy * SCALE) * (dy * SCALE);
+            let inner = (radius - SCALE / 2) * (radius - SCALE / 2);
+            let outer = (radius + SCALE / 2) * (radius + SCALE / 2);
+
+            let coverage = if far <= inner {
+                FULL
+            } else if far >= outer {
+                0
+            } else {
+                // Across the rim, linearly in the squared distance.
+                // Not exact coverage of a circle by a square — that
+                // needs an integral — but smooth, symmetric, and
+                // indistinguishable at this size.
+                FULL * (outer - far) / (outer - inner)
+            };
+
+            image.blend(at.x + dx, at.y + dy, coverage, at.depth, colour);
         }
     }
 }
 
 /// Renders a mesh, centred and scaled to fit.
-pub fn render(mesh: &Mesh, width: usize, height: usize) -> Image {
+pub fn render(mesh: &Mesh, width: usize, height: usize, view: View) -> Image {
+    // Everything drawn scales with the tile: a mark sized for 320
+    // pixels is a speck at 2560, and one sized for 2560 is a blob at
+    // 320. Taken from the width, against the size these numbers were
+    // chosen at.
+    let detail = (width.max(1) as i64 * 4 / 320).max(4);
     let mut image = Image::new(width, height);
     let least = match mesh.kind {
         MeshKind::Solid => 3,
@@ -483,8 +632,8 @@ pub fn render(mesh: &Mesh, width: usize, height: usize) -> Image {
     // Scale so the projected shape fills most of the frame, whatever
     // size the model happens to be — a box in microns and the same box
     // in millimetres should look identical.
-    let scale = fit(mesh, width, height);
-    let projected: Vec<Projected> = mesh.points.iter().map(|p| project(*p, scale)).collect();
+    let scale = fit(mesh, width, height, view);
+    let projected: Vec<Projected> = mesh.points.iter().map(|p| project(*p, scale, view)).collect();
 
     let (offset_x, offset_y) = centre(&projected, width, height);
     let placed: Vec<Projected> = projected
@@ -504,8 +653,24 @@ pub fn render(mesh: &Mesh, width: usize, height: usize) -> Image {
         for segment in mesh.triangles.chunks_exact(2) {
             line(&mut image, placed[segment[0]], placed[segment[1]], WIRE_COLOUR, 0);
         }
+        // The vertices, after the segments and in front of them.
+        //
+        // A point of a draft sits exactly ON the lines that meet there,
+        // so at the same depth — and a depth test written `<=` rejects
+        // it. In isometric that went unnoticed because the two rarely
+        // round the same; drawn normal to the plane they always do, and
+        // every dot vanished.
+        //
+        // Drawn at the nearest depth there is rather than at the
+        // point's own: a vertex is a marker, not geometry, and the
+        // thing it marks is right there behind it.
         for point in &placed {
-            dot(&mut image, *point, WIRE_COLOUR);
+            dot(
+                &mut image,
+                Projected { x: point.x, y: point.y, depth: i64::MAX },
+                VERTEX_RADIUS * detail / 4,
+                WIRE_COLOUR,
+            );
         }
         return image;
     }
@@ -714,8 +879,8 @@ fn determinant(a: Point3, b: Point3, c: Point3, d: Point3) -> i128 {
 }
 
 /// A scale that makes the projected model fill the frame.
-fn fit(mesh: &Mesh, width: usize, height: usize) -> i64 {
-    let unscaled: Vec<Projected> = mesh.points.iter().map(|p| project(*p, 1000)).collect();
+fn fit(mesh: &Mesh, width: usize, height: usize, view: View) -> i64 {
+    let unscaled: Vec<Projected> = mesh.points.iter().map(|p| project(*p, 1000, view)).collect();
     let span_x = span(unscaled.iter().map(|p| p.x)).max(1);
     let span_y = span(unscaled.iter().map(|p| p.y)).max(1);
 
@@ -752,112 +917,48 @@ fn centre(points: &[Projected], width: usize, height: usize) -> (i64, i64) {
 // =====================================================================
 // text
 // =====================================================================
-
-/// A 5x7 bitmap font, for labelling a gallery tile.
-///
-/// Hand-written rather than loaded, because a font file would make the
-/// output depend on which version of it is installed — and the whole
-/// point of rendering deterministically is that the same test produces
-/// the same bytes anywhere.
-fn glyph(character: char) -> [u8; 7] {
-    match character.to_ascii_lowercase() {
-        'a' => [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
-        'b' => [0b11110, 0b10001, 0b11110, 0b10001, 0b10001, 0b10001, 0b11110],
-        'c' => [0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110],
-        'd' => [0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110],
-        'e' => [0b11111, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000, 0b11111],
-        'f' => [0b11111, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000, 0b10000],
-        'g' => [0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01111],
-        'h' => [0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001, 0b10001],
-        'i' => [0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
-        'j' => [0b00111, 0b00010, 0b00010, 0b00010, 0b10010, 0b10010, 0b01100],
-        'k' => [0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001],
-        'l' => [0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111],
-        'm' => [0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001],
-        'n' => [0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001],
-        'o' => [0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
-        'p' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000],
-        'q' => [0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101],
-        'r' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001],
-        's' => [0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110],
-        't' => [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100],
-        'u' => [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
-        'v' => [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100],
-        'w' => [0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b11011, 0b10001],
-        'x' => [0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b01010, 0b10001],
-        'y' => [0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100],
-        'z' => [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111],
-        '0' => [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110],
-        '1' => [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
-        '2' => [0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111],
-        '3' => [0b11111, 0b00010, 0b00100, 0b00010, 0b00001, 0b10001, 0b01110],
-        '4' => [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010],
-        '5' => [0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110],
-        '6' => [0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110],
-        '7' => [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
-        '8' => [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
-        '9' => [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100],
-        '-' => [0b00000, 0b00000, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000],
-        '.' => [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b01100, 0b01100],
-        ',' => [0b00000, 0b00000, 0b00000, 0b00000, 0b01100, 0b00100, 0b01000],
-        ':' => [0b00000, 0b01100, 0b01100, 0b00000, 0b01100, 0b01100, 0b00000],
-        '/' => [0b00001, 0b00010, 0b00100, 0b00100, 0b01000, 0b10000, 0b10000],
-        '(' => [0b00010, 0b00100, 0b01000, 0b01000, 0b01000, 0b00100, 0b00010],
-        ')' => [0b01000, 0b00100, 0b00010, 0b00010, 0b00010, 0b00100, 0b01000],
-        _ => [0; 7],
-    }
-}
-
-const GLYPH_WIDTH: usize = 5;
-const GLYPH_HEIGHT: usize = 7;
-
-/// How wide a string will be at a given scale, for centring it.
-pub fn text_width(text: &str, scale: usize) -> usize {
-    text.chars().count() * (GLYPH_WIDTH + 1) * scale
-}
-
-pub fn draw_text(image: &mut Image, text: &str, left: i64, top: i64, scale: usize, colour: [u8; 3]) {
-    let mut cursor = left;
-    for character in text.chars() {
-        if character == ' ' {
-            cursor += ((GLYPH_WIDTH + 1) * scale) as i64;
-            continue;
-        }
-        let rows = glyph(character);
-        for (row, bits) in rows.iter().enumerate() {
-            for column in 0..GLYPH_WIDTH {
-                if bits & (1 << (GLYPH_WIDTH - 1 - column)) == 0 {
-                    continue;
-                }
-                for dy in 0..scale {
-                    for dx in 0..scale {
-                        image.set(
-                            cursor + (column * scale + dx) as i64,
-                            top + (row * scale + dy) as i64,
-                            colour,
-                        );
-                    }
-                }
-            }
-        }
-        cursor += ((GLYPH_WIDTH + 1) * scale) as i64;
-    }
-    let _ = GLYPH_HEIGHT;
-}
-
-// =====================================================================
 // PNG
 // =====================================================================
 
 /// Writes a PNG. Uncompressed deflate blocks, so there is no dependency
 /// on a compression library — the images are small and written once.
 pub fn write_png(image: &Image, path: &Path) -> Result<(), String> {
-    let mut raw = Vec::with_capacity(image.height * (1 + image.width * 3));
+    let png = encode_png(image);
+    std::fs::write(path, png).map_err(|error| format!("cannot write {}: {error}", path.display()))
+}
+
+/// A PNG, as bytes.
+///
+/// Separate from writing it, so what the encoder produces can be asked
+/// about without a filesystem — the size of the result is a property
+/// worth testing, and these images go into git.
+pub fn encode_png(image: &Image) -> Vec<u8> {
+    // Filtered per row, with the filter each row is smallest under.
+    //
+    // PNG's filters subtract a neighbour from each byte, and a picture
+    // that is mostly flat colour on a flat background becomes mostly
+    // ZEROS — which then compresses to almost nothing. Writing the raw
+    // bytes instead left a 2560-pixel mosaic at twelve megabytes.
+    let stride = image.width * 3;
+    let mut raw = Vec::with_capacity(image.height * (1 + stride));
+    let mut previous = vec![0u8; stride];
+    let mut row = vec![0u8; stride];
+
     for y in 0..image.height {
-        raw.push(0); // filter: none
         for x in 0..image.width {
-            raw.extend_from_slice(&image.pixels[y * image.width + x]);
+            let pixel = image.pixels[y * image.width + x];
+            row[x * 3..x * 3 + 3].copy_from_slice(&pixel);
         }
+
+        // `Up` — this row minus the one above — is the right filter for
+        // a picture with horizontal runs, which every one of these is:
+        // a background, a face, a label bar. `Sub` and `None` are
+        // tried too, and the smallest sum of absolute values wins,
+        // which is the standard heuristic.
+        let (filter, filtered) = best_filter(&row, &previous);
+        raw.push(filter);
+        raw.extend_from_slice(&filtered);
+        previous.copy_from_slice(&row);
     }
 
     let mut png = Vec::new();
@@ -870,8 +971,39 @@ pub fn write_png(image: &Image, path: &Path) -> Result<(), String> {
     chunk(&mut png, b"IHDR", &header);
     chunk(&mut png, b"IDAT", &zlib(&raw));
     chunk(&mut png, b"IEND", &[]);
+    png
+}
 
-    std::fs::write(path, png).map_err(|error| format!("cannot write {}: {error}", path.display()))
+/// Which of PNG's filters makes this row smallest.
+///
+/// The sum of absolute differences, treating each byte as signed —
+/// the heuristic the PNG specification itself recommends. A row of one
+/// colour filters to all zeros under `Sub`; a row identical to the one
+/// above filters to all zeros under `Up`.
+fn best_filter(row: &[u8], previous: &[u8]) -> (u8, Vec<u8>) {
+    let none = row.to_vec();
+    let sub: Vec<u8> = row
+        .iter()
+        .enumerate()
+        .map(|(at, byte)| byte.wrapping_sub(if at >= 3 { row[at - 3] } else { 0 }))
+        .collect();
+    let up: Vec<u8> = row
+        .iter()
+        .zip(previous)
+        .map(|(byte, above)| byte.wrapping_sub(*above))
+        .collect();
+
+    let cost = |bytes: &[u8]| -> u64 {
+        bytes.iter().map(|byte| (*byte as i8).unsigned_abs() as u64).sum()
+    };
+
+    let mut best = (0u8, none);
+    for (filter, candidate) in [(1u8, sub), (2u8, up)] {
+        if cost(&candidate) < cost(&best.1) {
+            best = (filter, candidate);
+        }
+    }
+    best
 }
 
 fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
@@ -883,18 +1015,150 @@ fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
     out.extend_from_slice(&crc32(&crc_input).to_be_bytes());
 }
 
-/// A zlib stream of stored (uncompressed) deflate blocks.
+/// A zlib stream, deflated with fixed Huffman codes and run-length
+/// matching.
+///
+/// Written here rather than taken from a crate, for the same reason
+/// everything else is: one fewer dependency to pin, and the format is
+/// small enough to be read in one sitting.
+///
+/// Fixed Huffman rather than dynamic. Dynamic codes save perhaps a
+/// fifth more on these images and cost a code-length table, a second
+/// pass and a good deal of code to get wrong. What actually matters is
+/// the MATCHING — a filtered row of flat colour is a run of zeros, and
+/// a run is what turns twelve megabytes into a hundred kilobytes.
 fn zlib(data: &[u8]) -> Vec<u8> {
-    let mut out = vec![0x78, 0x01]; // deflate, no preset dictionary
-    for (index, block) in data.chunks(65535).enumerate() {
-        let last = (index + 1) * 65535 >= data.len();
-        out.push(if last { 1 } else { 0 });
-        out.extend_from_slice(&(block.len() as u16).to_le_bytes());
-        out.extend_from_slice(&(!(block.len() as u16)).to_le_bytes());
-        out.extend_from_slice(block);
+    let mut bits = BitWriter::new();
+    // Deflate, 32K window, no preset dictionary.
+    bits.bytes.push(0x78);
+    bits.bytes.push(0x01);
+
+    // One fixed-Huffman block, marked final.
+    bits.write(1, 1);
+    bits.write(1, 2);
+
+    let mut at = 0usize;
+    while at < data.len() {
+        // The longest run of the byte at `at`, up to what one length
+        // code can carry.
+        let mut run = 1usize;
+        while at + run < data.len() && data[at + run] == data[at] && run < 258 {
+            run += 1;
+        }
+
+        // A match needs a distance, and the nearest identical byte is
+        // one back — so a run of N is one literal and a match of N-1
+        // at distance 1. Worth it from four bytes up; below that the
+        // literals are shorter than the match.
+        if run >= 4 {
+            fixed_literal(&mut bits, data[at]);
+            emit_match(&mut bits, run - 1, 1);
+            at += run;
+            continue;
+        }
+
+        fixed_literal(&mut bits, data[at]);
+        at += 1;
     }
-    out.extend_from_slice(&adler32(data).to_be_bytes());
-    out
+
+    // End of block.
+    fixed_literal_code(&mut bits, 256);
+    bits.flush();
+
+    bits.bytes.extend_from_slice(&adler32(data).to_be_bytes());
+    bits.bytes
+}
+
+/// Deflate's bit order: least-significant first within a byte, but
+/// Huffman codes written most-significant first.
+struct BitWriter {
+    bytes: Vec<u8>,
+    partial: u32,
+    filled: u32,
+}
+
+impl BitWriter {
+    fn new() -> BitWriter {
+        BitWriter { bytes: Vec::new(), partial: 0, filled: 0 }
+    }
+
+    /// `count` bits of `value`, least-significant first.
+    fn write(&mut self, value: u32, count: u32) {
+        self.partial |= value << self.filled;
+        self.filled += count;
+        while self.filled >= 8 {
+            self.bytes.push((self.partial & 0xff) as u8);
+            self.partial >>= 8;
+            self.filled -= 8;
+        }
+    }
+
+    /// A Huffman code: most-significant bit first, which is the one
+    /// place deflate reverses itself.
+    fn write_code(&mut self, code: u32, count: u32) {
+        for shift in (0..count).rev() {
+            self.write((code >> shift) & 1, 1);
+        }
+    }
+
+    fn flush(&mut self) {
+        if self.filled > 0 {
+            self.bytes.push((self.partial & 0xff) as u8);
+            self.partial = 0;
+            self.filled = 0;
+        }
+    }
+}
+
+/// A literal byte, in the fixed Huffman code.
+fn fixed_literal(bits: &mut BitWriter, byte: u8) {
+    fixed_literal_code(bits, byte as u32);
+}
+
+/// One symbol of the fixed literal/length alphabet.
+///
+/// The code lengths are fixed by the specification:
+///
+/// ```text
+/// 0..=143    8 bits, 0x30 + symbol
+/// 144..=255  9 bits, 0x190 + symbol - 144
+/// 256..=279  7 bits, symbol - 256
+/// 280..=287  8 bits, 0xc0 + symbol - 280
+/// ```
+fn fixed_literal_code(bits: &mut BitWriter, symbol: u32) {
+    match symbol {
+        0..=143 => bits.write_code(0x30 + symbol, 8),
+        144..=255 => bits.write_code(0x190 + symbol - 144, 9),
+        256..=279 => bits.write_code(symbol - 256, 7),
+        _ => bits.write_code(0xc0 + symbol - 280, 8),
+    }
+}
+
+/// A match: how many bytes, and how far back.
+fn emit_match(bits: &mut BitWriter, length: usize, distance: usize) {
+    let (code, extra_bits, base) = length_code(length);
+    fixed_literal_code(bits, code);
+    if extra_bits > 0 {
+        bits.write((length - base) as u32, extra_bits);
+    }
+    // The distance alphabet is five fixed bits. Distance 1 is code 0,
+    // and it is the only distance this uses.
+    let _ = distance;
+    bits.write_code(0, 5);
+}
+
+/// Deflate's length alphabet: the symbol, its extra bits, and the
+/// smallest length it covers.
+fn length_code(length: usize) -> (u32, u32, usize) {
+    match length {
+        3..=10 => (257 + (length - 3) as u32, 0, length),
+        11..=18 => (265 + ((length - 11) / 2) as u32, 1, 11 + (length - 11) / 2 * 2),
+        19..=34 => (269 + ((length - 19) / 4) as u32, 2, 19 + (length - 19) / 4 * 4),
+        35..=66 => (273 + ((length - 35) / 8) as u32, 3, 35 + (length - 35) / 8 * 8),
+        67..=130 => (277 + ((length - 67) / 16) as u32, 4, 67 + (length - 67) / 16 * 16),
+        131..=257 => (281 + ((length - 131) / 32) as u32, 5, 131 + (length - 131) / 32 * 32),
+        _ => (285, 0, 258),
+    }
 }
 
 fn adler32(data: &[u8]) -> u32 {

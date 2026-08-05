@@ -6,42 +6,17 @@ fn is_even(n i32) bool
 fn both(a bool, b bool) bool
   return a and b
 
-test "the two literals"
-  throw "true should hold" unless true
-  throw "false should never hold" if false
-
-test "not"
-  throw "false should never hold" if false
-  throw "one should not equal two" if 1 == 2
-
-test "not stacks"
-  throw "double negation should cancel out" unless not not true
-
 test "and"
   throw "true and true should hold" unless true and true
   throw "true and false should not hold" if true and false
   throw "false and true should not hold" if false and true
   throw "false and false should not hold" if false and false
 
-test "or"
-  throw "true or true should hold" unless true or true
-  throw "true or false should hold" unless true or false
-  throw "false or true should hold" unless false or true
-  throw "false or false should not hold" if false or false
-
 test "and binds tighter than or"
   # `false and false or true` is `(false and false) or true`, which is
   # true. The other reading gives false.
   throw "false and false or true should hold" unless false and false or true
   throw "false or true and false should not hold" if false or true and false
-
-test "comparison binds tighter than and"
-  # `1 < 2 and 3 < 4` groups as `(1 < 2) and (3 < 4)`.
-  throw "1 should be less than 2 and 3 < 4" unless 1 < 2 and 3 < 4
-  throw "2 + 2 == 4 and 3 * 3 should be 9" unless 2 + 2 == 4 and 3 * 3 == 9
-
-test "not binds tighter than and"
-  throw "false and true should not hold" if false and true
 
 test "bool as a parameter and a result"
   throw "is_even(n: 4) should hold" unless is_even(n: 4)
@@ -55,7 +30,32 @@ test "bool in a binding"
   throw "ready should hold" unless ready
   throw "waiting should not hold" if waiting
 
+test "comparison binds tighter than and"
+  # `1 < 2 and 3 < 4` groups as `(1 < 2) and (3 < 4)`.
+  throw "1 should be less than 2 and 3 < 4" unless 1 < 2 and 3 < 4
+  throw "2 + 2 == 4 and 3 * 3 should be 9" unless 2 + 2 == 4 and 3 * 3 == 9
+
 test "equality over bool"
   throw "true should equal true" unless true == true
   throw "false should equal false" unless false == false
   throw "true != false should hold" unless true != false
+
+test "not"
+  throw "false should never hold" if false
+  throw "one should not equal two" if 1 == 2
+
+test "not binds tighter than and"
+  throw "false and true should not hold" if false and true
+
+test "not stacks"
+  throw "double negation should cancel out" unless not not true
+
+test "or"
+  throw "true or true should hold" unless true or true
+  throw "true or false should hold" unless true or false
+  throw "false or true should hold" unless false or true
+  throw "false or false should not hold" if false or false
+
+test "the two literals"
+  throw "true should hold" unless true
+  throw "false should never hold" if false

@@ -70,13 +70,6 @@ fn searching(points List<Flat>, where_index i32, from i32) Flat
     return p
   return searching(points: points, where_index: where_index, from: from + 1)
 
-# --- bodies, built through the driver ---------------------------------
-#
-# Written out corner by corner rather than computed. That is a test's
-# business, not the kernel's: the kernel's job is to COMPUTE a body, and
-# until extrude exists a hand-written box is the oracle that proves the
-# tessellator right.
-
 # A single triangular face: the smallest thing with a closed loop.
 fn triangle_body() Body
   let body = empty_body()
@@ -205,6 +198,30 @@ fn box_body(width i32, depth i32, height i32) Body
 
   return body
 
+test "a body of one square face tessellates to two triangles"
+  let body = square_body()
+  throw "two triangles" unless length(list: tessellate(body: body)) == 6
+  throw "four vertices, three numbers each" unless length(list: coordinates(body: body)) == 12
+
+test "a box tessellates to twelve triangles"
+  # Six faces, each a quad, each two triangles. The count that says
+  # every face was reached and none was clipped short.
+  let body = box_body(width: 200, depth: 200, height: 200)
+  throw "six faces" unless face_count(body: body) == 6
+  throw "twelve triangles" unless length(list: tessellate(body: body)) == 36
+
+test "a convex corner containing another vertex is not an ear"
+  # The second half of the ear test, and the one a naive tessellator
+  # forgets: the corner turns the right way, but the polygon folds back
+  # into the triangle it would cut.
+  #
+  # An L is too shallow to show this — its reflex corner is adjacent to
+  # every convex corner but one, and adjacency is excluded from the test
+  # anyway. It takes a notch deep enough to reach past a corner's
+  # neighbours.
+  let shape = notched_polygon()
+  throw "the bottom-left corner reaches over the spike" if is_ear(points: shape, at_index: 0)
+
 test "a face lying in z drops z"
   let axis = dominant_axis(
     a: Vertex(x: 0, y: 0, z: 0),
@@ -220,6 +237,31 @@ test "a face standing up in x drops x"
     c: Vertex(x: 0, y: 0, z: 100))
   throw "the normal points along x" unless axis == 0
 
+test "a notched polygon gives five triangles"
+  # n - 2 holds for any simple polygon, convex or not. Seven corners,
+  # five triangles — the property that says the clipping consumed the
+  # whole polygon rather than stopping at the reflex corner.
+  let indices = triangulate(points: notched_polygon())
+  throw "seven corners give five triangles" unless length(list: indices) == 15
+
+test "a point exactly on an edge is not inside"
+  # Exact, because the coordinates are integers: the midpoint of an edge
+  # between integer points either is or is not on the edge, and there is
+  # no tolerance to tune.
+  throw "the midpoint of the base" if inside(ax: 0, ay: 0, bx: 100, by: 0, cx: 0, cy: 100, px: 50, py: 0)
+
+test "a point in the middle is inside"
+  throw "the centre of a triangle" unless inside(ax: 0, ay: 0, bx: 100, by: 0, cx: 0, cy: 100, px: 20, py: 20)
+
+test "a point outside is outside"
+  throw "well clear of it" if inside(ax: 0, ay: 0, bx: 100, by: 0, cx: 0, cy: 100, px: 90, py: 90)
+
+test "a reflex corner is not an ear"
+  # The spike's tip turns the wrong way, so clipping it would produce a
+  # triangle outside the polygon.
+  let shape = notched_polygon()
+  throw "the tip of the spike should not be an ear" if is_ear(points: shape, at_index: 4)
+
 test "a slanted face picks its largest component"
   let axis = dominant_axis(
     a: Vertex(x: 0, y: 0, z: 0),
@@ -227,42 +269,14 @@ test "a slanted face picks its largest component"
     c: Vertex(x: 0, y: 100, z: 10))
   throw "z still dominates a gentle slope" unless axis == 2
 
-test "flattening keeps the winding"
-  # The property that makes the 2D predicate mean what the 3D one meant.
-  # A triangle winding counter-clockwise about its own normal must still
-  # wind positive after the drop, whichever axis went.
-  let a = Vertex(x: 0, y: 0, z: 0)
-  let b = Vertex(x: 0, y: 100, z: 0)
-  let c = Vertex(x: 0, y: 0, z: 100)
-  let axis = dominant_axis(a: a, b: b, c: c)
-  let fa = flatten(v: a, axis: axis, index: 0)
-  let fb = flatten(v: b, axis: axis, index: 1)
-  let fc = flatten(v: c, axis: axis, index: 2)
-  throw "the flattened triangle should wind positive" unless turn(ax: fa.x, ay: fa.y, bx: fb.x, by: fb.y, cx: fc.x, cy: fc.y) > 0
+test "a square face of a body tessellates to two triangles"
+  let body = square_body()
+  let indices = tessellate_face(body: body, face: 0)
+  throw "two triangles" unless length(list: indices) == 6
 
-# --- the face's polygon -----------------------------------------------
-
-# The face's loop, as a 2D polygon.
-#
-# Every coedge contributes its START vertex: walking the loop, each
-# coedge's end is the next one's start, so taking both would repeat every
-# point.
-
-test "a triangular face gives a three-point polygon"
-  let body = triangle_body()
-  let points = polygon(body: body, face: 0)
-  throw "three coedges give three points, not six" unless length(list: points) == 3
-  throw "the first is the loop's first vertex" unless at(list: points, index: 0).where == 0
-  throw "then the second" unless at(list: points, index: 1).where == 1
-  throw "then the third" unless at(list: points, index: 2).where == 2
-
-# --- ear clipping ------------------------------------------------------
-
-# The signed double area of a polygon, exactly.
-#
-# Positive means counter-clockwise in the flattened plane. Doubled and
-# never halved, because half of an odd integer is not an integer, and
-# rounding here would be a lie about a value that is exact.
+test "a square gives two triangles"
+  let indices = triangulate(points: square_polygon())
+  throw "n minus two triangles, so two" unless length(list: indices) == 6
 
 test "a square's area is its side squared"
   let square = push(
@@ -273,149 +287,6 @@ test "a square's area is its side squared"
       value: Flat(x: 100, y: 100, where: 2)),
     value: Flat(x: 0, y: 100, where: 3))
   throw "doubled, so twice 100 by 100" unless polygon_area(points: square) == 20000
-
-test "winding the other way flips the sign"
-  # How the tessellator knows a loop is an outer boundary rather than a
-  # hole, without measuring an angle.
-  let clockwise = push(
-    list: push(
-      list: push(
-        list: push(list: list(), value: Flat(x: 0, y: 0, where: 0)),
-        value: Flat(x: 0, y: 100, where: 1)),
-      value: Flat(x: 100, y: 100, where: 2)),
-    value: Flat(x: 100, y: 0, where: 3))
-  throw "the same square, wound the other way" unless polygon_area(points: clockwise) == 0 - 20000
-
-# Whether `p` is strictly inside the triangle a, b, c.
-#
-# Strictly: a point ON an edge is not inside. An ear whose triangle has
-# another vertex sitting exactly on its edge is still clippable — the
-# resulting triangles share that edge and tile the polygon without
-# overlap.
-
-test "a point in the middle is inside"
-  throw "the centre of a triangle" unless inside(ax: 0, ay: 0, bx: 100, by: 0, cx: 0, cy: 100, px: 20, py: 20)
-
-test "a point outside is outside"
-  throw "well clear of it" if inside(ax: 0, ay: 0, bx: 100, by: 0, cx: 0, cy: 100, px: 90, py: 90)
-
-test "a point exactly on an edge is not inside"
-  # Exact, because the coordinates are integers: the midpoint of an edge
-  # between integer points either is or is not on the edge, and there is
-  # no tolerance to tune.
-  throw "the midpoint of the base" if inside(ax: 0, ay: 0, bx: 100, by: 0, cx: 0, cy: 100, px: 50, py: 0)
-
-# Whether the corner at `at` is an ear: convex, and containing no other
-# vertex of the polygon.
-
-test "every corner of a convex polygon is an ear"
-  let square = square_polygon()
-  for i in 0 .. 4
-    throw "a convex corner should be an ear" unless is_ear(points: square, at_index: i)
-
-test "a reflex corner is not an ear"
-  # The spike's tip turns the wrong way, so clipping it would produce a
-  # triangle outside the polygon.
-  let shape = notched_polygon()
-  throw "the tip of the spike should not be an ear" if is_ear(points: shape, at_index: 4)
-
-test "a convex corner containing another vertex is not an ear"
-  # The second half of the ear test, and the one a naive tessellator
-  # forgets: the corner turns the right way, but the polygon folds back
-  # into the triangle it would cut.
-  #
-  # An L is too shallow to show this — its reflex corner is adjacent to
-  # every convex corner but one, and adjacency is excluded from the test
-  # anyway. It takes a notch deep enough to reach past a corner's
-  # neighbours.
-  let shape = notched_polygon()
-  throw "the bottom-left corner reaches over the spike" if is_ear(points: shape, at_index: 0)
-
-test "the notch is as deep as the tests above assume"
-  # Guards the two tests above: if the polygon changed shape, they could
-  # both pass while testing nothing.
-  let shape = notched_polygon()
-  throw "it should wind counter-clockwise" unless polygon_area(points: shape) > 0
-  let a = at(list: shape, index: 3)
-  let b = at(list: shape, index: 4)
-  let c = at(list: shape, index: 5)
-  throw "the spike's tip should turn the wrong way" unless turn(ax: a.x, ay: a.y, bx: b.x, by: b.y, cx: c.x, cy: c.y) < 0
-
-  # And it reaches far enough that corner 0's ear spans it, which is what
-  # the containment test rests on.
-  let previous = at(list: shape, index: 6)
-  let corner = at(list: shape, index: 0)
-  let next = at(list: shape, index: 1)
-  throw "corner 0 should be convex" unless turn(ax: previous.x, ay: previous.y, bx: corner.x, by: corner.y, cx: next.x, cy: next.y) > 0
-  throw "and its ear should swallow the spike's tip" unless inside(ax: previous.x, ay: previous.y, bx: corner.x, by: corner.y, cx: next.x, cy: next.y, px: b.x, py: b.y)
-
-# --- clipping the whole polygon ---------------------------------------
-
-# The triangles of one polygon, as a flat list of vertex indices.
-#
-# Three entries per triangle, each the `where` of the flattened point —
-# so the result indexes the BODY's vertices, not the polygon's, and a
-# tessellated body's triangles refer to the same points its edges do.
-
-test "a triangle triangulates to itself"
-  let triangle = push(
-    list: push(
-      list: push(list: list(), value: Flat(x: 0, y: 0, where: 7)),
-      value: Flat(x: 100, y: 0, where: 8)),
-    value: Flat(x: 0, y: 100, where: 9))
-  let indices = triangulate(points: triangle)
-  throw "one triangle, three indices" unless length(list: indices) == 3
-  throw "and they are the body's vertex indices, not the polygon's" unless at(list: indices, index: 0) == 7 or at(list: indices, index: 1) == 7 or at(list: indices, index: 2) == 7
-
-test "a square gives two triangles"
-  let indices = triangulate(points: square_polygon())
-  throw "n minus two triangles, so two" unless length(list: indices) == 6
-
-test "a notched polygon gives five triangles"
-  # n - 2 holds for any simple polygon, convex or not. Seven corners,
-  # five triangles — the property that says the clipping consumed the
-  # whole polygon rather than stopping at the reflex corner.
-  let indices = triangulate(points: notched_polygon())
-  throw "seven corners give five triangles" unless length(list: indices) == 15
-
-test "the triangles cover the polygon exactly"
-  # The test that makes the others mean something. If the pieces overlap
-  # or leave a gap, their areas cannot sum to the polygon's — and area is
-  # exact here, so this is an equality and not a comparison against a
-  # tolerance.
-  let shape = notched_polygon()
-  let indices = triangulate(points: shape)
-  throw "the pieces should sum to the whole" unless piece_area(points: shape, indices: indices, from: 0, total: wide(value: 0)) == polygon_area(points: shape)
-
-# The area of each triangle, summed. Looks its points up by `where`,
-# which is what a real tessellated body does too.
-
-test "no triangle is degenerate"
-  # A zero-area triangle draws nothing but still costs a draw call, and
-  # is the usual sign that an ear was clipped from three collinear
-  # points.
-  let shape = notched_polygon()
-  let indices = triangulate(points: shape)
-  for t in 0 .. 5
-    let a = by_where(points: shape, where_index: at(list: indices, index: t * 3))
-    let b = by_where(points: shape, where_index: at(list: indices, index: t * 3 + 1))
-    let c = by_where(points: shape, where_index: at(list: indices, index: t * 3 + 2))
-    throw "a triangle came out with no area" if turn(ax: a.x, ay: a.y, bx: b.x, by: b.y, cx: c.x, cy: c.y) == 0
-
-# --- a whole face ------------------------------------------------------
-
-# The triangles of one face of a body, indexing the body's vertices.
-
-test "a triangular face of a body tessellates to one triangle"
-  let body = triangle_body()
-  let indices = tessellate_face(body: body, face: 0)
-  throw "one triangle" unless length(list: indices) == 3
-  throw "naming the body's three vertices" unless at(list: indices, index: 0) + at(list: indices, index: 1) + at(list: indices, index: 2) == 3
-
-test "a square face of a body tessellates to two triangles"
-  let body = square_body()
-  let indices = tessellate_face(body: body, face: 0)
-  throw "two triangles" unless length(list: indices) == 6
 
 test "a tessellated face winds the same way its loop does"
   # What makes back-face culling work: every triangle out of the
@@ -431,17 +302,34 @@ test "a tessellated face winds the same way its loop does"
     let c = vertex_of(body: body, index: at(list: indices, index: t * 3 + 2))
     throw "a triangle faces the wrong way" unless side_of(a: a, b: b, c: c, d: outside) > 0
 
-test "a body of one square face tessellates to two triangles"
-  let body = square_body()
-  throw "two triangles" unless length(list: tessellate(body: body)) == 6
-  throw "four vertices, three numbers each" unless length(list: coordinates(body: body)) == 12
+test "a triangle triangulates to itself"
+  let triangle = push(
+    list: push(
+      list: push(list: list(), value: Flat(x: 0, y: 0, where: 7)),
+      value: Flat(x: 100, y: 0, where: 8)),
+    value: Flat(x: 0, y: 100, where: 9))
+  let indices = triangulate(points: triangle)
+  throw "one triangle, three indices" unless length(list: indices) == 3
+  throw "and they are the body's vertex indices, not the polygon's" unless at(list: indices, index: 0) == 7 or at(list: indices, index: 1) == 7 or at(list: indices, index: 2) == 7
 
-test "a box tessellates to twelve triangles"
-  # Six faces, each a quad, each two triangles. The count that says
-  # every face was reached and none was clipped short.
-  let body = box_body(width: 200, depth: 200, height: 200)
-  throw "six faces" unless face_count(body: body) == 6
-  throw "twelve triangles" unless length(list: tessellate(body: body)) == 36
+test "a triangular face gives a three-point polygon"
+  let body = triangle_body()
+  let points = polygon(body: body, face: 0)
+  throw "three coedges give three points, not six" unless length(list: points) == 3
+  throw "the first is the loop's first vertex" unless at(list: points, index: 0).where == 0
+  throw "then the second" unless at(list: points, index: 1).where == 1
+  throw "then the third" unless at(list: points, index: 2).where == 2
+
+test "a triangular face of a body tessellates to one triangle"
+  let body = triangle_body()
+  let indices = tessellate_face(body: body, face: 0)
+  throw "one triangle" unless length(list: indices) == 3
+  throw "naming the body's three vertices" unless at(list: indices, index: 0) + at(list: indices, index: 1) + at(list: indices, index: 2) == 3
+
+test "every corner of a convex polygon is an ear"
+  let square = square_polygon()
+  for i in 0 .. 4
+    throw "a convex corner should be an ear" unless is_ear(points: square, at_index: i)
 
 test "every triangle of a box faces outward"
   # The property back-face culling rests on, checked against a point
@@ -456,25 +344,18 @@ test "every triangle of a box faces outward"
     let c = vertex_of(body: body, index: at(list: indices, index: t * 3 + 2))
     throw "a triangle faces inward" unless side_of(a: a, b: b, c: c, d: centre) < 0
 
-test draws "a tessellated square face"
-  let body = square_body()
-  solid(points: coordinates(body: body), triangles: tessellate(body: body))
-
-test draws "a tessellated box"
-  let body = box_body(width: 240, depth: 240, height: 240)
-  throw "twelve triangles" unless length(list: tessellate(body: body)) == 36
-  solid(points: coordinates(body: body), triangles: tessellate(body: body))
-
-test draws "a tessellated slab"
-  let body = box_body(width: 320, depth: 320, height: 80)
-  solid(points: coordinates(body: body), triangles: tessellate(body: body))
-
-# A box, as a real BREP: eight vertices, twelve edges, six faces, and
-# every edge used by exactly two faces in opposite directions.
-#
-# Written out rather than generated because it is the fixture the tests
-# above rest on: a generator with a bug would produce a body that is
-# consistently wrong, and the tests would agree with it.
+test "flattening keeps the winding"
+  # The property that makes the 2D predicate mean what the 3D one meant.
+  # A triangle winding counter-clockwise about its own normal must still
+  # wind positive after the drop, whichever axis went.
+  let a = Vertex(x: 0, y: 0, z: 0)
+  let b = Vertex(x: 0, y: 100, z: 0)
+  let c = Vertex(x: 0, y: 0, z: 100)
+  let axis = dominant_axis(a: a, b: b, c: c)
+  let fa = flatten(v: a, axis: axis, index: 0)
+  let fb = flatten(v: b, axis: axis, index: 1)
+  let fc = flatten(v: c, axis: axis, index: 2)
+  throw "the flattened triangle should wind positive" unless turn(ax: fa.x, ay: fa.y, bx: fb.x, by: fb.y, cx: fc.x, cy: fc.y) > 0
 
 test "flattening keeps the winding for a face pointing the other way"
   # The half of the projection that a naive drop gets wrong. Dropping
@@ -494,3 +375,67 @@ test "flattening keeps the winding for a face pointing the other way"
   let fb = flatten(v: b, axis: axis, index: 1)
   let fc = flatten(v: c, axis: axis, index: 2)
   throw "the flattened triangle should still wind positive" unless turn(ax: fa.x, ay: fa.y, bx: fb.x, by: fb.y, cx: fc.x, cy: fc.y) > 0
+
+test "no triangle is degenerate"
+  # A zero-area triangle draws nothing but still costs a draw call, and
+  # is the usual sign that an ear was clipped from three collinear
+  # points.
+  let shape = notched_polygon()
+  let indices = triangulate(points: shape)
+  for t in 0 .. 5
+    let a = by_where(points: shape, where_index: at(list: indices, index: t * 3))
+    let b = by_where(points: shape, where_index: at(list: indices, index: t * 3 + 1))
+    let c = by_where(points: shape, where_index: at(list: indices, index: t * 3 + 2))
+    throw "a triangle came out with no area" if turn(ax: a.x, ay: a.y, bx: b.x, by: b.y, cx: c.x, cy: c.y) == 0
+
+test "the notch is as deep as the tests above assume"
+  # Guards the two tests above: if the polygon changed shape, they could
+  # both pass while testing nothing.
+  let shape = notched_polygon()
+  throw "it should wind counter-clockwise" unless polygon_area(points: shape) > 0
+  let a = at(list: shape, index: 3)
+  let b = at(list: shape, index: 4)
+  let c = at(list: shape, index: 5)
+  throw "the spike's tip should turn the wrong way" unless turn(ax: a.x, ay: a.y, bx: b.x, by: b.y, cx: c.x, cy: c.y) < 0
+
+  # And it reaches far enough that corner 0's ear spans it, which is what
+  # the containment test rests on.
+  let previous = at(list: shape, index: 6)
+  let corner = at(list: shape, index: 0)
+  let next = at(list: shape, index: 1)
+  throw "corner 0 should be convex" unless turn(ax: previous.x, ay: previous.y, bx: corner.x, by: corner.y, cx: next.x, cy: next.y) > 0
+  throw "and its ear should swallow the spike's tip" unless inside(ax: previous.x, ay: previous.y, bx: corner.x, by: corner.y, cx: next.x, cy: next.y, px: b.x, py: b.y)
+
+test "the triangles cover the polygon exactly"
+  # The test that makes the others mean something. If the pieces overlap
+  # or leave a gap, their areas cannot sum to the polygon's — and area is
+  # exact here, so this is an equality and not a comparison against a
+  # tolerance.
+  let shape = notched_polygon()
+  let indices = triangulate(points: shape)
+  throw "the pieces should sum to the whole" unless piece_area(points: shape, indices: indices, from: 0, total: wide(value: 0)) == polygon_area(points: shape)
+
+test "winding the other way flips the sign"
+  # How the tessellator knows a loop is an outer boundary rather than a
+  # hole, without measuring an angle.
+  let clockwise = push(
+    list: push(
+      list: push(
+        list: push(list: list(), value: Flat(x: 0, y: 0, where: 0)),
+        value: Flat(x: 0, y: 100, where: 1)),
+      value: Flat(x: 100, y: 100, where: 2)),
+    value: Flat(x: 100, y: 0, where: 3))
+  throw "the same square, wound the other way" unless polygon_area(points: clockwise) == 0 - 20000
+
+test draws "a tessellated box"
+  let body = box_body(width: 240, depth: 240, height: 240)
+  throw "twelve triangles" unless length(list: tessellate(body: body)) == 36
+  solid(points: coordinates(body: body), triangles: tessellate(body: body))
+
+test draws "a tessellated slab"
+  let body = box_body(width: 320, depth: 320, height: 80)
+  solid(points: coordinates(body: body), triangles: tessellate(body: body))
+
+test draws "a tessellated square face"
+  let body = square_body()
+  solid(points: coordinates(body: body), triangles: tessellate(body: body))

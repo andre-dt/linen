@@ -38,16 +38,16 @@ fn turns_left(ax i32, ay i32, bx i32, by i32, cx i32, cy i32) bool
 fn collinear(ax i32, ay i32, bx i32, by i32, cx i32, cy i32) bool
   return orient2d(ax: ax, ay: ay, bx: bx, by: by, cx: cx, cy: cy) == 0
 
+test "a degenerate segment is collinear with everything"
+  # a == b, so there is no line to be on a side of.
+  throw "a degenerate segment has no sides" unless collinear(ax: 500, ay: 500, bx: 500, by: 500, cx: 9000, cy: 1)
+
 test "a left turn is positive"
   # (0,0) -> (1000,0) -> (1000,1000) turns left.
   throw "should turn left" unless turns_left(ax: 0, ay: 0, bx: 1000, by: 0, cx: 1000, cy: 1000)
 
 test "a right turn is negative"
   throw "should not turn left" if turns_left(ax: 0, ay: 0, bx: 1000, by: 0, cx: 1000, cy: 0 - 1000)
-
-test "three points on a line are exactly collinear"
-  # The whole reason for integers: this is 0, not 1e-17.
-  throw "should be collinear" unless collinear(ax: 0, ay: 0, bx: 1000, by: 1000, cx: 2000, cy: 2000)
 
 test "collinear holds at the far end of the range"
   # 10 metres out, where a double would have thrown away the low bits.
@@ -58,20 +58,20 @@ test "one micron off the line is not collinear"
   # still registers, at full range. This is what exactness buys.
   throw "one micron off is not collinear" if collinear(ax: 0, ay: 0, bx: 5000000, by: 5000000, cx: 10000000, cy: 10000001)
 
-test "the deviation has the sign of the side it is on"
-  throw "above the line turns left" unless turns_left(ax: 0, ay: 0, bx: 10000000, by: 0, cx: 5000000, cy: 1)
-
 test "reversing the segment flips the sign"
   # orient2d(a,b,c) = -orient2d(b,a,c), always. An identity worth
   # pinning: a kernel that gets this wrong has inconsistent winding.
   throw "the sign should flip" unless orient2d(ax: 0, ay: 0, bx: 1000, by: 0, cx: 0, cy: 1000) == 0 - orient2d(ax: 1000, ay: 0, bx: 0, by: 0, cx: 0, cy: 1000)
 
-test "a degenerate segment is collinear with everything"
-  # a == b, so there is no line to be on a side of.
-  throw "a degenerate segment has no sides" unless collinear(ax: 500, ay: 500, bx: 500, by: 500, cx: 9000, cy: 1)
+test "the deviation has the sign of the side it is on"
+  throw "above the line turns left" unless turns_left(ax: 0, ay: 0, bx: 10000000, by: 0, cx: 5000000, cy: 1)
 
 test "the product needs the full i64 range"
   # Two coordinates at opposite ends of the range: the determinant is
   # about 10^14, which overflows i32 by five orders of magnitude. That
   # this is simply the right answer is the point of computing in i64.
   throw "the large determinant should be exact" unless orient2d(ax: 0, ay: 0, bx: 10000000, by: 0, cx: 0, cy: 10000000) == 100000000000000
+
+test "three points on a line are exactly collinear"
+  # The whole reason for integers: this is 0, not 1e-17.
+  throw "should be collinear" unless collinear(ax: 0, ay: 0, bx: 1000, by: 1000, cx: 2000, cy: 2000)

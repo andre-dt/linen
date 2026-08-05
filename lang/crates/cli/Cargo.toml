@@ -11,3 +11,4 @@ path = "src/main.rs"
 syntax.workspace = true
 compile.workspace = true
 draw.workspace = true
+format.workspace = true

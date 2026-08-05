@@ -59,49 +59,12 @@ fn coplanar(a Point3, b Point3, c Point3, d Point3) bool
 fn above(a Point3, b Point3, c Point3, d Point3) bool
   return orient3d(a: a, b: b, c: c, d: d) > 0
 
-test "a point off the plane has a side"
-  # The plane is z = 0 with its normal along +z, so a point at positive
-  # z is above it.
+test "a degenerate plane is coplanar with everything"
+  # a, b and c on one line, so there is no plane to be on a side of.
   let a = Point3(x: 0, y: 0, z: 0)
-  let b = Point3(x: 1000, y: 0, z: 0)
-  let c = Point3(x: 0, y: 1000, z: 0)
-  throw "a point at +z should be above" unless above(a: a, b: b, c: c, d: Point3(x: 0, y: 0, z: 1000))
-  throw "a point at -z should not be above" if above(a: a, b: b, c: c, d: Point3(x: 0, y: 0, z: 0 - 1000))
-
-test "four points on a plane are exactly coplanar"
-  let a = Point3(x: 0, y: 0, z: 0)
-  let b = Point3(x: 1000, y: 0, z: 0)
-  let c = Point3(x: 0, y: 1000, z: 0)
-  throw "a fourth point on z=0 should be coplanar" unless coplanar(a: a, b: b, c: c, d: Point3(x: 500, y: 500, z: 0))
-
-test "coplanar holds at the far end of the range"
-  # 10 metres out on every axis, where a double has long since thrown
-  # away the low bits.
-  let a = Point3(x: 0, y: 0, z: 0)
-  let b = Point3(x: 10000000, y: 0, z: 0)
-  let c = Point3(x: 0, y: 10000000, z: 0)
-  throw "should still be coplanar" unless coplanar(a: a, b: b, c: c, d: Point3(x: 10000000, y: 10000000, z: 0))
-
-test "one micron off the plane is not coplanar"
-  # The tightest case there is: the smallest representable deviation, at
-  # full range. This is what i128 buys — in i64 the determinant would
-  # have wrapped long before here.
-  let a = Point3(x: 0, y: 0, z: 0)
-  let b = Point3(x: 10000000, y: 0, z: 0)
-  let c = Point3(x: 0, y: 10000000, z: 0)
-  throw "one micron off is not coplanar" if coplanar(a: a, b: b, c: c, d: Point3(x: 10000000, y: 10000000, z: 1))
-
-test "the determinant needs the full i128 range"
-  # A unit-ish tetrahedron at full extent: 10^7 cubed is 10^21, which
-  # overflows i64 by two orders. Getting the exact value back is the
-  # proof that the arithmetic never wrapped.
-  let a = Point3(x: 0, y: 0, z: 0)
-  let b = Point3(x: 10000000, y: 0, z: 0)
-  let c = Point3(x: 0, y: 10000000, z: 0)
-  let d = Point3(x: 0, y: 0, z: 10000000)
-  # The determinant of a diagonal matrix is the product of the diagonal:
-  # 10^7 cubed, positive because d is above the plane of a, b, c.
-  throw "should be 10^21" unless orient3d(a: a, b: b, c: c, d: d) == wide(value: 100000000000000) * wide(value: 10000000)
+  let b = Point3(x: 1000, y: 1000, z: 1000)
+  let c = Point3(x: 2000, y: 2000, z: 2000)
+  throw "a degenerate plane has no sides" unless coplanar(a: a, b: b, c: c, d: Point3(x: 9000, y: 1, z: 5))
 
 test "a determinant that i64 would get BACKWARDS"
   # The case that earns i128, and the only kind that matters.
@@ -121,6 +84,38 @@ test "a determinant that i64 would get BACKWARDS"
   let d = Point3(x: 0 - 10000000, y: 10000000, z: 10000000)
   throw "the point is below, and i64 would say above" unless orient3d(a: a, b: b, c: c, d: d) < 0
 
+test "a point off the plane has a side"
+  # The plane is z = 0 with its normal along +z, so a point at positive
+  # z is above it.
+  let a = Point3(x: 0, y: 0, z: 0)
+  let b = Point3(x: 1000, y: 0, z: 0)
+  let c = Point3(x: 0, y: 1000, z: 0)
+  throw "a point at +z should be above" unless above(a: a, b: b, c: c, d: Point3(x: 0, y: 0, z: 1000))
+  throw "a point at -z should not be above" if above(a: a, b: b, c: c, d: Point3(x: 0, y: 0, z: 0 - 1000))
+
+test "coplanar holds at the far end of the range"
+  # 10 metres out on every axis, where a double has long since thrown
+  # away the low bits.
+  let a = Point3(x: 0, y: 0, z: 0)
+  let b = Point3(x: 10000000, y: 0, z: 0)
+  let c = Point3(x: 0, y: 10000000, z: 0)
+  throw "should still be coplanar" unless coplanar(a: a, b: b, c: c, d: Point3(x: 10000000, y: 10000000, z: 0))
+
+test "four points on a plane are exactly coplanar"
+  let a = Point3(x: 0, y: 0, z: 0)
+  let b = Point3(x: 1000, y: 0, z: 0)
+  let c = Point3(x: 0, y: 1000, z: 0)
+  throw "a fourth point on z=0 should be coplanar" unless coplanar(a: a, b: b, c: c, d: Point3(x: 500, y: 500, z: 0))
+
+test "one micron off the plane is not coplanar"
+  # The tightest case there is: the smallest representable deviation, at
+  # full range. This is what i128 buys — in i64 the determinant would
+  # have wrapped long before here.
+  let a = Point3(x: 0, y: 0, z: 0)
+  let b = Point3(x: 10000000, y: 0, z: 0)
+  let c = Point3(x: 0, y: 10000000, z: 0)
+  throw "one micron off is not coplanar" if coplanar(a: a, b: b, c: c, d: Point3(x: 10000000, y: 10000000, z: 1))
+
 test "swapping two points flips the sign"
   # orient3d is a determinant, so exchanging any two rows negates it.
   # A kernel that gets this wrong has inconsistent face orientation.
@@ -130,9 +125,14 @@ test "swapping two points flips the sign"
   let d = Point3(x: 0, y: 0, z: 1000)
   throw "the sign should flip" unless orient3d(a: a, b: b, c: c, d: d) == 0 - orient3d(a: a, b: c, c: b, d: d)
 
-test "a degenerate plane is coplanar with everything"
-  # a, b and c on one line, so there is no plane to be on a side of.
+test "the determinant needs the full i128 range"
+  # A unit-ish tetrahedron at full extent: 10^7 cubed is 10^21, which
+  # overflows i64 by two orders. Getting the exact value back is the
+  # proof that the arithmetic never wrapped.
   let a = Point3(x: 0, y: 0, z: 0)
-  let b = Point3(x: 1000, y: 1000, z: 1000)
-  let c = Point3(x: 2000, y: 2000, z: 2000)
-  throw "a degenerate plane has no sides" unless coplanar(a: a, b: b, c: c, d: Point3(x: 9000, y: 1, z: 5))
+  let b = Point3(x: 10000000, y: 0, z: 0)
+  let c = Point3(x: 0, y: 10000000, z: 0)
+  let d = Point3(x: 0, y: 0, z: 10000000)
+  # The determinant of a diagonal matrix is the product of the diagonal:
+  # 10^7 cubed, positive because d is above the plane of a, b, c.
+  throw "should be 10^21" unless orient3d(a: a, b: b, c: c, d: d) == wide(value: 100000000000000) * wide(value: 10000000)

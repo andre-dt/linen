@@ -11,23 +11,6 @@
 # noise that never varies.
 
 from './modules/shared' use Point, doubled, origin
-
-test "an imported function can be called"
-  throw "twice two is four" unless doubled(n: 2) == 4
-
-test "an imported shape can be constructed"
-  let p = Point(x: 3, y: 4)
-  throw "x" unless p.x == 3
-  throw "y" unless p.y == 4
-
-test "an imported function returning an imported shape"
-  # The case that proves the two arrive as the SAME type. If the shape
-  # were interned twice — once for the definition, once for the import —
-  # this would be a type error, and the two would be different types
-  # with the same name.
-  let p = origin()
-  throw "the origin is at zero" unless p.x == 0 and p.y == 0
-
 from './modules/left' use left_of
 from './modules/right' use right_of
 
@@ -47,3 +30,19 @@ test "a shape crossing three files is one type"
   # Point.
   let p = origin()
   throw "the origin through an imported function" unless left_of(p: p) == 0
+
+test "an imported function can be called"
+  throw "twice two is four" unless doubled(n: 2) == 4
+
+test "an imported function returning an imported shape"
+  # The case that proves the two arrive as the SAME type. If the shape
+  # were interned twice — once for the definition, once for the import —
+  # this would be a type error, and the two would be different types
+  # with the same name.
+  let p = origin()
+  throw "the origin is at zero" unless p.x == 0 and p.y == 0
+
+test "an imported shape can be constructed"
+  let p = Point(x: 3, y: 4)
+  throw "x" unless p.x == 3
+  throw "y" unless p.y == 4

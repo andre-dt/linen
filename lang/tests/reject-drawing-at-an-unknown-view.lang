@@ -1,0 +1,13 @@
+#~ nothing called `sideways` to look at
+# `normal to <name>` where the name resolves to nothing.
+#
+# The camera has to point at something that exists. A name that does
+# not resolve is a mistake — a misspelled plane, a face that was
+# renamed — and defaulting to some other view would hide it: the
+# picture would come out fine, of the wrong thing.
+#
+# Resolved in a phase after parsing, so a face of a solid can be named
+# the same way a plane is once solids exist.
+
+test draws normal to sideways "a square"
+  wire(points: list(), segments: list())

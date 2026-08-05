@@ -18,90 +18,11 @@
 from 'linen:plane' use Plane, top, bottom, front, back, right, left, offset_by, to_world, plane_x, plane_y, plane_z, normal_x, normal_y, normal_z
 from 'linen:predicates' use Point, Point3
 
-test "the top plane looks down the z axis"
-  # Top is the xy plane seen from above: x runs east, y runs north, and
-  # the normal points up at the viewer.
-  let plane = top()
-  throw "its normal is +z" unless normal_z(plane: plane) == 1
-  throw "and nothing else" unless normal_x(plane: plane) == 0 and normal_y(plane: plane) == 0
-
-test "a point on the top plane keeps its x and y"
-  # The property that makes Top the default: drafting on it is drafting
-  # in world coordinates, so nothing surprising happens to the numbers.
-  let plane = top()
-  let there = to_world(plane: plane, point: Point(x: 30, y: 40))
-  throw "x" unless plane_x(plane: plane, point: Point(x: 30, y: 40)) == 30
-  throw "y" unless plane_y(plane: plane, point: Point(x: 30, y: 40)) == 40
-  throw "z" unless plane_z(plane: plane, point: Point(x: 30, y: 40)) == 0
-
-test "the front plane stands up"
-  # Front is the xz plane: a draft's y becomes world z, which is what
-  # makes a profile drawn on it extrude horizontally.
-  let plane = front()
-  throw "its normal is -y" unless normal_y(plane: plane) == 0 - 1
-  throw "a draft's x is still world x" unless plane_x(plane: plane, point: Point(x: 30, y: 40)) == 30
-  throw "a draft's y is world z" unless plane_z(plane: plane, point: Point(x: 30, y: 40)) == 40
-  throw "and world y is zero" unless plane_y(plane: plane, point: Point(x: 30, y: 40)) == 0
-
-test "the right plane faces along x"
-  let plane = right()
-  throw "its normal is +x" unless normal_x(plane: plane) == 1
-  throw "a draft's x is world y" unless plane_y(plane: plane, point: Point(x: 30, y: 40)) == 30
-  throw "a draft's y is world z" unless plane_z(plane: plane, point: Point(x: 30, y: 40)) == 40
-
-test "the opposite planes face the other way"
-  # Bottom, back and left are the same planes seen from behind. Their
-  # normals are reversed, which is what makes a profile drawn on Bottom
-  # extrude downward rather than up.
-  throw "bottom is -z" unless normal_z(plane: bottom()) == 0 - 1
-  throw "back is +y" unless normal_y(plane: back()) == 1
-  throw "left is -x" unless normal_x(plane: left()) == 0 - 1
-
-test "every standard plane has a unit normal"
-  # Unit, so a normal can be compared and negated without scaling. The
-  # six standard planes are axis-aligned, so their normals are exactly
-  # one unit along one axis — no square roots involved.
-  throw "top" unless unit(plane: top())
-  throw "bottom" unless unit(plane: bottom())
-  throw "front" unless unit(plane: front())
-  throw "back" unless unit(plane: back())
-  throw "right" unless unit(plane: right())
-  throw "left" unless unit(plane: left())
-
 fn unit(plane Plane) bool
   let x = normal_x(plane: plane)
   let y = normal_y(plane: plane)
   let z = normal_z(plane: plane)
   return x * x + y * y + z * z == 1
-
-test "a plane can be offset along its own normal"
-  # A sketch 50 microns above Top. The axes do not change — only where
-  # the origin sits — so a profile drawn on it is the same profile,
-  # somewhere else.
-  let raised = offset_by(plane: top(), distance: 50)
-  throw "z moved" unless plane_z(plane: raised, point: Point(x: 0, y: 0)) == 50
-  throw "x did not" unless plane_x(plane: raised, point: Point(x: 30, y: 40)) == 30
-  throw "y did not" unless plane_y(plane: raised, point: Point(x: 30, y: 40)) == 40
-  throw "the normal is unchanged" unless normal_z(plane: raised) == 1
-
-test "offsetting the other way goes the other way"
-  let sunken = offset_by(plane: top(), distance: 0 - 50)
-  throw "below" unless plane_z(plane: sunken, point: Point(x: 0, y: 0)) == 0 - 50
-
-test "offsetting front moves along y, not z"
-  # The test that catches an offset written against the world axes
-  # rather than the plane's own normal.
-  let out = offset_by(plane: front(), distance: 50)
-  throw "y moved, negatively" unless plane_y(plane: out, point: Point(x: 0, y: 0)) == 0 - 50
-  throw "z is still the draft's y" unless plane_z(plane: out, point: Point(x: 0, y: 40)) == 40
-
-test "a plane's axes are perpendicular"
-  # What makes the mapping a rigid motion rather than a shear: a square
-  # drawn on the plane has to arrive as a square.
-  throw "top" unless perpendicular(plane: top())
-  throw "front" unless perpendicular(plane: front())
-  throw "right" unless perpendicular(plane: right())
-  throw "back" unless perpendicular(plane: back())
 
 fn perpendicular(plane Plane) bool
   # The dot product of the two in-plane axes, which is zero when they
@@ -117,14 +38,6 @@ fn perpendicular(plane Plane) bool
   let vz = along_y.z - origin.z
   return ux * vx + uy * vy + uz * vz == 0
 
-test "a plane's axes preserve distance"
-  # One micron along the draft's x is one micron in the world. Without
-  # it, a circle of radius 10 would arrive as an ellipse.
-  throw "top" unless unit_axes(plane: top())
-  throw "front" unless unit_axes(plane: front())
-  throw "right" unless unit_axes(plane: right())
-  throw "left" unless unit_axes(plane: left())
-
 fn unit_axes(plane Plane) bool
   let origin = to_world(plane: plane, point: Point(x: 0, y: 0))
   let along_x = to_world(plane: plane, point: Point(x: 1, y: 0))
@@ -138,17 +51,6 @@ fn unit_axes(plane Plane) bool
   return (
     ux * ux + uy * uy + uz * uz == 1 and
     vx * vx + vy * vy + vz * vz == 1)
-
-test "the axes and the normal form a right-handed frame"
-  # x cross y = normal, not its negative. Get this wrong and every
-  # profile extrudes into the solid instead of out of it — with the
-  # geometry otherwise correct, which is the hard kind of wrong.
-  throw "top" unless right_handed(plane: top())
-  throw "bottom" unless right_handed(plane: bottom())
-  throw "front" unless right_handed(plane: front())
-  throw "back" unless right_handed(plane: back())
-  throw "right" unless right_handed(plane: right())
-  throw "left" unless right_handed(plane: left())
 
 fn right_handed(plane Plane) bool
   let origin = to_world(plane: plane, point: Point(x: 0, y: 0))
@@ -167,3 +69,101 @@ fn right_handed(plane Plane) bool
     uy * vz - uz * vy == normal_x(plane: plane) and
     uz * vx - ux * vz == normal_y(plane: plane) and
     ux * vy - uy * vx == normal_z(plane: plane))
+
+test "a plane can be offset along its own normal"
+  # A sketch 50 microns above Top. The axes do not change — only where
+  # the origin sits — so a profile drawn on it is the same profile,
+  # somewhere else.
+  let raised = offset_by(plane: top(), distance: 50)
+  throw "z moved" unless plane_z(plane: raised, point: Point(x: 0, y: 0)) == 50
+  throw "x did not" unless plane_x(plane: raised, point: Point(x: 30, y: 40)) == 30
+  throw "y did not" unless plane_y(plane: raised, point: Point(x: 30, y: 40)) == 40
+  throw "the normal is unchanged" unless normal_z(plane: raised) == 1
+
+test "a plane's axes are perpendicular"
+  # What makes the mapping a rigid motion rather than a shear: a square
+  # drawn on the plane has to arrive as a square.
+  throw "top" unless perpendicular(plane: top())
+  throw "front" unless perpendicular(plane: front())
+  throw "right" unless perpendicular(plane: right())
+  throw "back" unless perpendicular(plane: back())
+
+test "a plane's axes preserve distance"
+  # One micron along the draft's x is one micron in the world. Without
+  # it, a circle of radius 10 would arrive as an ellipse.
+  throw "top" unless unit_axes(plane: top())
+  throw "front" unless unit_axes(plane: front())
+  throw "right" unless unit_axes(plane: right())
+  throw "left" unless unit_axes(plane: left())
+
+test "a point on the top plane keeps its x and y"
+  # The property that makes Top the default: drafting on it is drafting
+  # in world coordinates, so nothing surprising happens to the numbers.
+  let plane = top()
+  let there = to_world(plane: plane, point: Point(x: 30, y: 40))
+  throw "x" unless plane_x(plane: plane, point: Point(x: 30, y: 40)) == 30
+  throw "y" unless plane_y(plane: plane, point: Point(x: 30, y: 40)) == 40
+  throw "z" unless plane_z(plane: plane, point: Point(x: 30, y: 40)) == 0
+
+test "every standard plane has a unit normal"
+  # Unit, so a normal can be compared and negated without scaling. The
+  # six standard planes are axis-aligned, so their normals are exactly
+  # one unit along one axis — no square roots involved.
+  throw "top" unless unit(plane: top())
+  throw "bottom" unless unit(plane: bottom())
+  throw "front" unless unit(plane: front())
+  throw "back" unless unit(plane: back())
+  throw "right" unless unit(plane: right())
+  throw "left" unless unit(plane: left())
+
+test "offsetting front moves along y, not z"
+  # The test that catches an offset written against the world axes
+  # rather than the plane's own normal.
+  let out = offset_by(plane: front(), distance: 50)
+  throw "y moved, negatively" unless plane_y(plane: out, point: Point(x: 0, y: 0)) == 0 - 50
+  throw "z is still the draft's y" unless plane_z(plane: out, point: Point(x: 0, y: 40)) == 40
+
+test "offsetting the other way goes the other way"
+  let sunken = offset_by(plane: top(), distance: 0 - 50)
+  throw "below" unless plane_z(plane: sunken, point: Point(x: 0, y: 0)) == 0 - 50
+
+test "the axes and the normal form a right-handed frame"
+  # x cross y = normal, not its negative. Get this wrong and every
+  # profile extrudes into the solid instead of out of it — with the
+  # geometry otherwise correct, which is the hard kind of wrong.
+  throw "top" unless right_handed(plane: top())
+  throw "bottom" unless right_handed(plane: bottom())
+  throw "front" unless right_handed(plane: front())
+  throw "back" unless right_handed(plane: back())
+  throw "right" unless right_handed(plane: right())
+  throw "left" unless right_handed(plane: left())
+
+test "the front plane stands up"
+  # Front is the xz plane: a draft's y becomes world z, which is what
+  # makes a profile drawn on it extrude horizontally.
+  let plane = front()
+  throw "its normal is -y" unless normal_y(plane: plane) == 0 - 1
+  throw "a draft's x is still world x" unless plane_x(plane: plane, point: Point(x: 30, y: 40)) == 30
+  throw "a draft's y is world z" unless plane_z(plane: plane, point: Point(x: 30, y: 40)) == 40
+  throw "and world y is zero" unless plane_y(plane: plane, point: Point(x: 30, y: 40)) == 0
+
+test "the opposite planes face the other way"
+  # Bottom, back and left are the same planes seen from behind. Their
+  # normals are reversed, which is what makes a profile drawn on Bottom
+  # extrude downward rather than up.
+  throw "bottom is -z" unless normal_z(plane: bottom()) == 0 - 1
+  throw "back is +y" unless normal_y(plane: back()) == 1
+  throw "left is -x" unless normal_x(plane: left()) == 0 - 1
+
+test "the right plane faces along x"
+  let plane = right()
+  throw "its normal is +x" unless normal_x(plane: plane) == 1
+  throw "a draft's x is world y" unless plane_y(plane: plane, point: Point(x: 30, y: 40)) == 30
+  throw "a draft's y is world z" unless plane_z(plane: plane, point: Point(x: 30, y: 40)) == 40
+
+test "the top plane looks down the z axis"
+  # Top is the xy plane seen from above: x runs east, y runs north, and
+  # the normal points up at the viewer.
+  let plane = top()
+  throw "its normal is +z" unless normal_z(plane: plane) == 1
+  throw "and nothing else" unless normal_x(plane: plane) == 0 and normal_y(plane: plane) == 0

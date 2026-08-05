@@ -24,37 +24,37 @@ fn length_squared(l Line) i32
   let dy = l.to.y - l.from.y
   return dx * dx + dy * dy
 
-test "building and reading"
-  let p = Point(x: 1, y: 2)
-  throw "x should be 1" unless p.x == 1
-  throw "y should be 2" unless p.y == 2
-
-test "a shape as a result"
-  let o = origin()
-  throw "origin x should be 0" unless o.x == 0
-
 test "a shape as a parameter"
   let moved = move_right(p: Point(x: 1, y: 5), by: 3)
   throw "x should have moved" unless moved.x == 4
   throw "y should not have moved" unless moved.y == 5
 
-test "shapes nest"
-  let l = Line(from: Point(x: 0, y: 0), to: Point(x: 3, y: 4))
-  throw "the far x should be 3" unless l.to.x == 3
-  throw "the near y should be 0" unless l.from.y == 0
+test "a shape as a result"
+  let o = origin()
+  throw "origin x should be 0" unless o.x == 0
 
-test "field access chains"
-  let l = Line(from: Point(x: 1, y: 2), to: Point(x: 3, y: 4))
-  throw "chained access should reach the leaf" unless l.from.x + l.to.y == 5
+test "a shape in an expression"
+  throw "the squared length should be 25" unless length_squared(l: Line(from: Point(x: 0, y: 0), to: Point(x: 3, y: 4))) == 25
 
 test "a shape of bools"
   let f = Flags(ready: true, done: false)
   throw "ready should hold" unless f.ready
   throw "done should not hold" if f.done
 
-test "a shape in an expression"
-  throw "the squared length should be 25" unless length_squared(l: Line(from: Point(x: 0, y: 0), to: Point(x: 3, y: 4))) == 25
+test "building and reading"
+  let p = Point(x: 1, y: 2)
+  throw "x should be 1" unless p.x == 1
+  throw "y should be 2" unless p.y == 2
 
 test "construction inside construction"
   let l = Line(from: origin(), to: move_right(p: origin(), by: 7))
   throw "the far point should have moved" unless l.to.x == 7
+
+test "field access chains"
+  let l = Line(from: Point(x: 1, y: 2), to: Point(x: 3, y: 4))
+  throw "chained access should reach the leaf" unless l.from.x + l.to.y == 5
+
+test "shapes nest"
+  let l = Line(from: Point(x: 0, y: 0), to: Point(x: 3, y: 4))
+  throw "the far x should be 3" unless l.to.x == 3
+  throw "the near y should be 0" unless l.from.y == 0

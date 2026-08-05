@@ -21,15 +21,15 @@ test "a binding is visible to the ones after it"
   let c = b + a
   throw "c should be 8" unless c == 8
 
-test "bindings in a test do not leak into a function"
-  let n = 99
-  throw "chain() should be 3" unless chain() == 3
+test "a parameter can be read more than once"
+  throw "uses_parameter_twice(n: 4) should be 8" unless uses_parameter_twice(n: 4) == 8
 
 test "a parameter can be shadowed"
   throw "shadow_parameter(n: 5) should be 10" unless shadow_parameter(n: 5) == 10
 
-test "a parameter can be read more than once"
-  throw "uses_parameter_twice(n: 4) should be 8" unless uses_parameter_twice(n: 4) == 8
+test "bindings in a test do not leak into a function"
+  let n = 99
+  throw "chain() should be 3" unless chain() == 3
 
 test "each test has its own bindings"
   let x = 1

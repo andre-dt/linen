@@ -3,11 +3,70 @@
 
 from 'linen:brep' use Body, empty_body, add_vertex, add_edge, add_coedge, add_loop, extend_loop, add_face, vertex_count, edge_count, face_count, loop_count, coedge_count, vertex_x, vertex_y, vertex_z, edge_from, edge_to, coedge_start, coedge_end, loop_size, loop_coedge, face_outer, face_a, release
 
-test "an empty body has nothing in it"
+# One triangular face: the smallest thing with a closed loop.
+fn triangle_body() Body
   let body = empty_body()
-  throw "no vertices" unless vertex_count(body: body) == 0
-  throw "no faces" unless face_count(body: body) == 0
+  let a = add_vertex(body: body, x: 0, y: 0, z: 0)
+  let b = add_vertex(body: body, x: 100, y: 0, z: 0)
+  let c = add_vertex(body: body, x: 0, y: 100, z: 0)
+
+  let ab = add_edge(body: body, from: a, to: b)
+  let bc = add_edge(body: body, from: b, to: c)
+  let ca = add_edge(body: body, from: c, to: a)
+
+  let ring = add_loop(body: body)
+  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: ab, forward: true))
+  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: bc, forward: true))
+  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: ca, forward: true))
+
+  let face = add_face(body: body, outer: ring, a: a, b: b, c: c)
+  return body
+
+test "a coedge traverses its edge in a direction"
+  # The property that makes a coedge worth having. The same edge, used
+  # by two faces, is walked in opposite directions — so both loops wind
+  # counter-clockwise seen from outside their own face.
+  let body = empty_body()
+  let a = add_vertex(body: body, x: 0, y: 0, z: 0)
+  let b = add_vertex(body: body, x: 100, y: 0, z: 0)
+  let e = add_edge(body: body, from: a, to: b)
+  let forward = add_coedge(body: body, edge: e, forward: true)
+  let backward = add_coedge(body: body, edge: e, forward: false)
+
+  throw "the forward one starts at the edge's from" unless coedge_start(body: body, index: forward) == 0
+  throw "and ends at its to" unless coedge_end(body: body, index: forward) == 1
+  throw "the reversed one starts at the to" unless coedge_start(body: body, index: backward) == 1
+  throw "and ends at the from" unless coedge_end(body: body, index: backward) == 0
   release(body: body)
+
+test "a face names the loop and the plane"
+  let body = empty_body()
+  let ring = add_loop(body: body)
+  let face = add_face(body: body, outer: ring, a: 0, b: 1, c: 2)
+  throw "one face" unless face_count(body: body) == 1
+  throw "it bounds that loop" unless face_outer(body: body, index: face) == ring
+  throw "its plane starts at vertex 0" unless face_a(body: body, index: face) == 0
+  release(body: body)
+
+test "a loop holds its coedges in order"
+  let body = empty_body()
+  let ring = add_loop(body: body)
+  extend_loop(body: body, ring: ring, coedge: 7)
+  extend_loop(body: body, ring: ring, coedge: 8)
+  extend_loop(body: body, ring: ring, coedge: 9)
+  throw "three coedges" unless loop_size(body: body, ring: ring) == 3
+  throw "in the order given" unless loop_coedge(body: body, ring: ring, position: 1) == 8
+  release(body: body)
+
+test "a released body is gone"
+  # The handle model's one obligation. Nothing here is collected, so a
+  # body lives until this is called — and after it, the handle addresses
+  # nothing.
+  let body = empty_body()
+  add_vertex(body: body, x: 1, y: 2, z: 3)
+  throw "it had a vertex" unless vertex_count(body: body) == 1
+  release(body: body)
+  throw "and now it has none" unless vertex_count(body: body) == 0
 
 test "a vertex can be read back"
   let body = empty_body()
@@ -29,86 +88,11 @@ test "an edge names two vertices"
   throw "to the second" unless edge_to(body: body, index: e) == 1
   release(body: body)
 
-test "a coedge traverses its edge in a direction"
-  # The property that makes a coedge worth having. The same edge, used
-  # by two faces, is walked in opposite directions — so both loops wind
-  # counter-clockwise seen from outside their own face.
+test "an empty body has nothing in it"
   let body = empty_body()
-  let a = add_vertex(body: body, x: 0, y: 0, z: 0)
-  let b = add_vertex(body: body, x: 100, y: 0, z: 0)
-  let e = add_edge(body: body, from: a, to: b)
-  let forward = add_coedge(body: body, edge: e, forward: true)
-  let backward = add_coedge(body: body, edge: e, forward: false)
-
-  throw "the forward one starts at the edge's from" unless coedge_start(body: body, index: forward) == 0
-  throw "and ends at its to" unless coedge_end(body: body, index: forward) == 1
-  throw "the reversed one starts at the to" unless coedge_start(body: body, index: backward) == 1
-  throw "and ends at the from" unless coedge_end(body: body, index: backward) == 0
+  throw "no vertices" unless vertex_count(body: body) == 0
+  throw "no faces" unless face_count(body: body) == 0
   release(body: body)
-
-test "a loop holds its coedges in order"
-  let body = empty_body()
-  let ring = add_loop(body: body)
-  extend_loop(body: body, ring: ring, coedge: 7)
-  extend_loop(body: body, ring: ring, coedge: 8)
-  extend_loop(body: body, ring: ring, coedge: 9)
-  throw "three coedges" unless loop_size(body: body, ring: ring) == 3
-  throw "in the order given" unless loop_coedge(body: body, ring: ring, position: 1) == 8
-  release(body: body)
-
-test "a face names the loop and the plane"
-  let body = empty_body()
-  let ring = add_loop(body: body)
-  let face = add_face(body: body, outer: ring, a: 0, b: 1, c: 2)
-  throw "one face" unless face_count(body: body) == 1
-  throw "it bounds that loop" unless face_outer(body: body, index: face) == ring
-  throw "its plane starts at vertex 0" unless face_a(body: body, index: face) == 0
-  release(body: body)
-
-test "two bodies do not share anything"
-  # The property a registry of handles has to have, and the one that
-  # would be easy to get wrong: an index is only meaningful inside its
-  # own body.
-  let first = empty_body()
-  let second = empty_body()
-  let x = add_vertex(body: first, x: 1, y: 2, z: 3)
-  throw "both start at index 0" unless x == 0
-  throw "the first has one vertex" unless vertex_count(body: first) == 1
-  throw "the second still has none" unless vertex_count(body: second) == 0
-  release(body: first)
-  release(body: second)
-
-test "the topology of a triangle closes"
-  let body = triangle_body()
-  throw "three coedges in the loop" unless loop_size(body: body, ring: 0) == 3
-
-  let first = loop_coedge(body: body, ring: 0, position: 0)
-  let second = loop_coedge(body: body, ring: 0, position: 1)
-  let third = loop_coedge(body: body, ring: 0, position: 2)
-
-  throw "the first ends where the second begins" unless coedge_end(body: body, index: first) == coedge_start(body: body, index: second)
-  throw "the second ends where the third begins" unless coedge_end(body: body, index: second) == coedge_start(body: body, index: third)
-  throw "the third closes the circuit" unless coedge_end(body: body, index: third) == coedge_start(body: body, index: first)
-  release(body: body)
-
-# One triangular face: the smallest thing with a closed loop.
-fn triangle_body() Body
-  let body = empty_body()
-  let a = add_vertex(body: body, x: 0, y: 0, z: 0)
-  let b = add_vertex(body: body, x: 100, y: 0, z: 0)
-  let c = add_vertex(body: body, x: 0, y: 100, z: 0)
-
-  let ab = add_edge(body: body, from: a, to: b)
-  let bc = add_edge(body: body, from: b, to: c)
-  let ca = add_edge(body: body, from: c, to: a)
-
-  let ring = add_loop(body: body)
-  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: ab, forward: true))
-  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: bc, forward: true))
-  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: ca, forward: true))
-
-  let face = add_face(body: body, outer: ring, a: a, b: b, c: c)
-  return body
 
 test "every coordinate of a vertex survives the boundary"
   # The one that found a real bug, and would have been missed by
@@ -126,16 +110,6 @@ test "every coordinate of a vertex survives the boundary"
   throw "z, at the top of the range" unless vertex_z(body: body, index: 0) == 10000000
   release(body: body)
 
-test "a released body is gone"
-  # The handle model's one obligation. Nothing here is collected, so a
-  # body lives until this is called — and after it, the handle addresses
-  # nothing.
-  let body = empty_body()
-  add_vertex(body: body, x: 1, y: 2, z: 3)
-  throw "it had a vertex" unless vertex_count(body: body) == 1
-  release(body: body)
-  throw "and now it has none" unless vertex_count(body: body) == 0
-
 test "handles are not reused"
   # A handle released and then used again must not silently address a
   # different body. Ids only ever go up.
@@ -145,4 +119,30 @@ test "handles are not reused"
   add_vertex(body: second, x: 9, y: 9, z: 9)
   throw "the dead handle stays dead" unless vertex_count(body: first) == 0
   throw "the live one is its own" unless vertex_count(body: second) == 1
+  release(body: second)
+
+test "the topology of a triangle closes"
+  let body = triangle_body()
+  throw "three coedges in the loop" unless loop_size(body: body, ring: 0) == 3
+
+  let first = loop_coedge(body: body, ring: 0, position: 0)
+  let second = loop_coedge(body: body, ring: 0, position: 1)
+  let third = loop_coedge(body: body, ring: 0, position: 2)
+
+  throw "the first ends where the second begins" unless coedge_end(body: body, index: first) == coedge_start(body: body, index: second)
+  throw "the second ends where the third begins" unless coedge_end(body: body, index: second) == coedge_start(body: body, index: third)
+  throw "the third closes the circuit" unless coedge_end(body: body, index: third) == coedge_start(body: body, index: first)
+  release(body: body)
+
+test "two bodies do not share anything"
+  # The property a registry of handles has to have, and the one that
+  # would be easy to get wrong: an index is only meaningful inside its
+  # own body.
+  let first = empty_body()
+  let second = empty_body()
+  let x = add_vertex(body: first, x: 1, y: 2, z: 3)
+  throw "both start at index 0" unless x == 0
+  throw "the first has one vertex" unless vertex_count(body: first) == 1
+  throw "the second still has none" unless vertex_count(body: second) == 0
+  release(body: first)
   release(body: second)

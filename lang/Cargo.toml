@@ -20,7 +20,7 @@
 
 [workspace]
 resolver = "2"
-members = ["crates/syntax", "crates/runtime", "crates/compile", "crates/draw", "crates/cli"]
+members = ["crates/syntax", "crates/runtime", "crates/compile", "crates/draw", "crates/format", "crates/cli"]
 
 [workspace.package]
 edition = "2021"
@@ -31,6 +31,7 @@ syntax = { path = "crates/syntax" }
 compile = { path = "crates/compile" }
 runtime = { path = "crates/runtime" }
 draw = { path = "crates/draw" }
+format = { path = "crates/format" }
 
 # LLVM 18, linked through inkwell. The version is pinned to the one the
 # system provides: inkwell picks its LLVM by cargo feature, so a mismatch

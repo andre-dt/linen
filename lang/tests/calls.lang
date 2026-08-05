@@ -25,6 +25,33 @@ fn describe(n i32) i32
   let plus_one = doubled + 1
   return plus_one
 
+test "a call as an argument"
+  throw "double(n: double(n: 3)) should be 12" unless double(n: double(n: 3)) == 12
+  throw "add(a: double(n: 2), b: double(n: 3)) should be 10" unless add(a: double(n: 2), b: double(n: 3)) == 10
+
+test "a call inside a comparison"
+  throw "double(n: 3) should be 6" unless double(n: 3) == 6
+  throw "double(n: 3) should be more than 5" unless double(n: 3) > 5
+
+test "a call inside arithmetic"
+  throw "double(n: 3) + 1 should be 7" unless double(n: 3) + 1 == 7
+  throw "1 + double(n: 3) should be 7" unless 1 + double(n: 3) == 7
+  throw "double(n: 3) * double(n: 2) should be 24" unless double(n: 3) * double(n: 2) == 24
+
+test "a function that calls another"
+  throw "quadruple(n: 3) should be 12" unless quadruple(n: 3) == 12
+
+test "a function with several statements"
+  throw "describe(n: 5) should be 11" unless describe(n: 5) == 11
+
+test "an expression as an argument"
+  throw "double(n: 1 + 2) should be 6" unless double(n: 1 + 2) == 6
+  throw "add(a: 1 + 1, b: 2 * 2) should be 6" unless add(a: 1 + 1, b: 2 * 2) == 6
+
+test "arguments are evaluated in order they are written"
+  throw "add(a: 1, b: 2) should be 3" unless add(a: 1, b: 2) == 3
+  throw "add(a: 2, b: 1) should be 3" unless add(a: 2, b: 1) == 3
+
 test "no arguments"
   throw "constant() should be 42" unless constant() == 42
 
@@ -35,30 +62,3 @@ test "one argument"
 test "several arguments"
   throw "add(a: 20, b: 22) should be 42" unless add(a: 20, b: 22) == 42
   throw "add_three(a: 1, b: 2, c: 3) should be 6" unless add_three(a: 1, b: 2, c: 3) == 6
-
-test "a call as an argument"
-  throw "double(n: double(n: 3)) should be 12" unless double(n: double(n: 3)) == 12
-  throw "add(a: double(n: 2), b: double(n: 3)) should be 10" unless add(a: double(n: 2), b: double(n: 3)) == 10
-
-test "a call inside arithmetic"
-  throw "double(n: 3) + 1 should be 7" unless double(n: 3) + 1 == 7
-  throw "1 + double(n: 3) should be 7" unless 1 + double(n: 3) == 7
-  throw "double(n: 3) * double(n: 2) should be 24" unless double(n: 3) * double(n: 2) == 24
-
-test "a call inside a comparison"
-  throw "double(n: 3) should be 6" unless double(n: 3) == 6
-  throw "double(n: 3) should be more than 5" unless double(n: 3) > 5
-
-test "an expression as an argument"
-  throw "double(n: 1 + 2) should be 6" unless double(n: 1 + 2) == 6
-  throw "add(a: 1 + 1, b: 2 * 2) should be 6" unless add(a: 1 + 1, b: 2 * 2) == 6
-
-test "a function that calls another"
-  throw "quadruple(n: 3) should be 12" unless quadruple(n: 3) == 12
-
-test "a function with several statements"
-  throw "describe(n: 5) should be 11" unless describe(n: 5) == 11
-
-test "arguments are evaluated in order they are written"
-  throw "add(a: 1, b: 2) should be 3" unless add(a: 1, b: 2) == 3
-  throw "add(a: 2, b: 1) should be 3" unless add(a: 2, b: 1) == 3

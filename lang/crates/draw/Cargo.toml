@@ -14,3 +14,8 @@
 name = "draw"
 edition.workspace = true
 version.workspace = true
+
+[dependencies]
+fontdb = "0.24.0"
+rustybuzz = "0.20.1"
+swash = "0.2.10"
