@@ -123,6 +123,15 @@ fn allocate(bytes: usize) -> *mut u8 {
     ARENA.with(|arena| arena.borrow_mut().allocate(bytes))
 }
 
+/// Arena space, for the drivers.
+///
+/// The same allocator the language's own lists use, so a list a driver
+/// built dies with the same reset — there is no second lifetime to
+/// reason about.
+pub fn allocate_bytes(bytes: usize) -> *mut u8 {
+    allocate(bytes.max(1))
+}
+
 // =====================================================================
 // what the compiled code calls
 // =====================================================================
@@ -194,6 +203,38 @@ thread_local! {
 /// The out-of-range read since `take_fault` was last called, if any.
 pub fn take_fault() -> Option<String> {
     FAULT.with(|fault| fault.borrow_mut().take())
+}
+
+/// Records an out-of-range read without producing a value.
+fn record_fault(index: i64, length: i64) {
+    FAULT.with(|fault| {
+        let mut fault = fault.borrow_mut();
+        // The FIRST fault, not the last. Later ones are usually
+        // consequences of it.
+        if fault.is_none() {
+            *fault = Some(format!("read element {index} of {length}"));
+        }
+    });
+}
+
+/// `xs[i]` where `i` is outside the array — checked in the generated
+/// code, reported here.
+///
+/// Returns the index to use: the original when it is in range, and zero
+/// otherwise. Clamping rather than failing, because this is called
+/// across the C ABI where a panic is undefined behaviour — and the
+/// fault is already recorded, so the test fails with a name attached
+/// however the read turns out.
+///
+/// An ARRAY knows its size at compile time, so the bound is a constant
+/// the emitter passes in rather than something read from a header.
+#[no_mangle]
+pub extern "C" fn linen_check_index(index: i64, length: i64) -> i64 {
+    if index < 0 || index >= length {
+        record_fault(index, length);
+        return 0;
+    }
+    index
 }
 
 /// `at(list:, index:)` — a pointer to the element.

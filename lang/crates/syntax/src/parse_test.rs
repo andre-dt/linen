@@ -209,7 +209,7 @@ fn rejects_an_unknown_statement() {
 #[test]
 fn rejects_a_stray_top_level_statement() {
     let message = error("let x = 5\n");
-    assert!(message.contains("`fn`, `export fn`, `shape` or `test`"), "got: {message}");
+    assert!(message.contains("at the top level"), "got: {message}");
 }
 
 // --- naming ---------------------------------------------------------------

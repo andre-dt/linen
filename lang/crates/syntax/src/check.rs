@@ -354,16 +354,132 @@ pub fn check(unit: &Unit) -> Result<(), CheckError> {
 /// Two functions sharing a name compiles today and one of them wins,
 /// which makes the other dead code that reads as live — and a reader has
 /// no way to tell which one a call reaches.
+/// What a driver may take and give across the C ABI.
+///
+/// Integers and handles only. An aggregate — a shape, an array, a list
+/// — has a LAYOUT, and passing one makes that layout a contract between
+/// the generated code and the Rust on the other side. Getting it wrong
+/// is not a crash: it is the wrong bytes, silently.
+///
+/// This is not hypothetical. `driver fn vertex_at(...) Vertex` returning
+/// three i32s compiled, linked and ran, and lost two of the three
+/// fields — a 12-byte aggregate returns through a hidden pointer on
+/// SysV, and the generated code returned it by value. The FIRST field
+/// was still correct, so a test that checked only `x` passed.
+///
+/// A `List` is worse: it carries a pointer into an arena the other side
+/// does not own.
+///
+/// So the rule is enforced rather than documented. A driver that needs
+/// to give back three coordinates gives back three integers.
+fn check_driver_boundary(
+    function: &Function,
+    program: &Program,
+) -> Result<(), CheckError> {
+    if !function.driver {
+        return Ok(());
+    }
+    if let Some(result) = &function.result {
+        let of = program.type_of_written(result)?;
+        if !crosses(of, program) {
+            return Err(CheckError {
+                message: format!(
+                    "`{}` is a driver, so what it returns crosses the boundary into Rust;                      {} has a layout and cannot cross — give back integers instead",
+                    function.name,
+                    program.name_of(of)
+                ),
+                span: result.span,
+            });
+        }
+    }
+    for parameter in &function.parameters {
+        let of = program.type_of_parameter(parameter)?;
+        if !crosses(of, program) {
+            return Err(CheckError {
+                message: format!(
+                    "`{}` of `{}` crosses the boundary into Rust, and {} has a layout                      that cannot cross — pass integers instead",
+                    parameter.name,
+                    function.name,
+                    program.name_of(of)
+                ),
+                span: parameter.span,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Whether a value of this type may cross to a driver.
+///
+/// Integers; shapes of exactly one integer field; and `List`.
+///
+/// THE HANDLE. `shape Body { id i32 }` is an i32 wearing a name, and
+/// every ABI passes a one-word struct the way it passes the word. It
+/// earns its exception by being what lets a body cross at all without
+/// its layout becoming a contract.
+///
+/// Two fields is where a user-written shape stops. `Vertex`, at three
+/// i32s, is the case that broke: 12 bytes lands in SysV's MEMORY class
+/// and returns through a hidden pointer, so returning it by value lost
+/// everything after the first field — silently.
+///
+/// LIST IS DIFFERENT, and the difference is who writes it. A `List` is
+/// `{i32 length, T* elements}`, and BOTH sides of it are emitted by
+/// this compiler: the IR here and the arena in Rust are one decision
+/// made once. A user-written shape has no such guarantee — its layout
+/// is whatever the two sides each assumed.
+///
+/// That is the line. Not "which layouts happen to work on this
+/// platform" — I cannot encode SysV's classification rules here and
+/// have them mean anything on another target — but "who is responsible
+/// for the layout". The compiler may promise; a declaration may not.
+fn crosses(of: Type, program: &Program) -> bool {
+    match of {
+        Type::I32 | Type::I64 | Type::Bool => true,
+        Type::List(_) => true,
+        Type::Shape(index) => program
+            .names
+            .get(index)
+            .and_then(|name| program.shapes.get(name))
+            .is_some_and(|shape| {
+                shape.fields.len() == 1 && shape.fields[0].1.is_integer()
+            }),
+        _ => false,
+    }
+}
+
 fn check_names(unit: &Unit) -> Result<(), CheckError> {
+    // Two tests with the same name.
+    //
+    // Prose, but prose that has to IDENTIFY: a test's name is how a
+    // failure is reported, so two of them make a failure ambiguous —
+    // the runner names one and the reader goes and looks at the other.
+    let mut named: Vec<&str> = Vec::new();
+    for item in &unit.items {
+        let Item::Test(test) = item else {
+            continue;
+        };
+        if named.contains(&test.name.as_str()) {
+            return Err(CheckError {
+                message: format!("two tests are called \"{}\"", test.name),
+                span: test.span,
+            });
+        }
+        named.push(&test.name);
+    }
+
     let mut seen: Vec<(&str, &'static str)> = Vec::new();
     for item in &unit.items {
         let (name, what, span) = match item {
             Item::Function(function) => (function.name.as_str(), "function", function.span),
             Item::Shape(shape) => (shape.name.as_str(), "shape", shape.span),
-            // A test's name is prose, not an identifier: two tests may
-            // reasonably describe themselves the same way, and nothing
-            // refers to a test by name.
+            // A test's name is prose rather than an identifier, so it
+            // is checked separately below — against other tests only.
             Item::Test(_) => continue,
+            // Imports name nothing of their own: by the time checking
+            // runs, the loader has already merged the imported items in
+            // as if they had been written here.
+            Item::Import(_) => continue,
         };
         if let Some((_, first)) = seen.iter().find(|(other, _)| *other == name) {
             return Err(CheckError {
@@ -414,9 +530,32 @@ fn check_against(unit: &Unit, program: &Program) -> Result<(), CheckError> {
     // The bodies, now that every signature is known.
     for item in &unit.items {
         match item {
+            Item::Import(_) => {}
             Item::Function(function) => {
+                check_driver_boundary(function, program)?;
+
                 let mut scope: Vec<(String, Type)> = Vec::new();
                 for parameter in &function.parameters {
+                    // A default has to be the type it is defaulting.
+                    // `fn f(a i32 = true)` gives the same function two
+                    // types, depending on whether the caller wrote the
+                    // argument.
+                    if let Some(default) = &parameter.default {
+                        let declared = program.type_of_parameter(parameter)?;
+                        let given = check_expression(default, &Vec::new(), program)?;
+                        if !assignable(given, declared) && !lists_agree(given, declared, program) {
+                            return Err(CheckError {
+                                message: format!(
+                                    "`{}` is {}, but its default is {}",
+                                    parameter.name,
+                                    program.name_of(declared),
+                                    program.name_of(given)
+                                ),
+                                span: default.span(),
+                            });
+                        }
+                        literal_fits(default, declared)?;
+                    }
                     scope.push((
                         parameter.name.clone(),
                         program.type_of_parameter(parameter)?,
@@ -428,7 +567,11 @@ fn check_against(unit: &Unit, program: &Program) -> Result<(), CheckError> {
                 };
                 check_body(&function.body, &mut scope, expected, program)?;
 
-                if expected.is_some() && !always_returns(&function.body) {
+                // A driver has no body to walk: the implementation is
+                // Rust, and returning is its problem. The signature is
+                // still checked — that is the whole reason it is written
+                // in the language rather than only in the Rust.
+                if !function.driver && expected.is_some() && !always_returns(&function.body) {
                     return Err(CheckError {
                         message: format!(
                             "`{}` can end without returning, but it declares a result",
@@ -634,6 +777,84 @@ fn check_list_builtin(
     }
 }
 
+/// A call's arguments, checked against the declaration; the result type
+/// comes back for the caller to require or discard.
+///
+/// Shared by the expression form, which needs a result, and the
+/// statement form, which does not. One copy of the argument rules, so
+/// the two forms cannot drift.
+fn check_arguments(
+    callee: &str,
+    arguments: &[FieldValue],
+    span: Span,
+    scope: &Scope,
+    program: &Program,
+) -> Result<Option<Type>, CheckError> {
+    // resolve.rs already matched names, order and completeness, so this
+    // only has to agree on types.
+    let signature = program.functions.get(callee).ok_or_else(|| CheckError {
+        message: format!("there is no `{callee}` here"),
+        span,
+    })?;
+    for argument in arguments {
+        let found = check_expression(&argument.value, scope, program)?;
+        let expected = signature
+            .parameters
+            .iter()
+            .find(|(name, _)| *name == argument.name)
+            .map(|(_, type_of)| *type_of)
+            .ok_or_else(|| CheckError {
+                message: format!("`{callee}` has no parameter called `{}`", argument.name),
+                span: argument.span,
+            })?;
+        if !assignable(found, expected) && !lists_agree(found, expected, program) {
+            return Err(CheckError {
+                message: format!(
+                    "`{}` is {}, but this is {}",
+                    argument.name,
+                    program.name_of(expected),
+                    program.name_of(found)
+                ),
+                span: argument.value.span(),
+            });
+        }
+        literal_fits(&argument.value, expected)?;
+    }
+    Ok(signature.result)
+}
+
+/// A call whose result is discarded: the arguments must be right, but
+/// there need not be a result at all.
+///
+/// Shares `check_expression` for everything except that last step —
+/// which is the only difference between the two forms, and a second
+/// copy of the argument rules would be a second place for them to
+/// drift.
+fn check_call_arguments(
+    call: &Expression,
+    scope: &Scope,
+    program: &Program,
+) -> Result<(), CheckError> {
+    let Expression::Call { callee, arguments, span } = call else {
+        return Err(CheckError {
+            message: "only a call can stand alone as a statement".to_string(),
+            span: call.span(),
+        });
+    };
+    // A builtin always produces a value, so the ordinary path is right
+    // for it — and discarding what it produced is the caller's business.
+    if is_list_builtin(callee) {
+        check_expression(call, scope, program)?;
+        return Ok(());
+    }
+
+    // The arguments, by the same rules a call expression uses. The
+    // result is simply not asked for, which is the entire difference
+    // between the two forms.
+    check_arguments(callee, arguments, *span, scope, program)?;
+    Ok(())
+}
+
 /// The builtin a drawing test calls to hand over its mesh.
 pub const SOLID: &str = "solid";
 
@@ -646,6 +867,7 @@ pub const SOLID: &str = "solid";
 /// once it is clipped.
 fn check_solid(
     arguments: &[FieldValue],
+    kind: MeshKind,
     span: Span,
     scope: &Scope,
     program: &Program,
@@ -667,8 +889,9 @@ fn check_solid(
             _ => {
                 return Err(CheckError {
                     message: format!(
-                        "`{}` of `solid` is numbers, as an array or a list, but this is {}",
+                        "`{}` of `{}` is numbers, as an array or a list, but this is {}",
                         argument.name,
+                        kind.keyword(),
                         program.name_of(of)
                     ),
                     span: argument.value.span(),
@@ -678,8 +901,9 @@ fn check_solid(
         if !element.is_integer() {
             return Err(CheckError {
                 message: format!(
-                    "`{}` of `solid` holds numbers, but this array holds {}",
+                    "`{}` of `{}` holds numbers, but this array holds {}",
                     argument.name,
+                    kind.keyword(),
                     program.name_of(element)
                 ),
                 span: argument.value.span(),
@@ -688,10 +912,10 @@ fn check_solid(
         seen.push(argument.name.as_str());
     }
 
-    for wanted in ["points", "triangles"] {
+    for wanted in ["points", kind.indices()] {
         if !seen.contains(&wanted) {
             return Err(CheckError {
-                message: format!("`solid` needs `{wanted}`"),
+                message: format!("`{}` needs `{wanted}`", kind.keyword()),
                 span,
             });
         }
@@ -734,6 +958,7 @@ fn program_of(unit: &Unit) -> Result<Program, CheckError> {
     };
     for item in &unit.items {
         match item {
+            Item::Import(_) => {}
             Item::Shape(shape) => {
                 let mut fields = Vec::new();
                 for field in &shape.fields {
@@ -777,6 +1002,7 @@ pub fn type_of_binding(unit: &Unit, wanted: &str) -> Result<Type, CheckError> {
             Item::Function(function) => (&function.body, Some(&function.parameters)),
             Item::Test(test) => (&test.body, None),
             Item::Shape(_) => continue,
+            Item::Import(_) => continue,
         };
         let program = program_of(unit)?;
         let mut scope: Scope = Vec::new();
@@ -883,6 +1109,22 @@ fn check_body(
 ) -> Result<(), CheckError> {
     let depth = scope.len();
     for statement in statements {
+        // Two `let x` in ONE block. The second silently shadows the
+        // first, so half the reads in a function see one value and half
+        // the other, with nothing in the text marking where it changed.
+        //
+        // Only within this block: a nested scope binding the same name
+        // is real shadowing and stays. A loop body's `let` is a new
+        // binding each iteration, which is precisely why carrying a
+        // value through a loop means carrying it through a call.
+        if let Statement::Let { name, span, .. } = statement {
+            if scope[depth..].iter().any(|(bound, _)| bound == name) {
+                return Err(CheckError {
+                    message: format!("`{name}` is already bound in this block"),
+                    span: *span,
+                });
+            }
+        }
         check_statement(statement, scope, result, program)?;
     }
     // Everything bound inside the block leaves with it.
@@ -900,6 +1142,14 @@ fn check_statement(
         Statement::Let { name, value, .. } => {
             let bound = check_expression(value, scope, program)?;
             scope.push((name.clone(), bound));
+        }
+
+        // A call for its effect. The arguments are checked exactly as
+        // an expression's are; what differs is that a result is not
+        // required — a function returning nothing has no other way to be
+        // called, and demanding one here would make it unreachable.
+        Statement::Call { call, .. } => {
+            check_call_arguments(call, scope, program)?;
         }
 
         Statement::Return { value, span } => match (value, result) {
@@ -969,8 +1219,8 @@ fn check_statement(
             scope.truncate(depth);
         }
 
-        Statement::Solid { arguments, span } => {
-            check_solid(arguments, *span, scope, program)?;
+        Statement::Solid { arguments, kind, span } => {
+            check_solid(arguments, *kind, *span, scope, program)?;
         }
 
         // The condition decides whether the test dies, so it has to be a
@@ -1089,37 +1339,8 @@ fn check_expression(
         }
 
         Expression::Call { callee, arguments, span } => {
-            // resolve.rs already matched names, order and completeness,
-            // so this only has to agree on types.
-            let signature = program.functions.get(callee).ok_or_else(|| CheckError {
-                message: format!("there is no `{callee}` here"),
-                span: *span,
-            })?;
-            for argument in arguments {
-                let found = check_expression(&argument.value, scope, program)?;
-                let expected = signature
-                    .parameters
-                    .iter()
-                    .find(|(name, _)| *name == argument.name)
-                    .map(|(_, type_of)| *type_of)
-                    .ok_or_else(|| CheckError {
-                        message: format!("`{callee}` has no parameter called `{}`", argument.name),
-                        span: argument.span,
-                    })?;
-                if !assignable(found, expected) && !lists_agree(found, expected, program) {
-                    return Err(CheckError {
-                        message: format!(
-                            "`{}` is {}, but this is {}",
-                            argument.name,
-                            program.name_of(expected),
-                            program.name_of(found)
-                        ),
-                        span: argument.value.span(),
-                    });
-                }
-                literal_fits(&argument.value, expected)?;
-            }
-            signature.result.ok_or_else(|| CheckError {
+            let result = check_arguments(callee, arguments, *span, scope, program)?;
+            result.ok_or_else(|| CheckError {
                 message: format!("`{callee}` returns nothing, so it has no value here"),
                 span: *span,
             })

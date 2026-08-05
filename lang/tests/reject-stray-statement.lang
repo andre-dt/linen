@@ -1,2 +1,2 @@
-#~ expected `fn`, `export fn`, `shape` or `test` at the top level
+#~ at the top level
 let x = 5

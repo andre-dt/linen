@@ -1,0 +1,116 @@
+# BREP — the header.
+#
+# Declarations only: types and function signatures, no bodies. The
+# implementation is `crates/compile/src/drivers/brep.rs`, compiled into
+# liblinen.a.
+#
+# This file is what the typechecker reads, so a call is checked against
+# a declaration rather than trusted — and the declaration is versioned
+# with the kernel, in the language it is called from, instead of living
+# only in the Rust.
+#
+# A BODY IS A HANDLE, NOT A VALUE
+# -------------------------------
+# `Body` is an i32: an index into a registry on the Rust side. It is not
+# a shape whose fields cross.
+#
+# A shape with five `List` fields crossing the C ABI would make its
+# layout — the `{i32, ptr}` of a List, and the padding around it — a
+# contract between the two sides, and getting it wrong is silent
+# corruption rather than a crash. This is the same decision the N-API
+# boundary already made: nothing aggregate crosses, only integers.
+#
+# The consequence is that a body has to be released. Nothing here is
+# garbage collected: `release` is explicit, and a body outlives the call
+# that built it until then.
+
+# A body, as a handle into the kernel's registry.
+shape Body
+  id i32
+
+
+# --- building -----------------------------------------------------------
+
+# An empty body: no vertices, no faces, nothing.
+driver fn empty_body() Body
+
+# Adds a vertex and returns its index.
+driver fn add_vertex(body Body, x i32, y i32, z i32) i32
+
+# Adds an edge between two vertices and returns its index.
+driver fn add_edge(body Body, from i32, to i32) i32
+
+# Adds a coedge — an edge as one face uses it — and returns its index.
+#
+# `forward` says whether this face traverses the edge from its `from` to
+# its `to`, or the other way. The two faces sharing an edge disagree
+# about this, which is precisely the point of a coedge existing.
+driver fn add_coedge(body Body, edge i32, forward bool) i32
+
+# Starts a loop and returns its index. Coedges are added to it after.
+driver fn add_loop(body Body) i32
+
+# Appends a coedge to a loop, in order.
+driver fn extend_loop(body Body, ring i32, coedge i32)
+
+# Adds a face bounded by a loop, lying in the plane of three of its own
+# vertices, and returns its index.
+driver fn add_face(body Body, outer i32, a i32, b i32, c i32) i32
+
+# --- reading ------------------------------------------------------------
+
+driver fn vertex_count(body Body) i32
+driver fn edge_count(body Body) i32
+driver fn coedge_count(body Body) i32
+driver fn loop_count(body Body) i32
+driver fn face_count(body Body) i32
+
+# A vertex, one coordinate at a time.
+#
+# NOT as a shape. A three-i32 struct returned by value crosses the SysV
+# ABI through a hidden pointer, and returning it directly loses two of
+# the three fields — silently, with `x` still correct, which is the
+# worst possible failure. It is exactly the corruption this file's
+# header warns about, and it took a test to find rather than a crash.
+#
+# Three calls where one would do. The alternative is a layout contract
+# between the two sides, and that is not a trade worth making for two
+# function calls.
+driver fn vertex_x(body Body, index i32) i32
+driver fn vertex_y(body Body, index i32) i32
+driver fn vertex_z(body Body, index i32) i32
+
+# The two ends of an edge.
+driver fn edge_from(body Body, index i32) i32
+driver fn edge_to(body Body, index i32) i32
+
+# Which edge a coedge uses, and which way it runs along it.
+driver fn coedge_edge(body Body, index i32) i32
+driver fn coedge_forward(body Body, index i32) bool
+
+# Where a coedge starts and ends, for the face that owns it.
+#
+# The whole reason a coedge exists: the same edge answers differently
+# depending on which face is asking.
+driver fn coedge_start(body Body, index i32) i32
+driver fn coedge_end(body Body, index i32) i32
+
+# How many coedges bound a loop, and which they are.
+driver fn loop_size(body Body, ring i32) i32
+driver fn loop_coedge(body Body, ring i32, position i32) i32
+
+# The loop a face is bounded by, and the three vertices naming its
+# plane.
+driver fn face_outer(body Body, index i32) i32
+driver fn face_a(body Body, index i32) i32
+driver fn face_b(body Body, index i32) i32
+driver fn face_c(body Body, index i32) i32
+
+# --- lifetime -----------------------------------------------------------
+
+# Throws away a body and everything in it.
+#
+# Explicit, because nothing here is collected. A body lives in a
+# registry on the Rust side until this is called, which is what lets a
+# handle outlive the call that built it.
+driver fn release(body Body)

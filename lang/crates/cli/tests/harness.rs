@@ -30,7 +30,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use compile::run::run_tests;
-use syntax::{check::check, lex::lex, parse::parse, resolve::resolve};
+use syntax::{check::check, resolve::resolve};
 
 /// Every .lang file in the suite.
 fn lang_files() -> Vec<PathBuf> {
@@ -52,9 +52,15 @@ fn lang_files() -> Vec<PathBuf> {
 /// Shapes and arrays are not typechecked yet, and the files that use
 /// them say so with `#!`. That marker is temporary scaffolding — see
 /// `not_typechecked_yet`.
-fn compile(source: &str) -> Result<(), String> {
-    let tokens = lex(source).map_err(|error| error.message)?;
-    let unit = parse(&tokens).map_err(|error| error.message)?;
+fn compile(file: &Path, source: &str) -> Result<(), String> {
+    // Loaded rather than parsed: a file may import others, and what has
+    // to be checked and run is the whole merged unit. Parsing this file
+    // alone would miss every name an import brought in.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src");
+    let unit = syntax::load::load(file, &root, &|path| {
+        fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))
+    })
+    .map_err(|error| error.message)?;
     resolve(&unit).map_err(|error| error.message)?;
     if not_typechecked_yet(source) {
         return Ok(());
@@ -104,7 +110,7 @@ fn every_file_does_what_it_says() {
         let source = fs::read_to_string(file).expect("should read");
         let name = name_of(file);
 
-        match (expected_message(&source), compile(&source)) {
+        match (expected_message(&source), compile(file, &source)) {
             // No marker: it has to compile.
             (None, Err(message)) => failures.push(format!("{name}: {message}")),
             (None, Ok(())) => {}
@@ -141,4 +147,68 @@ fn expected_message(source: &str) -> Option<String> {
 
 fn name_of(file: &Path) -> String {
     file.file_name().unwrap_or_default().to_string_lossy().to_string()
+}
+
+// =====================================================================
+// The archive a build produces has to be COMPLETE.
+//
+// `liblinen.a` once had `add_vertex`, `push` and `digits` undefined
+// while the runtime exported `linen_add_vertex`, `linen_list_push` and
+// `linen_digits`. Nothing said so: the JIT maps any name to any address,
+// so every test passed, and the mismatch only surfaced for whoever
+// tried to link the library.
+//
+// A library that only links for a caller who happens to supply its
+// missing half is not a library.
+// =====================================================================
+
+/// Every kernel symbol the archive references, it also defines.
+#[test]
+fn the_archive_defines_what_it_calls() {
+    let archive = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/liblinen.a");
+    if !archive.exists() {
+        // `linen build` has not run here. Not a failure: this asserts
+        // about an artifact, and its absence is not a wrong artifact.
+        return;
+    }
+
+    let listed = std::process::Command::new("nm")
+        .arg(&archive)
+        .output()
+        .expect("nm should run");
+    let listed = String::from_utf8_lossy(&listed.stdout);
+
+    let mut defined = std::collections::HashSet::new();
+    let mut referenced = std::collections::HashSet::new();
+    for line in listed.lines() {
+        let mut words = line.split_whitespace();
+        let (kind, name) = match (words.next(), words.next(), words.next()) {
+            // `U name` — referenced, no address.
+            (Some("U"), Some(name), None) => ("U", name),
+            // `<address> T name` — defined.
+            (Some(_), Some(kind), Some(name)) => (kind, name),
+            _ => continue,
+        };
+        // Only this kernel's own names. libc and Rust internals are
+        // resolved by whoever links, which is how it should be.
+        if !name.starts_with("linen_") {
+            continue;
+        }
+        match kind {
+            "U" => {
+                referenced.insert(name.to_string());
+            }
+            "T" | "t" | "D" | "d" | "B" | "b" => {
+                defined.insert(name.to_string());
+            }
+            _ => {}
+        }
+    }
+
+    let missing: Vec<&String> = referenced.difference(&defined).collect();
+    assert!(
+        missing.is_empty(),
+        "liblinen.a calls these and defines none of them: {missing:?}\n\
+         the runtime is missing from the archive, or a symbol name drifted"
+    );
 }

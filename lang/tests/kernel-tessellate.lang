@@ -1,346 +1,18 @@
-# TESSELLATION — the BREP turned into triangles.
+# TESSELLATION — the tests.
 #
-# The kernel's job, not the viewer's. A BREP says "this face is bounded
-# by this closed loop of coedges, lying in this plane"; a GPU draws
-# triangles and nothing else. Turning one into the other is geometry, and
-# geometry belongs to the kernel — the same body must tessellate the same
-# way on the server, in a test, and in an export, or the picture the user
-# validates is not the picture the kernel computed.
+# The implementation lives in `src/tessellate.lang`, which is the kernel
+# proper: what `linen build` compiles into liblinen.a and what the N-API
+# addon can reach. These are tests OVER it, not a second copy of it.
 #
-# WHY EAR CLIPPING
-# ----------------
-# A face's loop is a simple polygon in the face's own plane. Ear clipping
-# removes one triangle at a time from a corner that is convex and empty,
-# which is the only algorithm here that needs no arithmetic beyond the
-# exact predicates already written: `orient2d` decides convex, and
-# `orient2d` three times decides containment. No angles, no square roots,
-# no tolerance — an integer polygon triangulates exactly or not at all.
-#
-# WHY THE POLYGON IS IN 2D
-# ------------------------
-# A planar face is a 2D problem wearing 3D coordinates. Dropping the axis
-# in which the face's plane varies least keeps the projection
-# non-degenerate — a face standing straight up in z would collapse to a
-# line if x and y were kept blindly — and the sign of `orient2d` in the
-# kept plane still says the same thing about winding it said in 3D.
+# What stays here is the fixtures — the bodies and polygons the
+# assertions are made against. A box written out corner by corner is a
+# test's business, not the kernel's: the kernel's job is to COMPUTE one,
+# and until extrude exists the hand-written box is the oracle that
+# proves the tessellator right.
 
-shape Vertex
-  x i32
-  y i32
-  z i32
-
-shape Edge
-  from i32
-  to i32
-
-shape CoEdge
-  edge i32
-  forward bool
-
-shape Loop
-  coedges List<i32>
-
-shape Face
-  outer i32
-  a i32
-  b i32
-  c i32
-
-shape Body
-  vertices List<Vertex>
-  edges List<Edge>
-  coedges List<CoEdge>
-  loops List<Loop>
-  faces List<Face>
-
-# A point in the face's own plane, after the least-varying axis is
-# dropped. `where` is the index of the 3D vertex it came from, so a
-# triangle in 2D names vertices of the body.
-shape Flat
-  x i64
-  y i64
-  where i32
-
-fn wide(value i64) i128
-  return value + 0
-
-fn widen(value i32) i64
-  return value + 0
-
-# Back down to i32.
-#
-# Needed because arithmetic widens: `face * 4` is i64 even where `face`
-# is i32, and an i64 has no business being the element type of a list of
-# indices.
-fn narrow(value i64) i32
-  return value
-
-fn orient2d(ax i64, ay i64, bx i64, by i64, cx i64, cy i64) i128
-  return wide(value: bx - ax) * wide(value: cy - ay) - wide(value: by - ay) * wide(value: cx - ax)
-
-fn orient3d(a Vertex, b Vertex, c Vertex, d Vertex) i128
-  let bx = wide(value: b.x - a.x)
-  let by = wide(value: b.y - a.y)
-  let bz = wide(value: b.z - a.z)
-  let cx = wide(value: c.x - a.x)
-  let cy = wide(value: c.y - a.y)
-  let cz = wide(value: c.z - a.z)
-  let dx = wide(value: d.x - a.x)
-  let dy = wide(value: d.y - a.y)
-  let dz = wide(value: d.z - a.z)
-  return bx * (cy * dz - cz * dy) - by * (cx * dz - cz * dx) + bz * (cx * dy - cy * dx)
-
-fn vertex_of(body Body, index i32) Vertex
-  return at(list: body.vertices, index: index)
-
-fn edge_of(body Body, index i32) Edge
-  return at(list: body.edges, index: index)
-
-fn coedge_of(body Body, index i32) CoEdge
-  return at(list: body.coedges, index: index)
-
-fn loop_of(body Body, index i32) Loop
-  return at(list: body.loops, index: index)
-
-fn face_of(body Body, index i32) Face
-  return at(list: body.faces, index: index)
-
-fn coedge_start(body Body, index i32) i32
-  let coedge = coedge_of(body: body, index: index)
-  let edge = edge_of(body: body, index: coedge.edge)
-  return if coedge.forward then edge.from else edge.to
-
-# --- the plane's dominant axis ----------------------------------------
-
-fn absolute(value i128) i128
-  return if value < 0 then 0 - value else value
-
-# Which axis of the face's normal is largest, AND WHICH WAY IT POINTS.
-#
-# 0, 1, 2 for a normal pointing along plus x, y, z; 3, 4, 5 for minus.
-# The sign matters as much as the axis: dropping z is the same drop for a
-# face pointing up and one pointing down, but keeping (x, y) in the same
-# order for both reverses the winding of the second. The bottom face of a
-# box is exactly that case.
-#
-# The normal's components are the three 2x2 minors of the two edge
-# vectors — computed exactly, never normalised, because only their
-# comparison and their sign matter.
-fn dominant_axis(a Vertex, b Vertex, c Vertex) i32
-  let bx = wide(value: b.x - a.x)
-  let by = wide(value: b.y - a.y)
-  let bz = wide(value: b.z - a.z)
-  let cx = wide(value: c.x - a.x)
-  let cy = wide(value: c.y - a.y)
-  let cz = wide(value: c.z - a.z)
-  let sx = by * cz - bz * cy
-  let sy = bz * cx - bx * cz
-  let sz = bx * cy - by * cx
-  let nx = absolute(value: sx)
-  let ny = absolute(value: sy)
-  let nz = absolute(value: sz)
-  if nx >= ny and nx >= nz
-    return if sx < 0 then 3 else 0
-  if ny >= nz
-    return if sy < 0 then 4 else 1
-  return if sz < 0 then 5 else 2
-
-# The face's plane, as 2D. The dropped axis is the dominant one, and the
-# remaining two are kept in the order that preserves the winding: for a
-# face whose normal points along +x, (y, z) winds the same way (x, y)
-# does for a normal along +z.
-#
-# When the normal points the other way the same two axes are kept but
-# SWAPPED, which flips the 2D winding back — the mirror the projection
-# would otherwise introduce, undone.
-fn flatten(v Vertex, axis i32, index i32) Flat
-  if axis == 0
-    return Flat(x: widen(value: v.y), y: widen(value: v.z), where: index)
-  if axis == 1
-    return Flat(x: widen(value: v.z), y: widen(value: v.x), where: index)
-  if axis == 2
-    return Flat(x: widen(value: v.x), y: widen(value: v.y), where: index)
-  if axis == 3
-    return Flat(x: widen(value: v.z), y: widen(value: v.y), where: index)
-  if axis == 4
-    return Flat(x: widen(value: v.x), y: widen(value: v.z), where: index)
-  return Flat(x: widen(value: v.y), y: widen(value: v.x), where: index)
-
-test "a face lying in z drops z"
-  let axis = dominant_axis(
-    a: Vertex(x: 0, y: 0, z: 0),
-    b: Vertex(x: 100, y: 0, z: 0),
-    c: Vertex(x: 0, y: 100, z: 0))
-  throw "the normal points along z" unless axis == 2
-
-test "a face standing up in x drops x"
-  # The case that a blind (x, y) projection collapses to a line.
-  let axis = dominant_axis(
-    a: Vertex(x: 0, y: 0, z: 0),
-    b: Vertex(x: 0, y: 100, z: 0),
-    c: Vertex(x: 0, y: 0, z: 100))
-  throw "the normal points along x" unless axis == 0
-
-test "a slanted face picks its largest component"
-  let axis = dominant_axis(
-    a: Vertex(x: 0, y: 0, z: 0),
-    b: Vertex(x: 100, y: 0, z: 10),
-    c: Vertex(x: 0, y: 100, z: 10))
-  throw "z still dominates a gentle slope" unless axis == 2
-
-test "flattening keeps the winding"
-  # The property that makes the 2D predicate mean what the 3D one meant.
-  # A triangle winding counter-clockwise about its own normal must still
-  # wind positive after the drop, whichever axis went.
-  let a = Vertex(x: 0, y: 0, z: 0)
-  let b = Vertex(x: 0, y: 100, z: 0)
-  let c = Vertex(x: 0, y: 0, z: 100)
-  let axis = dominant_axis(a: a, b: b, c: c)
-  let fa = flatten(v: a, axis: axis, index: 0)
-  let fb = flatten(v: b, axis: axis, index: 1)
-  let fc = flatten(v: c, axis: axis, index: 2)
-  throw "the flattened triangle should wind positive" unless orient2d(ax: fa.x, ay: fa.y, bx: fb.x, by: fb.y, cx: fc.x, cy: fc.y) > 0
-
-# --- the face's polygon -----------------------------------------------
-
-# The face's loop, as a 2D polygon.
-#
-# Every coedge contributes its START vertex: walking the loop, each
-# coedge's end is the next one's start, so taking both would repeat every
-# point.
-fn polygon(body Body, face Face) List<Flat>
-  let ring = loop_of(body: body, index: face.outer)
-  let axis = dominant_axis(
-    a: vertex_of(body: body, index: face.a),
-    b: vertex_of(body: body, index: face.b),
-    c: vertex_of(body: body, index: face.c))
-  return gathering(body: body, ring: ring, axis: axis, from: 0, built: list())
-
-fn gathering(body Body, ring Loop, axis i32, from i32, built List<Flat>) List<Flat>
-  if from >= length(list: ring.coedges)
-    return built
-  let which = at(list: ring.coedges, index: from)
-  let index = coedge_start(body: body, index: which)
-  let point = flatten(v: vertex_of(body: body, index: index), axis: axis, index: index)
-  return gathering(body: body, ring: ring, axis: axis, from: from + 1, built: push(list: built, value: point))
-
-test "a triangular face gives a three-point polygon"
-  let body = triangle_body()
-  let points = polygon(body: body, face: face_of(body: body, index: 0))
-  throw "three coedges give three points, not six" unless length(list: points) == 3
-  throw "the first is the loop's first vertex" unless at(list: points, index: 0).where == 0
-  throw "then the second" unless at(list: points, index: 1).where == 1
-  throw "then the third" unless at(list: points, index: 2).where == 2
-
-# --- ear clipping ------------------------------------------------------
-
-# The signed double area of a polygon, exactly.
-#
-# Positive means counter-clockwise in the flattened plane. Doubled and
-# never halved, because half of an odd integer is not an integer, and
-# rounding here would be a lie about a value that is exact.
-fn double_area(points List<Flat>) i128
-  return summing(points: points, from: 0, total: wide(value: 0))
-
-fn summing(points List<Flat>, from i32, total i128) i128
-  if from >= length(list: points)
-    return total
-  let a = at(list: points, index: from)
-  let b = at(list: points, index: (from + 1) % length(list: points))
-  return summing(points: points, from: from + 1, total: total + wide(value: a.x) * wide(value: b.y) - wide(value: b.x) * wide(value: a.y))
-
-test "a square's area is its side squared"
-  let square = push(
-    list: push(
-      list: push(
-        list: push(list: list(), value: Flat(x: 0, y: 0, where: 0)),
-        value: Flat(x: 100, y: 0, where: 1)),
-      value: Flat(x: 100, y: 100, where: 2)),
-    value: Flat(x: 0, y: 100, where: 3))
-  throw "doubled, so twice 100 by 100" unless double_area(points: square) == 20000
-
-test "winding the other way flips the sign"
-  # How the tessellator knows a loop is an outer boundary rather than a
-  # hole, without measuring an angle.
-  let clockwise = push(
-    list: push(
-      list: push(
-        list: push(list: list(), value: Flat(x: 0, y: 0, where: 0)),
-        value: Flat(x: 0, y: 100, where: 1)),
-      value: Flat(x: 100, y: 100, where: 2)),
-    value: Flat(x: 100, y: 0, where: 3))
-  throw "the same square, wound the other way" unless double_area(points: clockwise) == 0 - 20000
-
-# Whether `p` is strictly inside the triangle a, b, c.
-#
-# Strictly: a point ON an edge is not inside. An ear whose triangle has
-# another vertex sitting exactly on its edge is still clippable — the
-# resulting triangles share that edge and tile the polygon without
-# overlap.
-fn inside(ax i64, ay i64, bx i64, by i64, cx i64, cy i64, px i64, py i64) bool
-  let first = orient2d(ax: ax, ay: ay, bx: bx, by: by, cx: px, cy: py)
-  let second = orient2d(ax: bx, ay: by, bx: cx, by: cy, cx: px, cy: py)
-  let third = orient2d(ax: cx, ay: cy, bx: ax, by: ay, cx: px, cy: py)
-  return first > 0 and second > 0 and third > 0
-
-test "a point in the middle is inside"
-  throw "the centre of a triangle" unless inside(ax: 0, ay: 0, bx: 100, by: 0, cx: 0, cy: 100, px: 20, py: 20)
-
-test "a point outside is outside"
-  throw "well clear of it" if inside(ax: 0, ay: 0, bx: 100, by: 0, cx: 0, cy: 100, px: 90, py: 90)
-
-test "a point exactly on an edge is not inside"
-  # Exact, because the coordinates are integers: the midpoint of an edge
-  # between integer points either is or is not on the edge, and there is
-  # no tolerance to tune.
-  throw "the midpoint of the base" if inside(ax: 0, ay: 0, bx: 100, by: 0, cx: 0, cy: 100, px: 50, py: 0)
-
-# Whether the corner at `at` is an ear: convex, and containing no other
-# vertex of the polygon.
-fn is_ear(points List<Flat>, at_index i32) bool
-  let count = length(list: points)
-  let a = at(list: points, index: (at_index + count - 1) % count)
-  let b = at(list: points, index: at_index)
-  let c = at(list: points, index: (at_index + 1) % count)
-  if orient2d(ax: a.x, ay: a.y, bx: b.x, by: b.y, cx: c.x, cy: c.y) <= 0
-    return false
-  return empty(points: points, at_index: at_index, ax: a.x, ay: a.y, bx: b.x, by: b.y, cx: c.x, cy: c.y, from: 0)
-
-fn empty(points List<Flat>, at_index i32, ax i64, ay i64, bx i64, by i64, cx i64, cy i64, from i32) bool
-  let count = length(list: points)
-  if from >= count
-    return true
-  let previous = (at_index + count - 1) % count
-  let next = (at_index + 1) % count
-  if from == at_index or from == previous or from == next
-    return empty(points: points, at_index: at_index, ax: ax, ay: ay, bx: bx, by: by, cx: cx, cy: cy, from: from + 1)
-  let p = at(list: points, index: from)
-  if inside(ax: ax, ay: ay, bx: bx, by: by, cx: cx, cy: cy, px: p.x, py: p.y)
-    return false
-  return empty(points: points, at_index: at_index, ax: ax, ay: ay, bx: bx, by: by, cx: cx, cy: cy, from: from + 1)
-
-test "every corner of a convex polygon is an ear"
-  let square = square_polygon()
-  for i in 0 .. 4
-    throw "a convex corner should be an ear" unless is_ear(points: square, at_index: i)
-
-test "a reflex corner is not an ear"
-  # The spike's tip turns the wrong way, so clipping it would produce a
-  # triangle outside the polygon.
-  let shape = notched_polygon()
-  throw "the tip of the spike should not be an ear" if is_ear(points: shape, at_index: 4)
-
-test "a convex corner containing another vertex is not an ear"
-  # The second half of the ear test, and the one a naive tessellator
-  # forgets: the corner turns the right way, but the polygon folds back
-  # into the triangle it would cut.
-  #
-  # An L is too shallow to show this — its reflex corner is adjacent to
-  # every convex corner but one, and adjacency is excluded from the test
-  # anyway. It takes a notch deep enough to reach past a corner's
-  # neighbours.
-  let shape = notched_polygon()
-  throw "the bottom-left corner reaches over the spike" if is_ear(points: shape, at_index: 0)
+from './../src/predicates' use wide
+from 'linen:brep' use Body, empty_body, add_vertex, add_edge, add_coedge, add_loop, extend_loop, add_face, face_count, loop_size, loop_coedge, coedge_start, coedge_end
+from './../src/tessellate' use Vertex, Flat, turn, side_of, dominant_axis, flatten, polygon, polygon_area, inside, is_ear, triangulate, tessellate_face, tessellate, coordinates, narrow, vertex_of
 
 fn square_polygon() List<Flat>
   return push(
@@ -378,22 +50,303 @@ fn notched_polygon() List<Flat>
       value: Flat(x: 40, y: 100, where: 5)),
     value: Flat(x: 0, y: 100, where: 6))
 
+fn piece_area(points List<Flat>, indices List<i32>, from i32, total i128) i128
+  if from >= length(list: indices)
+    return total
+  let a = by_where(points: points, where_index: at(list: indices, index: from))
+  let b = by_where(points: points, where_index: at(list: indices, index: from + 1))
+  let c = by_where(points: points, where_index: at(list: indices, index: from + 2))
+  let area = turn(ax: a.x, ay: a.y, bx: b.x, by: b.y, cx: c.x, cy: c.y)
+  return piece_area(points: points, indices: indices, from: from + 3, total: total + area)
+
+fn by_where(points List<Flat>, where_index i32) Flat
+  return searching(points: points, where_index: where_index, from: 0)
+
+fn searching(points List<Flat>, where_index i32, from i32) Flat
+  if from >= length(list: points)
+    return Flat(x: 0, y: 0, where: 0 - 1)
+  let p = at(list: points, index: from)
+  if p.where == where_index
+    return p
+  return searching(points: points, where_index: where_index, from: from + 1)
+
+# --- bodies, built through the driver ---------------------------------
+#
+# Written out corner by corner rather than computed. That is a test's
+# business, not the kernel's: the kernel's job is to COMPUTE a body, and
+# until extrude exists a hand-written box is the oracle that proves the
+# tessellator right.
+
+# A single triangular face: the smallest thing with a closed loop.
+fn triangle_body() Body
+  let body = empty_body()
+  let a = add_vertex(body: body, x: 0, y: 0, z: 0)
+  let b = add_vertex(body: body, x: 100, y: 0, z: 0)
+  let c = add_vertex(body: body, x: 0, y: 100, z: 0)
+
+  let ab = add_edge(body: body, from: a, to: b)
+  let bc = add_edge(body: body, from: b, to: c)
+  let ca = add_edge(body: body, from: c, to: a)
+
+  let ring = add_loop(body: body)
+  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: ab, forward: true))
+  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: bc, forward: true))
+  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: ca, forward: true))
+
+  add_face(body: body, outer: ring, a: a, b: b, c: c)
+  return body
+
+# One square face in the z = 0 plane, wound counter-clockwise seen from
+# above.
+fn square_body() Body
+  let body = empty_body()
+  let a = add_vertex(body: body, x: 0, y: 0, z: 0)
+  let b = add_vertex(body: body, x: 100, y: 0, z: 0)
+  let c = add_vertex(body: body, x: 100, y: 100, z: 0)
+  let d = add_vertex(body: body, x: 0, y: 100, z: 0)
+
+  let ring = add_loop(body: body)
+  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: add_edge(body: body, from: a, to: b), forward: true))
+  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: add_edge(body: body, from: b, to: c), forward: true))
+  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: add_edge(body: body, from: c, to: d), forward: true))
+  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: add_edge(body: body, from: d, to: a), forward: true))
+
+  add_face(body: body, outer: ring, a: a, b: b, c: c)
+  return body
+
+# A box, as a real BREP: eight vertices, twelve edges, six faces, and
+# every edge used by exactly two faces in opposite directions.
+#
+#   z          7-------6
+#   | y       /|      /|
+#   |/       4-------5 |
+#   +--x     | 3-----|-2
+#            |/      |/
+#            0-------1
+fn box_body(width i32, depth i32, height i32) Body
+  let body = empty_body()
+
+  add_vertex(body: body, x: 0, y: 0, z: 0)
+  add_vertex(body: body, x: width, y: 0, z: 0)
+  add_vertex(body: body, x: width, y: depth, z: 0)
+  add_vertex(body: body, x: 0, y: depth, z: 0)
+  add_vertex(body: body, x: 0, y: 0, z: height)
+  add_vertex(body: body, x: width, y: 0, z: height)
+  add_vertex(body: body, x: width, y: depth, z: height)
+  add_vertex(body: body, x: 0, y: depth, z: height)
+
+  # Bottom ring 0-3, top ring 4-7, then the four uprights.
+  add_edge(body: body, from: 0, to: 1)
+  add_edge(body: body, from: 1, to: 2)
+  add_edge(body: body, from: 2, to: 3)
+  add_edge(body: body, from: 3, to: 0)
+  add_edge(body: body, from: 4, to: 5)
+  add_edge(body: body, from: 5, to: 6)
+  add_edge(body: body, from: 6, to: 7)
+  add_edge(body: body, from: 7, to: 4)
+  add_edge(body: body, from: 0, to: 4)
+  add_edge(body: body, from: 1, to: 5)
+  add_edge(body: body, from: 2, to: 6)
+  add_edge(body: body, from: 3, to: 7)
+
+  # Each face's plane is the FIRST THREE VERTICES OF ITS OWN LOOP, in
+  # loop order. Not any three of its corners: the orientation decides
+  # which axis is dropped and which way the flattened polygon winds, so
+  # three taken out of order describe the same plane facing the other
+  # way, and every triangle of that face comes out reversed.
+
+  # bottom (z = 0), seen from below, so the bottom ring reversed
+  let bottom = add_loop(body: body)
+  extend_loop(body: body, ring: bottom, coedge: add_coedge(body: body, edge: 3, forward: false))
+  extend_loop(body: body, ring: bottom, coedge: add_coedge(body: body, edge: 2, forward: false))
+  extend_loop(body: body, ring: bottom, coedge: add_coedge(body: body, edge: 1, forward: false))
+  extend_loop(body: body, ring: bottom, coedge: add_coedge(body: body, edge: 0, forward: false))
+  add_face(body: body, outer: bottom, a: 0, b: 3, c: 2)
+
+  # top (z = height), the top ring forward
+  let top = add_loop(body: body)
+  extend_loop(body: body, ring: top, coedge: add_coedge(body: body, edge: 4, forward: true))
+  extend_loop(body: body, ring: top, coedge: add_coedge(body: body, edge: 5, forward: true))
+  extend_loop(body: body, ring: top, coedge: add_coedge(body: body, edge: 6, forward: true))
+  extend_loop(body: body, ring: top, coedge: add_coedge(body: body, edge: 7, forward: true))
+  add_face(body: body, outer: top, a: 4, b: 5, c: 6)
+
+  # front (y = 0): 0 -> 1 -> 5 -> 4
+  let front = add_loop(body: body)
+  extend_loop(body: body, ring: front, coedge: add_coedge(body: body, edge: 0, forward: true))
+  extend_loop(body: body, ring: front, coedge: add_coedge(body: body, edge: 9, forward: true))
+  extend_loop(body: body, ring: front, coedge: add_coedge(body: body, edge: 4, forward: false))
+  extend_loop(body: body, ring: front, coedge: add_coedge(body: body, edge: 8, forward: false))
+  add_face(body: body, outer: front, a: 0, b: 1, c: 5)
+
+  # right (x = width): 1 -> 2 -> 6 -> 5
+  let right = add_loop(body: body)
+  extend_loop(body: body, ring: right, coedge: add_coedge(body: body, edge: 1, forward: true))
+  extend_loop(body: body, ring: right, coedge: add_coedge(body: body, edge: 10, forward: true))
+  extend_loop(body: body, ring: right, coedge: add_coedge(body: body, edge: 5, forward: false))
+  extend_loop(body: body, ring: right, coedge: add_coedge(body: body, edge: 9, forward: false))
+  add_face(body: body, outer: right, a: 1, b: 2, c: 6)
+
+  # back (y = depth): 2 -> 3 -> 7 -> 6
+  let back = add_loop(body: body)
+  extend_loop(body: body, ring: back, coedge: add_coedge(body: body, edge: 2, forward: true))
+  extend_loop(body: body, ring: back, coedge: add_coedge(body: body, edge: 11, forward: true))
+  extend_loop(body: body, ring: back, coedge: add_coedge(body: body, edge: 6, forward: false))
+  extend_loop(body: body, ring: back, coedge: add_coedge(body: body, edge: 10, forward: false))
+  add_face(body: body, outer: back, a: 2, b: 3, c: 7)
+
+  # left (x = 0): 3 -> 0 -> 4 -> 7
+  let left = add_loop(body: body)
+  extend_loop(body: body, ring: left, coedge: add_coedge(body: body, edge: 3, forward: true))
+  extend_loop(body: body, ring: left, coedge: add_coedge(body: body, edge: 8, forward: true))
+  extend_loop(body: body, ring: left, coedge: add_coedge(body: body, edge: 7, forward: false))
+  extend_loop(body: body, ring: left, coedge: add_coedge(body: body, edge: 11, forward: false))
+  add_face(body: body, outer: left, a: 3, b: 0, c: 4)
+
+  return body
+
+test "a face lying in z drops z"
+  let axis = dominant_axis(
+    a: Vertex(x: 0, y: 0, z: 0),
+    b: Vertex(x: 100, y: 0, z: 0),
+    c: Vertex(x: 0, y: 100, z: 0))
+  throw "the normal points along z" unless axis == 2
+
+test "a face standing up in x drops x"
+  # The case that a blind (x, y) projection collapses to a line.
+  let axis = dominant_axis(
+    a: Vertex(x: 0, y: 0, z: 0),
+    b: Vertex(x: 0, y: 100, z: 0),
+    c: Vertex(x: 0, y: 0, z: 100))
+  throw "the normal points along x" unless axis == 0
+
+test "a slanted face picks its largest component"
+  let axis = dominant_axis(
+    a: Vertex(x: 0, y: 0, z: 0),
+    b: Vertex(x: 100, y: 0, z: 10),
+    c: Vertex(x: 0, y: 100, z: 10))
+  throw "z still dominates a gentle slope" unless axis == 2
+
+test "flattening keeps the winding"
+  # The property that makes the 2D predicate mean what the 3D one meant.
+  # A triangle winding counter-clockwise about its own normal must still
+  # wind positive after the drop, whichever axis went.
+  let a = Vertex(x: 0, y: 0, z: 0)
+  let b = Vertex(x: 0, y: 100, z: 0)
+  let c = Vertex(x: 0, y: 0, z: 100)
+  let axis = dominant_axis(a: a, b: b, c: c)
+  let fa = flatten(v: a, axis: axis, index: 0)
+  let fb = flatten(v: b, axis: axis, index: 1)
+  let fc = flatten(v: c, axis: axis, index: 2)
+  throw "the flattened triangle should wind positive" unless turn(ax: fa.x, ay: fa.y, bx: fb.x, by: fb.y, cx: fc.x, cy: fc.y) > 0
+
+# --- the face's polygon -----------------------------------------------
+
+# The face's loop, as a 2D polygon.
+#
+# Every coedge contributes its START vertex: walking the loop, each
+# coedge's end is the next one's start, so taking both would repeat every
+# point.
+
+test "a triangular face gives a three-point polygon"
+  let body = triangle_body()
+  let points = polygon(body: body, face: 0)
+  throw "three coedges give three points, not six" unless length(list: points) == 3
+  throw "the first is the loop's first vertex" unless at(list: points, index: 0).where == 0
+  throw "then the second" unless at(list: points, index: 1).where == 1
+  throw "then the third" unless at(list: points, index: 2).where == 2
+
+# --- ear clipping ------------------------------------------------------
+
+# The signed double area of a polygon, exactly.
+#
+# Positive means counter-clockwise in the flattened plane. Doubled and
+# never halved, because half of an odd integer is not an integer, and
+# rounding here would be a lie about a value that is exact.
+
+test "a square's area is its side squared"
+  let square = push(
+    list: push(
+      list: push(
+        list: push(list: list(), value: Flat(x: 0, y: 0, where: 0)),
+        value: Flat(x: 100, y: 0, where: 1)),
+      value: Flat(x: 100, y: 100, where: 2)),
+    value: Flat(x: 0, y: 100, where: 3))
+  throw "doubled, so twice 100 by 100" unless polygon_area(points: square) == 20000
+
+test "winding the other way flips the sign"
+  # How the tessellator knows a loop is an outer boundary rather than a
+  # hole, without measuring an angle.
+  let clockwise = push(
+    list: push(
+      list: push(
+        list: push(list: list(), value: Flat(x: 0, y: 0, where: 0)),
+        value: Flat(x: 0, y: 100, where: 1)),
+      value: Flat(x: 100, y: 100, where: 2)),
+    value: Flat(x: 100, y: 0, where: 3))
+  throw "the same square, wound the other way" unless polygon_area(points: clockwise) == 0 - 20000
+
+# Whether `p` is strictly inside the triangle a, b, c.
+#
+# Strictly: a point ON an edge is not inside. An ear whose triangle has
+# another vertex sitting exactly on its edge is still clippable — the
+# resulting triangles share that edge and tile the polygon without
+# overlap.
+
+test "a point in the middle is inside"
+  throw "the centre of a triangle" unless inside(ax: 0, ay: 0, bx: 100, by: 0, cx: 0, cy: 100, px: 20, py: 20)
+
+test "a point outside is outside"
+  throw "well clear of it" if inside(ax: 0, ay: 0, bx: 100, by: 0, cx: 0, cy: 100, px: 90, py: 90)
+
+test "a point exactly on an edge is not inside"
+  # Exact, because the coordinates are integers: the midpoint of an edge
+  # between integer points either is or is not on the edge, and there is
+  # no tolerance to tune.
+  throw "the midpoint of the base" if inside(ax: 0, ay: 0, bx: 100, by: 0, cx: 0, cy: 100, px: 50, py: 0)
+
+# Whether the corner at `at` is an ear: convex, and containing no other
+# vertex of the polygon.
+
+test "every corner of a convex polygon is an ear"
+  let square = square_polygon()
+  for i in 0 .. 4
+    throw "a convex corner should be an ear" unless is_ear(points: square, at_index: i)
+
+test "a reflex corner is not an ear"
+  # The spike's tip turns the wrong way, so clipping it would produce a
+  # triangle outside the polygon.
+  let shape = notched_polygon()
+  throw "the tip of the spike should not be an ear" if is_ear(points: shape, at_index: 4)
+
+test "a convex corner containing another vertex is not an ear"
+  # The second half of the ear test, and the one a naive tessellator
+  # forgets: the corner turns the right way, but the polygon folds back
+  # into the triangle it would cut.
+  #
+  # An L is too shallow to show this — its reflex corner is adjacent to
+  # every convex corner but one, and adjacency is excluded from the test
+  # anyway. It takes a notch deep enough to reach past a corner's
+  # neighbours.
+  let shape = notched_polygon()
+  throw "the bottom-left corner reaches over the spike" if is_ear(points: shape, at_index: 0)
+
 test "the notch is as deep as the tests above assume"
   # Guards the two tests above: if the polygon changed shape, they could
   # both pass while testing nothing.
   let shape = notched_polygon()
-  throw "it should wind counter-clockwise" unless double_area(points: shape) > 0
+  throw "it should wind counter-clockwise" unless polygon_area(points: shape) > 0
   let a = at(list: shape, index: 3)
   let b = at(list: shape, index: 4)
   let c = at(list: shape, index: 5)
-  throw "the spike's tip should turn the wrong way" unless orient2d(ax: a.x, ay: a.y, bx: b.x, by: b.y, cx: c.x, cy: c.y) < 0
+  throw "the spike's tip should turn the wrong way" unless turn(ax: a.x, ay: a.y, bx: b.x, by: b.y, cx: c.x, cy: c.y) < 0
 
   # And it reaches far enough that corner 0's ear spans it, which is what
   # the containment test rests on.
   let previous = at(list: shape, index: 6)
   let corner = at(list: shape, index: 0)
   let next = at(list: shape, index: 1)
-  throw "corner 0 should be convex" unless orient2d(ax: previous.x, ay: previous.y, bx: corner.x, by: corner.y, cx: next.x, cy: next.y) > 0
+  throw "corner 0 should be convex" unless turn(ax: previous.x, ay: previous.y, bx: corner.x, by: corner.y, cx: next.x, cy: next.y) > 0
   throw "and its ear should swallow the spike's tip" unless inside(ax: previous.x, ay: previous.y, bx: corner.x, by: corner.y, cx: next.x, cy: next.y, px: b.x, py: b.y)
 
 # --- clipping the whole polygon ---------------------------------------
@@ -403,45 +356,6 @@ test "the notch is as deep as the tests above assume"
 # Three entries per triangle, each the `where` of the flattened point —
 # so the result indexes the BODY's vertices, not the polygon's, and a
 # tessellated body's triangles refer to the same points its edges do.
-fn triangulate(points List<Flat>) List<i32>
-  return clipping(points: points, out: list())
-
-# Terminates because `without` returns a strictly shorter polygon every
-# step, so no separate iteration guard is needed — and a guard counting
-# clips rather than failed passes would silently truncate a polygon that
-# simply has many corners.
-fn clipping(points List<Flat>, out List<i32>) List<i32>
-  let count = length(list: points)
-  if count < 3
-    return out
-  let ear = find_ear(points: points, from: 0)
-  if ear < 0
-    # No ear anywhere in the polygon. Every simple polygon with more than
-    # three corners has at least two, so this means the input was not
-    # simple — self-intersecting, or wound the wrong way.
-    return out
-  let a = at(list: points, index: (ear + count - 1) % count)
-  let b = at(list: points, index: ear)
-  let c = at(list: points, index: (ear + 1) % count)
-  let grown = push(list: push(list: push(list: out, value: a.where), value: b.where), value: c.where)
-  return clipping(points: without(points: points, at_index: ear), out: grown)
-
-fn find_ear(points List<Flat>, from i32) i32
-  if from >= length(list: points)
-    return 0 - 1
-  if is_ear(points: points, at_index: from)
-    return from
-  return find_ear(points: points, from: from + 1)
-
-fn without(points List<Flat>, at_index i32) List<Flat>
-  return copying(points: points, at_index: at_index, from: 0, built: list())
-
-fn copying(points List<Flat>, at_index i32, from i32, built List<Flat>) List<Flat>
-  if from >= length(list: points)
-    return built
-  if from == at_index
-    return copying(points: points, at_index: at_index, from: from + 1, built: built)
-  return copying(points: points, at_index: at_index, from: from + 1, built: push(list: built, value: at(list: points, index: from)))
 
 test "a triangle triangulates to itself"
   let triangle = push(
@@ -471,29 +385,10 @@ test "the triangles cover the polygon exactly"
   # tolerance.
   let shape = notched_polygon()
   let indices = triangulate(points: shape)
-  throw "the pieces should sum to the whole" unless piece_area(points: shape, indices: indices, from: 0, total: wide(value: 0)) == double_area(points: shape)
+  throw "the pieces should sum to the whole" unless piece_area(points: shape, indices: indices, from: 0, total: wide(value: 0)) == polygon_area(points: shape)
 
 # The area of each triangle, summed. Looks its points up by `where`,
 # which is what a real tessellated body does too.
-fn piece_area(points List<Flat>, indices List<i32>, from i32, total i128) i128
-  if from >= length(list: indices)
-    return total
-  let a = by_where(points: points, where_index: at(list: indices, index: from))
-  let b = by_where(points: points, where_index: at(list: indices, index: from + 1))
-  let c = by_where(points: points, where_index: at(list: indices, index: from + 2))
-  let area = orient2d(ax: a.x, ay: a.y, bx: b.x, by: b.y, cx: c.x, cy: c.y)
-  return piece_area(points: points, indices: indices, from: from + 3, total: total + area)
-
-fn by_where(points List<Flat>, where_index i32) Flat
-  return searching(points: points, where_index: where_index, from: 0)
-
-fn searching(points List<Flat>, where_index i32, from i32) Flat
-  if from >= length(list: points)
-    return Flat(x: 0, y: 0, where: 0 - 1)
-  let p = at(list: points, index: from)
-  if p.where == where_index
-    return p
-  return searching(points: points, where_index: where_index, from: from + 1)
 
 test "no triangle is degenerate"
   # A zero-area triangle draws nothing but still costs a draw call, and
@@ -505,23 +400,21 @@ test "no triangle is degenerate"
     let a = by_where(points: shape, where_index: at(list: indices, index: t * 3))
     let b = by_where(points: shape, where_index: at(list: indices, index: t * 3 + 1))
     let c = by_where(points: shape, where_index: at(list: indices, index: t * 3 + 2))
-    throw "a triangle came out with no area" if orient2d(ax: a.x, ay: a.y, bx: b.x, by: b.y, cx: c.x, cy: c.y) == 0
+    throw "a triangle came out with no area" if turn(ax: a.x, ay: a.y, bx: b.x, by: b.y, cx: c.x, cy: c.y) == 0
 
 # --- a whole face ------------------------------------------------------
 
 # The triangles of one face of a body, indexing the body's vertices.
-fn tessellate_face(body Body, face Face) List<i32>
-  return triangulate(points: polygon(body: body, face: face))
 
 test "a triangular face of a body tessellates to one triangle"
   let body = triangle_body()
-  let indices = tessellate_face(body: body, face: face_of(body: body, index: 0))
+  let indices = tessellate_face(body: body, face: 0)
   throw "one triangle" unless length(list: indices) == 3
   throw "naming the body's three vertices" unless at(list: indices, index: 0) + at(list: indices, index: 1) + at(list: indices, index: 2) == 3
 
 test "a square face of a body tessellates to two triangles"
   let body = square_body()
-  let indices = tessellate_face(body: body, face: face_of(body: body, index: 0))
+  let indices = tessellate_face(body: body, face: 0)
   throw "two triangles" unless length(list: indices) == 6
 
 test "a tessellated face winds the same way its loop does"
@@ -529,122 +422,14 @@ test "a tessellated face winds the same way its loop does"
   # tessellator must face the way the face does, or the solid renders
   # inside out.
   let body = square_body()
-  let face = face_of(body: body, index: 0)
+  let face = 0
   let indices = tessellate_face(body: body, face: face)
   let outside = Vertex(x: 50, y: 50, z: 100)
   for t in 0 .. 2
     let a = vertex_of(body: body, index: at(list: indices, index: t * 3))
     let b = vertex_of(body: body, index: at(list: indices, index: t * 3 + 1))
     let c = vertex_of(body: body, index: at(list: indices, index: t * 3 + 2))
-    throw "a triangle faces the wrong way" unless orient3d(a: a, b: b, c: c, d: outside) > 0
-
-fn triangle_body() Body
-  let vertices = push(
-    list: push(
-      list: push(list: list(), value: Vertex(x: 0, y: 0, z: 0)),
-      value: Vertex(x: 100, y: 0, z: 0)),
-    value: Vertex(x: 0, y: 100, z: 0))
-
-  let edges = push(
-    list: push(
-      list: push(list: list(), value: Edge(from: 0, to: 1)),
-      value: Edge(from: 1, to: 2)),
-    value: Edge(from: 2, to: 0))
-
-  let coedges = push(
-    list: push(
-      list: push(list: list(), value: CoEdge(edge: 0, forward: true)),
-      value: CoEdge(edge: 1, forward: true)),
-    value: CoEdge(edge: 2, forward: true))
-
-  let circuit = push(list: push(list: push(list: list(), value: 0), value: 1), value: 2)
-
-  return Body(
-    vertices: vertices,
-    edges: edges,
-    coedges: coedges,
-    loops: push(list: list(), value: Loop(coedges: circuit)),
-    faces: push(list: list(), value: Face(outer: 0, a: 0, b: 1, c: 2)))
-
-# One square face in the z = 0 plane, wound counter-clockwise seen from
-# above.
-fn square_body() Body
-  let vertices = push(
-    list: push(
-      list: push(
-        list: push(list: list(), value: Vertex(x: 0, y: 0, z: 0)),
-        value: Vertex(x: 100, y: 0, z: 0)),
-      value: Vertex(x: 100, y: 100, z: 0)),
-    value: Vertex(x: 0, y: 100, z: 0))
-
-  let edges = push(
-    list: push(
-      list: push(
-        list: push(list: list(), value: Edge(from: 0, to: 1)),
-        value: Edge(from: 1, to: 2)),
-      value: Edge(from: 2, to: 3)),
-    value: Edge(from: 3, to: 0))
-
-  let coedges = push(
-    list: push(
-      list: push(
-        list: push(list: list(), value: CoEdge(edge: 0, forward: true)),
-        value: CoEdge(edge: 1, forward: true)),
-      value: CoEdge(edge: 2, forward: true)),
-    value: CoEdge(edge: 3, forward: true))
-
-  let circuit = push(
-    list: push(
-      list: push(
-        list: push(list: list(), value: 0),
-        value: 1),
-      value: 2),
-    value: 3)
-
-  return Body(
-    vertices: vertices,
-    edges: edges,
-    coedges: coedges,
-    loops: push(list: list(), value: Loop(coedges: circuit)),
-    faces: push(list: list(), value: Face(outer: 0, a: 0, b: 1, c: 2)))
-
-# --- a whole body ------------------------------------------------------
-
-# Every face of a body, tessellated, as one flat list of vertex indices.
-#
-# One list for the whole body rather than one per face, because that is
-# what a renderer draws and what the mesh buffer holds: the faces share
-# the body's vertices, and a triangle is three indices into them
-# regardless of which face it came from.
-fn tessellate(body Body) List<i32>
-  return tessellating(body: body, from: 0, built: list())
-
-fn tessellating(body Body, from i32, built List<i32>) List<i32>
-  if from >= length(list: body.faces)
-    return built
-  let face = face_of(body: body, index: from)
-  return tessellating(
-    body: body,
-    from: from + 1,
-    built: joined(into: built, more: tessellate_face(body: body, face: face), at_index: 0))
-
-fn joined(into List<i32>, more List<i32>, at_index i32) List<i32>
-  if at_index >= length(list: more)
-    return into
-  return joined(into: push(list: into, value: at(list: more, index: at_index)), more: more, at_index: at_index + 1)
-
-# The body's vertices, flattened to x, y, z — what `solid` draws.
-fn coordinates(body Body) List<i32>
-  return spreading(body: body, from: 0, built: list())
-
-fn spreading(body Body, from i32, built List<i32>) List<i32>
-  if from >= length(list: body.vertices)
-    return built
-  let v = vertex_of(body: body, index: from)
-  return spreading(
-    body: body,
-    from: from + 1,
-    built: push(list: push(list: push(list: built, value: v.x), value: v.y), value: v.z))
+    throw "a triangle faces the wrong way" unless side_of(a: a, b: b, c: c, d: outside) > 0
 
 test "a body of one square face tessellates to two triangles"
   let body = square_body()
@@ -655,7 +440,7 @@ test "a box tessellates to twelve triangles"
   # Six faces, each a quad, each two triangles. The count that says
   # every face was reached and none was clipped short.
   let body = box_body(width: 200, depth: 200, height: 200)
-  throw "six faces" unless length(list: body.faces) == 6
+  throw "six faces" unless face_count(body: body) == 6
   throw "twelve triangles" unless length(list: tessellate(body: body)) == 36
 
 test "every triangle of a box faces outward"
@@ -669,7 +454,7 @@ test "every triangle of a box faces outward"
     let a = vertex_of(body: body, index: at(list: indices, index: t * 3))
     let b = vertex_of(body: body, index: at(list: indices, index: t * 3 + 1))
     let c = vertex_of(body: body, index: at(list: indices, index: t * 3 + 2))
-    throw "a triangle faces inward" unless orient3d(a: a, b: b, c: c, d: centre) < 0
+    throw "a triangle faces inward" unless side_of(a: a, b: b, c: c, d: centre) < 0
 
 test draws "a tessellated square face"
   let body = square_body()
@@ -690,97 +475,6 @@ test draws "a tessellated slab"
 # Written out rather than generated because it is the fixture the tests
 # above rest on: a generator with a bug would produce a body that is
 # consistently wrong, and the tests would agree with it.
-fn box_body(width i32, depth i32, height i32) Body
-  let vertices = eight_corners(width: width, depth: depth, height: height)
-  let edges = twelve_edges()
-  let coedges = twenty_four_coedges()
-  return Body(
-    vertices: vertices,
-    edges: edges,
-    coedges: coedges,
-    loops: six_loops(),
-    faces: six_faces())
-
-#   z          7-------6
-#   | y       /|      /|
-#   |/       4-------5 |
-#   +--x     | 3-----|-2
-#            |/      |/
-#            0-------1
-fn eight_corners(width i32, depth i32, height i32) List<Vertex>
-  let bottom = push(
-    list: push(
-      list: push(
-        list: push(list: list(), value: Vertex(x: 0, y: 0, z: 0)),
-        value: Vertex(x: width, y: 0, z: 0)),
-      value: Vertex(x: width, y: depth, z: 0)),
-    value: Vertex(x: 0, y: depth, z: 0))
-  return push(
-    list: push(
-      list: push(
-        list: push(list: bottom, value: Vertex(x: 0, y: 0, z: height)),
-        value: Vertex(x: width, y: 0, z: height)),
-      value: Vertex(x: width, y: depth, z: height)),
-    value: Vertex(x: 0, y: depth, z: height))
-
-# Bottom ring 0-3, top ring 4-7, then the four uprights.
-fn twelve_edges() List<Edge>
-  let bottom = push(list: push(list: push(list: push(list: list(),
-    value: Edge(from: 0, to: 1)), value: Edge(from: 1, to: 2)), value: Edge(from: 2, to: 3)), value: Edge(from: 3, to: 0))
-  let top = push(list: push(list: push(list: push(list: bottom,
-    value: Edge(from: 4, to: 5)), value: Edge(from: 5, to: 6)), value: Edge(from: 6, to: 7)), value: Edge(from: 7, to: 4))
-  return push(list: push(list: push(list: push(list: top,
-    value: Edge(from: 0, to: 4)), value: Edge(from: 1, to: 5)), value: Edge(from: 2, to: 6)), value: Edge(from: 3, to: 7))
-
-# Four per face, in loop order. Every edge appears exactly twice, once
-# forward and once reversed — the invariant a closed shell has, and the
-# reason CoEdge exists.
-fn twenty_four_coedges() List<CoEdge>
-  # bottom (z = 0), seen from below, so the bottom ring reversed
-  let a = push(list: push(list: push(list: push(list: list(),
-    value: CoEdge(edge: 3, forward: false)), value: CoEdge(edge: 2, forward: false)), value: CoEdge(edge: 1, forward: false)), value: CoEdge(edge: 0, forward: false))
-  # top (z = height), the top ring forward
-  let b = push(list: push(list: push(list: push(list: a,
-    value: CoEdge(edge: 4, forward: true)), value: CoEdge(edge: 5, forward: true)), value: CoEdge(edge: 6, forward: true)), value: CoEdge(edge: 7, forward: true))
-  # front (y = 0): 0 -> 1 -> 5 -> 4
-  let c = push(list: push(list: push(list: push(list: b,
-    value: CoEdge(edge: 0, forward: true)), value: CoEdge(edge: 9, forward: true)), value: CoEdge(edge: 4, forward: false)), value: CoEdge(edge: 8, forward: false))
-  # right (x = width): 1 -> 2 -> 6 -> 5
-  let d = push(list: push(list: push(list: push(list: c,
-    value: CoEdge(edge: 1, forward: true)), value: CoEdge(edge: 10, forward: true)), value: CoEdge(edge: 5, forward: false)), value: CoEdge(edge: 9, forward: false))
-  # back (y = depth): 2 -> 3 -> 7 -> 6
-  let e = push(list: push(list: push(list: push(list: d,
-    value: CoEdge(edge: 2, forward: true)), value: CoEdge(edge: 11, forward: true)), value: CoEdge(edge: 6, forward: false)), value: CoEdge(edge: 10, forward: false))
-  # left (x = 0): 3 -> 0 -> 4 -> 7
-  return push(list: push(list: push(list: push(list: e,
-    value: CoEdge(edge: 3, forward: true)), value: CoEdge(edge: 8, forward: true)), value: CoEdge(edge: 7, forward: false)), value: CoEdge(edge: 11, forward: false))
-
-fn six_loops() List<Loop>
-  return looping(face: 0, built: list())
-
-fn looping(face i32, built List<Loop>) List<Loop>
-  if face >= 6
-    return built
-  let first = narrow(value: face * 4)
-  let ring = push(list: push(list: push(list: push(list: list(),
-    value: first), value: first + 1), value: first + 2), value: first + 3)
-  return looping(face: face + 1, built: push(list: built, value: Loop(coedges: ring)))
-
-# Each face names three of its own vertices to give its plane: the FIRST
-# THREE OF ITS OWN LOOP, in loop order.
-#
-# Not any three of the face's corners. The plane's orientation is what
-# decides which axis is dropped and which way the flattened polygon
-# winds, so three vertices taken out of loop order describe the same
-# plane facing the other way — and every triangle of that face comes out
-# reversed.
-fn six_faces() List<Face>
-  let a = push(list: push(list: list(),
-    value: Face(outer: 0, a: 0, b: 3, c: 2)), value: Face(outer: 1, a: 4, b: 5, c: 6))
-  let b = push(list: push(list: a,
-    value: Face(outer: 2, a: 0, b: 1, c: 5)), value: Face(outer: 3, a: 1, b: 2, c: 6))
-  return push(list: push(list: b,
-    value: Face(outer: 4, a: 2, b: 3, c: 7)), value: Face(outer: 5, a: 3, b: 0, c: 4))
 
 test "flattening keeps the winding for a face pointing the other way"
   # The half of the projection that a naive drop gets wrong. Dropping
@@ -799,4 +493,4 @@ test "flattening keeps the winding for a face pointing the other way"
   let fa = flatten(v: a, axis: axis, index: 0)
   let fb = flatten(v: b, axis: axis, index: 1)
   let fc = flatten(v: c, axis: axis, index: 2)
-  throw "the flattened triangle should still wind positive" unless orient2d(ax: fa.x, ay: fa.y, bx: fb.x, by: fb.y, cx: fc.x, cy: fc.y) > 0
+  throw "the flattened triangle should still wind positive" unless turn(ax: fa.x, ay: fa.y, bx: fb.x, by: fb.y, cx: fc.x, cy: fc.y) > 0

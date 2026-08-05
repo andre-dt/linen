@@ -64,6 +64,13 @@ pub fn write_object(
             if function.exported {
                 continue;
             }
+            // A driver stays EXTERNAL: it has no body here, and an
+            // internal symbol with no definition is malformed IR. What
+            // resolves it is the drivers crate at link time — the same
+            // way `linen_list_push` does.
+            if function.driver {
+                continue;
+            }
             if let Some(value) = module.get_function(&function.name) {
                 value.set_linkage(Linkage::Internal);
             }

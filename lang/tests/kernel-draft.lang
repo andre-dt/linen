@@ -1,0 +1,208 @@
+# DRAFT — the 2D profile a solid is made from.
+#
+# The first thing a user draws and the input every solid-making feature
+# takes. An extrude is a draft plus a direction; a revolve is a draft
+# plus an axis. Getting the draft right is getting the input to
+# everything right.
+
+from 'linen:draft' use Draft, point_at, count, closed_draft, open_draft, add, is_closed, signed_area, winds_counter_clockwise, is_simple, reversed, next_index
+from 'linen:predicates' use Point
+
+fn square() Draft
+  return add(
+    draft: add(
+      draft: add(
+        draft: add(draft: closed_draft(), point: Point(x: 0, y: 0)),
+        point: Point(x: 100, y: 0)),
+      point: Point(x: 100, y: 100)),
+    point: Point(x: 0, y: 100))
+
+fn triangle() Draft
+  return add(
+    draft: add(
+      draft: add(draft: closed_draft(), point: Point(x: 0, y: 0)),
+      point: Point(x: 100, y: 0)),
+    point: Point(x: 0, y: 100))
+
+# An open path: a corner, going nowhere back.
+fn elbow() Draft
+  return add(
+    draft: add(
+      draft: add(draft: open_draft(), point: Point(x: 0, y: 0)),
+      point: Point(x: 100, y: 0)),
+    point: Point(x: 100, y: 100))
+
+test "an empty draft has no points"
+  throw "closed and empty" unless count(draft: closed_draft()) == 0
+  throw "open and empty" unless count(draft: open_draft()) == 0
+
+test "points come back in the order they were added"
+  # The order IS the geometry: a draft is a path, and the same points in
+  # a different order are a different shape.
+  let s = square()
+  throw "four points" unless count(draft: s) == 4
+  throw "the first" unless point_at(draft: s, index: 0).x == 0 and point_at(draft: s, index: 0).y == 0
+  throw "the second" unless point_at(draft: s, index: 1).x == 100
+  throw "the third" unless point_at(draft: s, index: 2).y == 100
+  throw "the fourth" unless point_at(draft: s, index: 3).x == 0 and point_at(draft: s, index: 3).y == 100
+
+test "closed and open are remembered"
+  # The distinction that decides whether this can become a face. An open
+  # path has no inside.
+  throw "a square closes" unless is_closed(draft: square())
+  throw "an elbow does not" if is_closed(draft: elbow())
+
+test "adding a point does not change the draft it was given"
+  # The same immutability every other value in the language has. A
+  # caller holding the shorter draft still sees the shorter draft.
+  let three = triangle()
+  let four = add(draft: three, point: Point(x: 50, y: 50))
+  throw "the original is still three" unless count(draft: three) == 3
+  throw "the new one is four" unless count(draft: four) == 4
+
+# --- area and winding -------------------------------------------------
+
+test "the area of a square is its side squared"
+  # Doubled and never halved, for the same reason every area in this
+  # kernel is: half of an odd integer is not an integer, and rounding
+  # here would be a lie about a value that is exact.
+  throw "twice one hundred by one hundred" unless signed_area(draft: square()) == 20000
+
+test "the area of a triangle is half the square's"
+  throw "half of 20000" unless signed_area(draft: triangle()) == 10000
+
+test "winding shows up as the sign"
+  # How the kernel tells an outer boundary from a hole without measuring
+  # an angle.
+  throw "the square winds counter-clockwise" unless winds_counter_clockwise(draft: square())
+  throw "reversed, it does not" if winds_counter_clockwise(draft: reversed(draft: square()))
+  throw "and the area flips sign" unless signed_area(draft: reversed(draft: square())) == 0 - 20000
+
+test "an open draft has no area"
+  # Not zero-because-it-cancelled: an open path encloses nothing, and
+  # asking for its area is a question with no answer. Zero is the honest
+  # one, and `is_closed` is what a caller should ask first.
+  throw "an elbow encloses nothing" unless signed_area(draft: elbow()) == 0
+
+test "reversing twice gives back the original"
+  let there = reversed(draft: square())
+  let back = reversed(draft: there)
+  throw "same count" unless count(draft: back) == 4
+  throw "same first point" unless point_at(draft: back, index: 0).x == 0 and point_at(draft: back, index: 0).y == 0
+  throw "same second point" unless point_at(draft: back, index: 1).x == 100 and point_at(draft: back, index: 1).y == 0
+  throw "same area" unless signed_area(draft: back) == 20000
+
+# --- validity ---------------------------------------------------------
+
+test "a square is a simple polygon"
+  throw "no edge crosses another" unless is_simple(draft: square())
+  throw "nor in a triangle" unless is_simple(draft: triangle())
+
+test "a bowtie is not simple"
+  # The one a naive profile check misses. Four points, all distinct, no
+  # repeated vertex — and the two diagonals cross, so there is no
+  # inside. Extruding it would produce a solid that is not a solid.
+  let bowtie = add(
+    draft: add(
+      draft: add(
+        draft: add(draft: closed_draft(), point: Point(x: 0, y: 0)),
+        point: Point(x: 100, y: 100)),
+      point: Point(x: 100, y: 0)),
+    point: Point(x: 0, y: 100))
+  throw "its edges cross" if is_simple(draft: bowtie)
+
+test "a draft with fewer than three points encloses nothing"
+  let two = add(draft: add(draft: closed_draft(), point: Point(x: 0, y: 0)), point: Point(x: 10, y: 0))
+  throw "two points are not a polygon" if is_simple(draft: two)
+
+test "a repeated point is not simple"
+  # Two coincident corners give a zero-length edge, which has no
+  # direction — and every later question about the profile depends on
+  # edge direction.
+  let doubled = add(
+    draft: add(
+      draft: add(
+        draft: add(draft: closed_draft(), point: Point(x: 0, y: 0)),
+        point: Point(x: 100, y: 0)),
+      point: Point(x: 100, y: 0)),
+    point: Point(x: 0, y: 100))
+  throw "a repeated corner" if is_simple(draft: doubled)
+
+test "a closed draft has as many edges as points"
+  # What the drawing actually rests on. `is_closed` alone does not
+  # catch a wire builder that closes every path: the assertion holds
+  # and the picture is wrong.
+  throw "four points, four edges" unless length(list: edges(draft: square())) == 8
+
+test "an open draft has one edge fewer"
+  # Three points, two segments — nothing runs from the last back to the
+  # first, which is the whole difference between open and closed.
+  throw "three points, two edges" unless length(list: edges(draft: elbow())) == 4
+  throw "and it starts at the first point" unless at(list: edges(draft: elbow()), index: 0) == 0
+  throw "and ends at the last" unless at(list: edges(draft: elbow()), index: 3) == 2
+
+test "a draft's points flatten to three coordinates each"
+  throw "four points, twelve numbers" unless length(list: flat(draft: square())) == 12
+  throw "a draft lies in z = 0" unless at(list: flat(draft: square()), index: 2) == 0
+
+test draws "a square draft"
+  let s = square()
+  throw "it should close" unless is_closed(draft: s)
+  wire(points: flat(draft: s), segments: edges(draft: s))
+
+test draws "an open elbow"
+  # What a wire can show and a solid cannot: an open path has no inside,
+  # so there is nothing to shade — only the path itself.
+  let e = elbow()
+  throw "it should not close" if is_closed(draft: e)
+  wire(points: flat(draft: e), segments: edges(draft: e))
+
+test draws "a notched profile"
+  let n = notched()
+  throw "it should be simple" unless is_simple(draft: n)
+  wire(points: flat(draft: n), segments: edges(draft: n))
+
+# The draft's points as x, y, z — flat, for the renderer. A draft lies
+# in the z = 0 plane until a feature places it somewhere else.
+fn flat(draft Draft) List<i32>
+  return flattening(draft: draft, from: 0, built: list())
+
+fn flattening(draft Draft, from i32, built List<i32>) List<i32>
+  if from >= count(draft: draft)
+    return built
+  let p = point_at(draft: draft, index: from)
+  return flattening(
+    draft: draft,
+    from: from + 1,
+    built: push(list: push(list: push(list: built, value: p.x), value: p.y), value: 0))
+
+# The draft's edges as pairs of point indices.
+#
+# A closed draft has as many edges as points; an open one has one fewer,
+# because nothing runs from the last point back to the first.
+fn edges(draft Draft) List<i32>
+  return edging(draft: draft, from: 0, built: list())
+
+fn edging(draft Draft, from i32, built List<i32>) List<i32>
+  let total = count(draft: draft)
+  if from >= total
+    return built
+  if draft.closed == false and from == total - 1
+    return built
+  return edging(
+    draft: draft,
+    from: from + 1,
+    built: push(list: push(list: built, value: from), value: next_index(draft: draft, after: from)))
+
+fn notched() Draft
+  return add(
+    draft: add(
+      draft: add(
+        draft: add(
+          draft: add(
+            draft: add(draft: closed_draft(), point: Point(x: 0, y: 0)),
+            point: Point(x: 300, y: 0)),
+          point: Point(x: 300, y: 300)),
+        point: Point(x: 180, y: 300)),
+      point: Point(x: 150, y: 60)),
+    point: Point(x: 0, y: 300))

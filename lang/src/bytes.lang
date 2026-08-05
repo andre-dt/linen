@@ -1,0 +1,33 @@
+# `linen:bytes` — the standard library's byte helpers.
+#
+# A DRIVER IS A DECLARATION, NOT AN IMPLEMENTATION
+# ------------------------------------------------
+# `driver fn` gives a signature and no body. The body is Rust, bound at
+# link time; this file is what the typechecker reads, so a call is
+# checked exactly as any other call is.
+#
+# The signature living here rather than in the Rust means it is
+# versioned with the kernel, readable in the language it is called from,
+# and impossible to change on one side only — the two must agree or the
+# link fails.
+#
+# WHAT BELONGS BEHIND A DRIVER
+# ----------------------------
+# Text and I/O. Not geometry: a driver that computed geometry would
+# make the kernel a thin shell over Rust, which is the opposite of the
+# point. Formatting a number into ASCII is string work, and the language
+# has no strings — that is the line.
+
+# The decimal digits of a number, as ASCII bytes.
+#
+# `-12` becomes the four bytes `-`, `1`, `2`. The kernel needs this to
+# write STEP, and it is the one thing integers alone cannot do.
+driver fn digits(value i64) List<i32>
+
+# The bytes of a fixed piece of text, by name.
+#
+# There is no string literal in the language, so the pieces a format
+# needs — `CARTESIAN_POINT`, `#`, `=(` — are named rather than written.
+# Crude, and it goes away when text lands; the STEP writer works today
+# either way.
+driver fn ascii(of i32) List<i32>

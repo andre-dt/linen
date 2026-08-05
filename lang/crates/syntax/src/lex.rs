@@ -189,7 +189,8 @@ impl<'a> Lexer<'a> {
                 self.name(start);
                 Ok(())
             }
-            b'"' => self.text(start),
+            b'"' => self.text(start, b'"'),
+            b'\'' => self.text(start, b'\''),
             _ => self.punctuation(start),
         }
     }
@@ -215,7 +216,13 @@ impl<'a> Lexer<'a> {
         self.push(TokenKind::Name(text), start, self.at);
     }
 
-    fn text(&mut self, start: usize) -> Result<(), LexError> {
+    /// A quoted string, in either quote.
+    ///
+    /// Double quotes for prose — test names, throw messages. Single
+    /// quotes for module paths, which is what `from './brep'` writes.
+    /// The distinction is only convention; both produce the same token,
+    /// and the parser knows which it is by where it appears.
+    fn text(&mut self, start: usize, quote: u8) -> Result<(), LexError> {
         self.at += 1; // the opening quote
         let content_start = self.at;
         loop {
@@ -229,7 +236,7 @@ impl<'a> Lexer<'a> {
                         span: Span::new(start, self.at),
                     });
                 }
-                Some(b'"') => break,
+                Some(byte) if byte == quote => break,
                 _ => self.at += 1,
             }
         }

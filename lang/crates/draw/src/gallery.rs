@@ -20,7 +20,7 @@
 use std::path::Path;
 
 use crate::render::{draw_text, text_width, write_png, Image};
-use crate::scene::{TILE_HEIGHT, TILE_WIDTH};
+
 
 /// One entry: a rendered image and what to call it.
 ///
@@ -28,6 +28,14 @@ use crate::scene::{TILE_HEIGHT, TILE_WIDTH};
 /// each tile out and read it back to compose them, which meant carrying
 /// a PNG decoder for files this program had just written — code whose
 /// only input was its own output.
+/// How big each rendered tile is.
+///
+/// Here rather than with the caller, because the mosaic is what has to
+/// lay them out: a tile size the gallery did not choose is a size it
+/// would have to be told about at every call.
+pub const TILE_WIDTH: usize = 320;
+pub const TILE_HEIGHT: usize = 260;
+
 pub struct Tile {
     pub label: String,
     pub image: Image,

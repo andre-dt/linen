@@ -5,6 +5,7 @@ version.workspace = true
 
 [dependencies]
 syntax.workspace = true
+runtime.workspace = true
 inkwell.workspace = true
 
 [dev-dependencies]

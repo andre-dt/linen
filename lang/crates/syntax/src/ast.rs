@@ -25,6 +25,34 @@ pub enum Item {
     Function(Function),
     Shape(Shape),
     Test(Test),
+    Import(Import),
+}
+
+/// `from './brep' use Vertex, Edge, Body`
+///
+/// WHY A LIST AND NOT A WHOLE-MODULE HANDLE
+/// ----------------------------------------
+/// Naming what arrives means the top of a file answers where every
+/// unqualified name in it came from. `module.Vertex` would answer the
+/// same question at every use site instead, which is more words in the
+/// place where geometry should be readable.
+///
+/// There is no renaming and no wildcard. Both exist to paper over name
+/// collisions, and a collision is better fixed than hidden.
+#[derive(Debug, PartialEq)]
+pub struct Import {
+    /// The path as written, without the `.lang`: `./brep`, `../kernel`.
+    /// Relative to the file that wrote it.
+    pub path: String,
+    /// The names taken from it, in the order written.
+    pub names: Vec<ImportedName>,
+    pub span: Span,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ImportedName {
+    pub name: String,
+    pub span: Span,
 }
 
 /// `shape Name` with its fields indented under it.
@@ -70,6 +98,18 @@ pub struct Function {
     /// exported stays free to be renamed or removed. An exported name is
     /// also a symbol in the object file, so the two are the same choice.
     pub exported: bool,
+    /// `driver fn` — a signature whose body is Rust.
+    ///
+    /// The standard library is bound this way: `linen:step` declares
+    /// `serialize` here and implements it natively, because serialising
+    /// is text work and the language has no text. The signature lives in
+    /// `.lang` so the typechecker reads it exactly as it reads any
+    /// other, and so it is versioned with the kernel rather than hidden
+    /// in the Rust.
+    ///
+    /// A driver has no body, so `body` is empty. Nothing that walks
+    /// bodies needs a special case — an empty one walks to nothing.
+    pub driver: bool,
     /// Type parameters, empty for the ordinary case. `fn first<T>(…)`.
     pub generics: Vec<GenericParameter>,
     pub parameters: Vec<Parameter>,
@@ -126,6 +166,33 @@ pub struct Test {
     pub span: Span,
 }
 
+/// What a drawing statement hands over.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum MeshKind {
+    /// `solid(points:, triangles:)` — three indices per triangle.
+    Solid,
+    /// `wire(points:, segments:)` — two indices per line.
+    Wire,
+}
+
+impl MeshKind {
+    /// What this kind calls its index argument.
+    pub fn indices(self) -> &'static str {
+        match self {
+            MeshKind::Solid => "triangles",
+            MeshKind::Wire => "segments",
+        }
+    }
+
+    /// The keyword that introduces it.
+    pub fn keyword(self) -> &'static str {
+        match self {
+            MeshKind::Solid => "solid",
+            MeshKind::Wire => "wire",
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Statement {
     /// `let name = value`
@@ -169,6 +236,26 @@ pub enum Statement {
     /// inventing a type for something nobody can read.
     Solid {
         arguments: Vec<FieldValue>,
+        /// Which of the two: `solid(points:, triangles:)` builds a
+        /// shaded body, `wire(points:, segments:)` a set of lines.
+        ///
+        /// One statement rather than two, because they differ only in
+        /// what the argument names are and how the runner draws the
+        /// result. A draft needs the wire form: an open path has no
+        /// inside, so there is nothing to shade — only the path itself.
+        kind: MeshKind,
+        span: Span,
+    },
+    /// A call written for its EFFECT, with its result discarded.
+    ///
+    /// `release(body: b)` — a function returning nothing has no other
+    /// way to be called, and without this the language could declare
+    /// such a function and never reach it.
+    ///
+    /// Only a call. A bare `x + 1` as a statement computes something
+    /// and drops it, which is always a mistake and never an idiom.
+    Call {
+        call: Expression,
         span: Span,
     },
     /// `throw "message" if condition` / `throw "message" unless condition`

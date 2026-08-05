@@ -1,0 +1,229 @@
+# DRAFT — the 2D profile a solid is made from.
+#
+# The first thing a user draws, and the input every solid-making feature
+# takes: an extrude is a draft plus a direction, a revolve is a draft
+# plus an axis. Getting this right is getting the input to everything
+# right.
+#
+# WHY A LIST OF POINTS AND NOT A LIST OF EDGES
+# --------------------------------------------
+# A path's edges are its consecutive points, so storing both would be
+# storing the same fact twice — and the two would disagree the first
+# time one was edited. The edges are derived; the points are the value.
+#
+# It also means a draft cannot be internally inconsistent. There is no
+# way to write one whose third edge does not start where the second
+# ended, because there is nothing to write.
+#
+# CLOSED IS A PROPERTY, NOT A REPEATED POINT
+# ------------------------------------------
+# A closed square is FOUR points with `closed` set, not five with the
+# first written twice. Repeating it would make `count` ambiguous — is a
+# five-point closed draft a pentagon or a repeated square? — and every
+# loop over the points would need to know which convention was used.
+#
+# The last edge of a closed draft runs from the last point back to the
+# first, and it exists precisely because `closed` says so.
+#
+# CURVES ARE NOT HERE YET
+# -----------------------
+# Straight segments only. An arc needs a curve type in the BREP too, and
+# adding it in one place without the other would be a draft the kernel
+# cannot turn into a face. It arrives when both do.
+
+from 'linen:predicates' use Point, orient2d
+
+# A path in a plane: points in order, and whether the last joins the
+# first.
+shape Draft
+  points List<Point>
+  closed bool
+
+# An empty closed path, ready to have points added.
+fn closed_draft() Draft
+  return Draft(points: list(), closed: true)
+
+# An empty open path.
+fn open_draft() Draft
+  return Draft(points: list(), closed: false)
+
+# The same draft, one point longer.
+#
+# Returns a new draft rather than changing this one, like everything
+# else in the language: a caller holding the shorter one still sees the
+# shorter one.
+fn add(draft Draft, point Point) Draft
+  return Draft(points: push(list: draft.points, value: point), closed: draft.closed)
+
+fn count(draft Draft) i32
+  return length(list: draft.points)
+
+fn point_at(draft Draft, index i32) Point
+  return at(list: draft.points, index: index)
+
+fn is_closed(draft Draft) bool
+  return draft.closed
+
+# --- area and winding -------------------------------------------------
+
+# Twice the signed area the path encloses.
+#
+# Positive means counter-clockwise, which is how the kernel tells an
+# outer boundary from a hole without measuring an angle. Doubled and
+# never halved: half of an odd integer is not an integer, and rounding
+# here would be a lie about a value that is exact.
+#
+# An OPEN path gets zero. Not because the terms cancelled — an open path
+# encloses nothing, and the honest answer to "how much area" is none. A
+# caller that cares should ask `is_closed` first.
+fn signed_area(draft Draft) i128
+  if draft.closed == false
+    return 0
+  return summing_area(draft: draft, from: 0, total: 0)
+
+fn summing_area(draft Draft, from i32, total i128) i128
+  if from >= count(draft: draft)
+    return total
+  let a = point_at(draft: draft, index: from)
+  let b = point_at(draft: draft, index: next_index(draft: draft, after: from))
+  return summing_area(
+    draft: draft,
+    from: from + 1,
+    total: total + wide2(value: a.x) * wide2(value: b.y) - wide2(value: b.x) * wide2(value: a.y))
+
+# i32 up to i128, for the area sum.
+#
+# Coordinates reach 10^7, their products 10^14, and a polygon with many
+# corners sums many of those — i64 would hold it, but the area feeds
+# comparisons against other i128 predicates and mixing widths at that
+# boundary is where a sign gets lost.
+fn wide2(value i32) i128
+  return value + 0
+
+# The point after this one, wrapping at the end of a closed path.
+fn next_index(draft Draft, after i32) i32
+  let total = count(draft: draft)
+  if after + 1 >= total
+    return 0
+  return after + 1
+
+fn winds_counter_clockwise(draft Draft) bool
+  return signed_area(draft: draft) > 0
+
+# The same path, walked the other way.
+#
+# What turns an outer boundary into a hole, and what a face needs when
+# it uses an edge its neighbour already used.
+fn reversed(draft Draft) Draft
+  return reversing(draft: draft, from: count(draft: draft) - 1, built: Draft(points: list(), closed: draft.closed))
+
+fn reversing(draft Draft, from i32, built Draft) Draft
+  if from < 0
+    return built
+  return reversing(
+    draft: draft,
+    from: from - 1,
+    built: add(draft: built, point: point_at(draft: draft, index: from)))
+
+# --- validity ---------------------------------------------------------
+
+# Whether this is a polygon a face can be built on.
+#
+# Simple means: at least three points, no two consecutive points equal,
+# and no two edges crossing. That last is the one a naive check misses —
+# a bowtie has four distinct corners and no repeated vertex, and still
+# has no inside. Extruding it would produce a solid that is not a solid.
+#
+# Only closed drafts can be simple. An open path is not a polygon at
+# all, so the question does not apply and the answer is no.
+fn is_simple(draft Draft) bool
+  if draft.closed == false
+    return false
+  if count(draft: draft) < 3
+    return false
+  if has_repeated_point(draft: draft, from: 0)
+    return true == false
+  return no_edges_cross(draft: draft, first: 0)
+
+# Two consecutive points the same.
+#
+# A zero-length edge has no direction, and every later question about
+# the profile — which side, which way it turns — depends on edge
+# direction.
+fn has_repeated_point(draft Draft, from i32) bool
+  if from >= count(draft: draft)
+    return false
+  let a = point_at(draft: draft, index: from)
+  let b = point_at(draft: draft, index: next_index(draft: draft, after: from))
+  if a.x == b.x and a.y == b.y
+    return true
+  return has_repeated_point(draft: draft, from: from + 1)
+
+# Every pair of non-adjacent edges, checked for a crossing.
+#
+# Quadratic, and deliberately so: a profile has tens of points, not
+# thousands, and a sweep-line would be more code to be wrong in for a
+# cost nobody can measure here.
+fn no_edges_cross(draft Draft, first i32) bool
+  let total = count(draft: draft)
+  if first >= total
+    return true
+  if crosses_any(draft: draft, first: first, second: first + 1) == false
+    return false
+  return no_edges_cross(draft: draft, first: first + 1)
+
+fn crosses_any(draft Draft, first i32, second i32) bool
+  let total = count(draft: draft)
+  if second >= total
+    return true
+
+  # Adjacent edges SHARE a point, which is a touch and not a crossing.
+  # Skipping them is what makes this test about the shape rather than
+  # about every corner.
+  if adjacent(first: first, second: second, total: total)
+    return crosses_any(draft: draft, first: first, second: second + 1)
+
+  let a = point_at(draft: draft, index: first)
+  let b = point_at(draft: draft, index: next_index(draft: draft, after: first))
+  let c = point_at(draft: draft, index: second)
+  let d = point_at(draft: draft, index: next_index(draft: draft, after: second))
+
+  if segments_cross(a: a, b: b, c: c, d: d)
+    return false
+  return crosses_any(draft: draft, first: first, second: second + 1)
+
+# Whether two edges of a closed path touch end to end.
+#
+# The last edge wraps to the first, so edge `total - 1` is adjacent to
+# edge 0 as well as to edge `total - 2`.
+fn adjacent(first i32, second i32, total i32) bool
+  if second == first + 1
+    return true
+  if first == 0 and second == total - 1
+    return true
+  return false
+
+# Whether segments a->b and c->d cross.
+#
+# Each segment has to straddle the other's line, which is four
+# orientation tests and no arithmetic beyond them. Strict: a crossing is
+# when both straddle STRICTLY, so an endpoint lying exactly on the other
+# segment is a touch rather than a crossing.
+#
+# That is deliberate. A touch is caught by `has_repeated_point` when it
+# is a repeated corner, and a genuine T-junction is a degenerate profile
+# worth its own message rather than being folded in here.
+fn segments_cross(a Point, b Point, c Point, d Point) bool
+  let first = orient2d(a: a, b: b, c: c)
+  let second = orient2d(a: a, b: b, c: d)
+  let third = orient2d(a: c, b: d, c: a)
+  let fourth = orient2d(a: c, b: d, c: b)
+  return opposite(one: first, other: second) and opposite(one: third, other: fourth)
+
+# Whether two orientations are strictly on opposite sides.
+fn opposite(one i64, other i64) bool
+  if one > 0 and other < 0
+    return true
+  if one < 0 and other > 0
+    return true
+  return false

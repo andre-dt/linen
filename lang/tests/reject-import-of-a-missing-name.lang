@@ -1,0 +1,12 @@
+#~ does not declare
+# Importing a name the module does not have.
+#
+# Caught at the import rather than at the call site. Without it, a name
+# that was renamed or removed would fail far away — "no such function" —
+# with nothing to say that an import had claimed it existed.
+
+from './modules/shared' use Point, nonexistent
+
+test "t"
+  let p = Point(x: 1, y: 2)
+  throw "x" unless p.x == 1

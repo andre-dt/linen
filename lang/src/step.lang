@@ -1,0 +1,51 @@
+# STEP — the header.
+#
+# Declarations only; the implementation is
+# `crates/runtime/src/drivers/step.rs`.
+#
+# ISO 10303-21, the exchange format every CAD system reads. A part
+# leaves this kernel as STEP text and arrives in another system as the
+# same solid — which is the only reason to have a format at all.
+#
+# WHY THIS IS A DRIVER AND THE TESSELLATOR IS NOT
+# -----------------------------------------------
+# STEP is TEXT. `CARTESIAN_POINT('',(0.,0.,0.))` is characters, entity
+# references are `#12`, and parsing one means tokenising and resolving
+# a reference graph. None of that is geometry, and the language has
+# integers rather than strings.
+#
+# Tessellation went the other way — into `.lang` — because it decides
+# geometry, and geometry the kernel does not own is geometry the kernel
+# cannot guarantee. The line is what the work IS, not what is easier.
+#
+# BYTES, NOT A FILE
+# -----------------
+# `serialize` returns the file's bytes and writes nothing. Whoever
+# called it decides where they go: a test writes them beside itself, a
+# server sends them, an addon hands them to JavaScript. A driver that
+# opened files would make every caller inherit a path.
+#
+# One i32 per byte. A STEP file is ASCII, the list is short-lived, and
+# packing four to a word would need shifts the language has no
+# operators for.
+
+from 'linen:brep' use Body
+
+# The bytes of a STEP file describing this body.
+driver fn serialize(body Body) List<i32>
+
+# A body read back from STEP bytes.
+#
+# The other half, and the one that proves the first: a body that
+# survives a round trip is a body the format actually carried. Anything
+# unreadable comes back as a body with nothing in it, so a caller checks
+# by counting rather than by catching.
+driver fn parse(bytes List<i32>) Body
+
+# A fixed piece of STEP text, by number — for tests that need to hand
+# the reader something specific.
+#
+# There is no string literal in the language, so the fragments a test
+# needs are named rather than written. Scaffolding, like `linen:bytes`:
+# it goes away when text lands.
+driver fn bytes_of(text i32) List<i32>

@@ -1,0 +1,49 @@
+# `from '<path>' use a, b, c` — one file naming another.
+#
+# WHY A PATH AND A LIST, NOT A WHOLE-MODULE HANDLE
+# ------------------------------------------------
+# `from 'brep' use Vertex, Body` says exactly what arrives, so reading
+# the top of a file tells you where every unqualified name in it comes
+# from. A whole-module import would put that answer somewhere else.
+#
+# The path has no extension and is relative to the importing file: the
+# `.lang` is the only thing it could be, and writing it every time is
+# noise that never varies.
+
+from './modules/shared' use Point, doubled, origin
+
+test "an imported function can be called"
+  throw "twice two is four" unless doubled(n: 2) == 4
+
+test "an imported shape can be constructed"
+  let p = Point(x: 3, y: 4)
+  throw "x" unless p.x == 3
+  throw "y" unless p.y == 4
+
+test "an imported function returning an imported shape"
+  # The case that proves the two arrive as the SAME type. If the shape
+  # were interned twice — once for the definition, once for the import —
+  # this would be a type error, and the two would be different types
+  # with the same name.
+  let p = origin()
+  throw "the origin is at zero" unless p.x == 0 and p.y == 0
+
+from './modules/left' use left_of
+from './modules/right' use right_of
+
+test "a module reached by two paths is loaded once"
+  # The diamond: this file imports two modules and both import a third.
+  # Merging that third twice would be a duplicate declaration of every
+  # name in it — which the checker catches, so this test failing looks
+  # like `Point is declared twice` rather than anything about imports.
+  let p = Point(x: 7, y: 9)
+  throw "through the left" unless left_of(p: p) == 7
+  throw "through the right" unless right_of(p: p) == 9
+
+test "a shape crossing three files is one type"
+  # `Point` is declared in shared, imported by left and right, and
+  # imported again here. If any of those interned it separately, passing
+  # this value to `left_of` would be a type error saying Point is not
+  # Point.
+  let p = origin()
+  throw "the origin through an imported function" unless left_of(p: p) == 0

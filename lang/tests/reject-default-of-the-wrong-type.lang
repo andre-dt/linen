@@ -1,0 +1,12 @@
+#~ but its default is
+# A default that is not the type it is defaulting.
+#
+# `fn f(a i32 = true)` declares a number and hands back a bool when the
+# argument is left out — so the same function has two types depending on
+# how it is called.
+
+fn f(a i32 = true) i32
+  return a
+
+test "t"
+  throw "f" unless f() == 1

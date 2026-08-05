@@ -1,0 +1,16 @@
+# =====================================================================
+# draw — PIXELS.
+#
+# The rasteriser and the mosaic. Knows nothing about compiling, and
+# nothing about geometry beyond points and indices: it is handed a mesh
+# and produces an image.
+#
+# Its own crate because it is testable on its own terms. A line's
+# placement is a question about pixels, and asking it should not mean
+# building a compiler first.
+# =====================================================================
+
+[package]
+name = "draw"
+edition.workspace = true
+version.workspace = true

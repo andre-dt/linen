@@ -24,12 +24,9 @@ use std::path::Path;
 
 use compile::run::Ran;
 
-use crate::gallery::{write_gallery, Tile};
-use crate::render::{render, Mesh, Point3};
+use draw::gallery::{write_gallery, Tile, TILE_HEIGHT, TILE_WIDTH};
+use draw::render::{render, Mesh, MeshKind, Point3};
 
-/// How big each rendered tile is.
-pub const TILE_WIDTH: usize = 320;
-pub const TILE_HEIGHT: usize = 260;
 
 /// Renders every drawing test of one file into a mosaic beside it.
 ///
@@ -52,6 +49,10 @@ pub fn render_file(ran: &[Ran], source: &Path) -> Result<usize, String> {
                 })
                 .collect(),
             triangles: mesh.triangles.iter().map(|index| *index as usize).collect(),
+            kind: match mesh.kind {
+                compile::run::MeshKind::Wire => MeshKind::Wire,
+                compile::run::MeshKind::Solid => MeshKind::Solid,
+            },
         };
 
         // A triangle naming a point that is not there would panic in the

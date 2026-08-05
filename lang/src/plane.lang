@@ -1,0 +1,157 @@
+# PLANES — where a draft lives.
+#
+# Drafting is 2D over a 3D space: a draft's points are two numbers, and
+# the plane is what makes them a place. Onshape starts you on Top, Front
+# or Right and lets you pick a face later; this is that choice, made
+# explicit.
+#
+# WHY NAMED PLANES AND NOT RAW AXES
+# ---------------------------------
+# `top()` rather than an origin and two vectors, because the six
+# standard planes are what a user picks and the axes are what they
+# imply. A plane built from arbitrary axes can be degenerate — parallel
+# axes, zero length, mismatched scales — and none of those are
+# reachable through a name.
+#
+# A plane from a FACE arrives the same way: the face names it, and the
+# axes come out of the face's own geometry rather than from a caller who
+# might get them wrong.
+#
+# WHY THE AXES ARE STORED AND NOT DERIVED FROM THE NORMAL
+# -------------------------------------------------------
+# A normal alone does not fix a plane's rotation — there are infinitely
+# many pairs of axes perpendicular to it, and picking one requires an
+# arbitrary choice that would then have to be made identically
+# everywhere. Storing them means the draft's x is the same direction
+# every time the model regenerates, which is what determinism requires.
+#
+# THE FRAME IS RIGHT-HANDED
+# -------------------------
+# x cross y = normal, always. Get it wrong and every profile extrudes
+# INTO the solid rather than out of it, with the geometry otherwise
+# correct — the hard kind of wrong, because nothing looks broken until
+# a boolean subtracts the wrong side.
+
+from 'linen:predicates' use Point, Point3
+
+# A plane: an origin, two perpendicular unit axes, and the normal they
+# imply.
+#
+# The normal is stored rather than computed at every use. It is the
+# cross product of the axes and cannot disagree with them — there is a
+# test for exactly that — and a plane is read far more often than it is
+# built.
+shape Plane
+  origin Point3
+  u Point3
+  v Point3
+  normal Point3
+
+# --- the six standard planes ------------------------------------------
+
+# Looking down at the xy plane: draft x is world x, draft y is world y.
+#
+# The default, and the reason it is: drafting on Top is drafting in
+# world coordinates, so nothing surprising happens to the numbers.
+fn top() Plane
+  return Plane(
+    origin: Point3(x: 0, y: 0, z: 0),
+    u: Point3(x: 1, y: 0, z: 0),
+    v: Point3(x: 0, y: 1, z: 0),
+    normal: Point3(x: 0, y: 0, z: 1))
+
+# The same plane from underneath. A profile drawn here extrudes down.
+fn bottom() Plane
+  return Plane(
+    origin: Point3(x: 0, y: 0, z: 0),
+    u: Point3(x: 0, y: 1, z: 0),
+    v: Point3(x: 1, y: 0, z: 0),
+    normal: Point3(x: 0, y: 0, z: 0 - 1))
+
+# The xz plane, seen from -y. A draft's y becomes world z, which is what
+# makes a profile drawn here stand up.
+fn front() Plane
+  return Plane(
+    origin: Point3(x: 0, y: 0, z: 0),
+    u: Point3(x: 1, y: 0, z: 0),
+    v: Point3(x: 0, y: 0, z: 1),
+    normal: Point3(x: 0, y: 0 - 1, z: 0))
+
+fn back() Plane
+  return Plane(
+    origin: Point3(x: 0, y: 0, z: 0),
+    u: Point3(x: 0, y: 0, z: 1),
+    v: Point3(x: 1, y: 0, z: 0),
+    normal: Point3(x: 0, y: 1, z: 0))
+
+# The yz plane, seen from +x.
+fn right() Plane
+  return Plane(
+    origin: Point3(x: 0, y: 0, z: 0),
+    u: Point3(x: 0, y: 1, z: 0),
+    v: Point3(x: 0, y: 0, z: 1),
+    normal: Point3(x: 1, y: 0, z: 0))
+
+fn left() Plane
+  return Plane(
+    origin: Point3(x: 0, y: 0, z: 0),
+    u: Point3(x: 0, y: 0, z: 1),
+    v: Point3(x: 0, y: 1, z: 0),
+    normal: Point3(x: 0 - 1, y: 0, z: 0))
+
+# --- moving one -------------------------------------------------------
+
+# The same plane, shifted along its OWN normal.
+#
+# Along the normal rather than along a world axis: a sketch 50 microns
+# above Front is 50 microns along -y, and writing it against z would
+# work for Top and silently misplace everything else.
+#
+# The axes do not change, only the origin — so a profile drawn on the
+# offset plane is the same profile, somewhere else.
+fn offset_by(plane Plane, distance i32) Plane
+  return Plane(
+    origin: Point3(
+      x: plane.origin.x + plane.normal.x * distance,
+      y: plane.origin.y + plane.normal.y * distance,
+      z: plane.origin.z + plane.normal.z * distance),
+    u: plane.u,
+    v: plane.v,
+    normal: plane.normal)
+
+# --- reading ----------------------------------------------------------
+
+# A 2D point on the plane, as a place in the world.
+#
+#     world = origin + x * u + y * v
+#
+# Exact in integers, because the axes are unit vectors along world axes:
+# nothing is normalised, nothing is rounded, and one micron on the
+# plane is one micron in the world.
+fn to_world(plane Plane, point Point) Point3
+  return Point3(
+    x: narrow_to(value: plane.origin.x + plane.u.x * point.x + plane.v.x * point.y),
+    y: narrow_to(value: plane.origin.y + plane.u.y * point.x + plane.v.y * point.y),
+    z: narrow_to(value: plane.origin.z + plane.u.z * point.x + plane.v.z * point.y))
+
+# Back to i32 after arithmetic widened it.
+fn narrow_to(value i64) i32
+  return value
+
+fn plane_x(plane Plane, point Point) i32
+  return to_world(plane: plane, point: point).x
+
+fn plane_y(plane Plane, point Point) i32
+  return to_world(plane: plane, point: point).y
+
+fn plane_z(plane Plane, point Point) i32
+  return to_world(plane: plane, point: point).z
+
+fn normal_x(plane Plane) i32
+  return plane.normal.x
+
+fn normal_y(plane Plane) i32
+  return plane.normal.y
+
+fn normal_z(plane Plane) i32
+  return plane.normal.z

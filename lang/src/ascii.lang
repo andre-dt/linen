@@ -1,0 +1,46 @@
+# The fixed pieces of text a STEP file is made of, named.
+#
+# `ascii` takes a NUMBER, because the language can pass nothing else,
+# and a bare number at a call site says nothing about what it is. These
+# give each fragment a name, so a writer reads as `comma()` rather than
+# `ascii(of: 7)`.
+#
+# The numbers appear once, here, and match the table in
+# `crates/compile/src/drivers/bytes.rs`. Scaffolding: it goes away when
+# the language has text, and until then it lets the STEP writer be
+# written in .lang today rather than waiting.
+
+from 'linen:bytes' use ascii
+
+fn nothing() List<i32>
+  return ascii(of: 0)
+
+fn newline() List<i32>
+  return ascii(of: 1)
+
+fn semicolon() List<i32>
+  return ascii(of: 2)
+
+fn equals() List<i32>
+  return ascii(of: 3)
+
+fn hash() List<i32>
+  return ascii(of: 4)
+
+fn open_bracket() List<i32>
+  return ascii(of: 5)
+
+fn close_bracket() List<i32>
+  return ascii(of: 6)
+
+fn comma() List<i32>
+  return ascii(of: 7)
+
+fn quote() List<i32>
+  return ascii(of: 8)
+
+fn dot() List<i32>
+  return ascii(of: 9)
+
+fn space() List<i32>
+  return ascii(of: 10)

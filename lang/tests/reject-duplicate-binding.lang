@@ -1,0 +1,15 @@
+#~ is already bound
+# Two `let x` in one scope.
+#
+# The second silently shadows the first, so half the reads in a function
+# see one value and half the other — with nothing in the text saying
+# where the change happened.
+#
+# Shadowing in a NESTED scope is fine and stays: a loop body binding `x`
+# is a new `x` each iteration, which is what makes carrying a value
+# through a loop mean going through a call.
+
+test "t"
+  let x = 1
+  let x = 2
+  throw "x" unless x == 2

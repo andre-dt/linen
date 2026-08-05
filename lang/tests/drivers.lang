@@ -1,0 +1,55 @@
+# `driver fn` — a signature in the language, a body in Rust.
+#
+# The standard library is bound this way. `from 'linen:bytes'` names a
+# module resolved against the kernel's own source rather than against
+# this file, and the functions it declares have no body here: the body
+# is Rust, linked at load time.
+#
+# WHY ANYTHING IS A DRIVER
+# ------------------------
+# Text and I/O only. STEP is a text format, and the language has
+# integers — formatting a number into ASCII is string work. A driver
+# never computes geometry; one that did would make the kernel a shell
+# over Rust, which is the opposite of the point.
+
+from 'linen:bytes' use digits, ascii
+from 'linen:ascii' use comma, newline, open_bracket
+
+test "a number becomes its decimal digits"
+  # The one thing integer arithmetic alone cannot do, and the reason
+  # drivers exist at all: a STEP file is mostly numbers written as text.
+  let out = digits(value: 120)
+  throw "three digits" unless length(list: out) == 3
+  throw "one" unless at(list: out, index: 0) == 49
+  throw "two" unless at(list: out, index: 1) == 50
+  throw "zero" unless at(list: out, index: 2) == 48
+
+test "a negative number keeps its sign"
+  let out = digits(value: 0 - 7)
+  throw "two bytes" unless length(list: out) == 2
+  throw "a minus" unless at(list: out, index: 0) == 45
+  throw "then seven" unless at(list: out, index: 1) == 55
+
+test "zero is one digit, not none"
+  let out = digits(value: 0)
+  throw "one byte" unless length(list: out) == 1
+  throw "the digit zero" unless at(list: out, index: 0) == 48
+
+test "a number at the edge of the range"
+  # 10 metres in microns, which is the largest coordinate the kernel
+  # admits. Eight digits, and none of them lost.
+  let out = digits(value: 10000000)
+  throw "eight digits" unless length(list: out) == 8
+  throw "it starts with one" unless at(list: out, index: 0) == 49
+
+test "a fixed fragment comes back as bytes"
+  throw "a comma is one byte" unless length(list: comma()) == 1
+  throw "and it is a comma" unless at(list: comma(), index: 0) == 44
+  throw "a newline is one byte" unless at(list: newline(), index: 0) == 10
+  throw "a bracket" unless at(list: open_bracket(), index: 0) == 40
+
+test "a fragment that does not exist is empty"
+  # An unknown fragment gives nothing rather than failing. It shows up
+  # as a malformed file, which the round-trip catches — better than a
+  # crash with no test name attached.
+  throw "nothing came back" unless length(list: ascii(of: 9999)) == 0

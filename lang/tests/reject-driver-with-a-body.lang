@@ -1,0 +1,12 @@
+#~ a driver has no body
+# A driver declares and does not define.
+#
+# The body is Rust, bound at link time. Writing one here would be code
+# that never runs — and the two halves disagreeing is exactly what the
+# split declaration exists to prevent.
+
+driver fn digits(value i64) List<i32>
+  return list()
+
+test "t"
+  throw "x" unless length(list: digits(value: 1)) == 1

@@ -21,18 +21,14 @@ retorna nada, argumento do tipo errado.
 
 ## O que falta
 
-| erro | exemplo |
-|---|---|
-| função declarada duas vezes | dois `fn f()` |
-| binding declarado duas vezes no mesmo escopo | dois `let x` |
-| `test` com nome repetido | dois `test "t"` |
-| função sem `return` mas com tipo de retorno | `fn f() i32` com corpo sem return |
-| default de tipo errado | `fn f(a i32 = true)` |
-| `test` com nome repetido | dois `test "t"` |
+**Nada de resolução ou tipos.** A lista está vazia: nome duplicado
+(função, shape, binding, teste), `return` faltando, default de tipo
+errado — tudo é erro de compilação hoje, cada um com um `reject-*.lang`.
+
 
 ## Erros de execução que já se reportam
 
-`at(list:, index:)` fora do intervalo. Antes devolvia null e o código
+`at(list:, index:)` e `xs[i]` fora do intervalo. Antes devolvia null e o código
 gerado dereferenciava: um defeito duas camadas acima chegava como
 segfault, sem nome de teste. Agora a leitura é registrada e o runner diz
 qual teste leu onde — inclusive quando o teste "passaria", tendo lido um
@@ -66,9 +62,14 @@ Literal que não cabe **já é pego**: `f(n: 1000000000000)` para
 O que falta é o estreitamento de um valor *calculado* — aí só dá para
 saber em runtime.
 
-## Sem checagem de limites — em array
 
-`xs[5]` num array de 3 lê fora. Em **lista** já se reporta (veja acima);
-em array fixo ainda não, e é o mesmo mecanismo — falta ligá-lo.
 
-O overflow do estreitamento de i64 para i32 entra no mesmo lugar.
+## Estreitamento de i64 para i32 ainda passa em silêncio
+
+`fn f(n i64) i32` com `return n` trunca sem avisar quando o valor não
+cabe. É checagem de **runtime** — o valor é calculado — e vai no mesmo
+lugar onde a checagem de limites já está: `linen_check_index` mostra o
+mecanismo.
+
+Divisão por zero fica de fora de propósito: `1 / 0` é erro de execução,
+não de tipo.

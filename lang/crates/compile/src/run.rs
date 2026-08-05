@@ -36,12 +36,25 @@ pub struct Ran {
     pub mesh: Option<Mesh>,
 }
 
-/// Points and triangles, as the compiled code handed them over.
+/// Points and indices, as the compiled code handed them over.
 pub struct Mesh {
     /// x, y, z per point.
     pub points: Vec<i32>,
-    /// Three indices per triangle.
+    /// The indices — three per triangle for a solid, two per line for a
+    /// wire. Which it is, `kind` says.
     pub triangles: Vec<i32>,
+    pub kind: MeshKind,
+}
+
+/// What a drawing statement handed over.
+///
+/// A wire exists because a DRAFT has no inside: an open path encloses
+/// nothing, so there is nothing to shade, and drawing it as a solid
+/// would show an empty tile.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MeshKind {
+    Solid,
+    Wire,
 }
 
 // The mesh most recently handed over by a `solid` statement.
@@ -65,6 +78,7 @@ unsafe extern "C" fn receive_solid(
     point_count: i32,
     triangles: *const i32,
     triangle_count: i32,
+    kind: i32,
 ) {
     // An empty list is a length of zero and a NULL pointer — it never
     // allocated, because nothing would read it. `from_raw_parts` will
@@ -73,7 +87,11 @@ unsafe extern "C" fn receive_solid(
     let points = copy_out(points, point_count);
     let triangles = copy_out(triangles, triangle_count);
     DRAWN.with(|drawn| {
-        *drawn.borrow_mut() = Some(Mesh { points, triangles });
+        *drawn.borrow_mut() = Some(Mesh {
+            points,
+            triangles,
+            kind: if kind == 1 { MeshKind::Wire } else { MeshKind::Solid },
+        });
     });
 }
 
@@ -122,8 +140,21 @@ pub fn run_tests(unit: &Unit, module_name: &str) -> Result<Vec<Ran>, EmitError> 
         ("linen_list_push", crate::arena::linen_list_push as *const () as usize),
         ("linen_list_length", crate::arena::linen_list_length as *const () as usize),
         ("linen_list_at", crate::arena::linen_list_at as *const () as usize),
+        ("linen_check_index", crate::arena::linen_check_index as *const () as usize),
     ] {
         if let Some(declared) = compiled.module.get_function(name) {
+            engine.add_global_mapping(&declared, address);
+        }
+    }
+
+    // And the standard library's drivers — the `linen:` modules, whose
+    // signatures are `.lang` and whose bodies are Rust.
+    for (name, address) in crate::drivers::table() {
+        // Under the same prefix the emitter used. The JIT would map any
+        // name to any address, which is exactly why the two drifted
+        // apart unnoticed until a static link failed.
+        let symbol = format!("{}{name}", crate::emit::DRIVER_PREFIX);
+        if let Some(declared) = compiled.module.get_function(&symbol) {
             engine.add_global_mapping(&declared, address);
         }
     }
@@ -133,6 +164,7 @@ pub fn run_tests(unit: &Unit, module_name: &str) -> Result<Vec<Ran>, EmitError> 
         DRAWN.with(|drawn| *drawn.borrow_mut() = None);
         // Nothing survives the test that allocated it.
         crate::arena::reset_arena();
+        crate::drivers::reset();
         // Safety: the symbol was just emitted with exactly this
         // signature — `fn() -> i32`, no arguments, no state — and the
         // module it came from outlives the call.

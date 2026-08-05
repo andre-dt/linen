@@ -1,0 +1,91 @@
+# EXACT PREDICATES — the arithmetic the rest of the kernel trusts.
+#
+# Every geometric decision a BREP kernel makes reduces to one of these:
+# which side of a line, which side of a plane, how far apart. Get them
+# wrong and nothing above can be right, because the errors are not small
+# — they are inconsistent. A point left of an edge here and right of it
+# there is a solid that cannot be built.
+#
+# COORDINATES ARE MICRONS
+# -----------------------
+# Every i32 is a whole number of microns: 1 micron to 10 metres, which is
+# 10^7 units. Well inside i32, and the products reach 10^14, which is why
+# every result is i64 — and why orient3d, a triple product reaching
+# 10^21, is i128.
+#
+# There is no floating point anywhere below this line, and that is the
+# point of the whole design.
+
+shape Point
+  x i32
+  y i32
+
+shape Point3
+  x i32
+  y i32
+  z i32
+
+# --- predicates -------------------------------------------------------
+
+# Which side of a->b the point c falls on.
+#
+#   > 0   left of a->b, a counter-clockwise turn
+#   = 0   collinear, EXACTLY
+#   < 0   right
+#
+# The most used predicate in a BREP kernel, and the one floating point
+# gets wrong in the way that matters: three points collinear by
+# construction come out as a tiny non-zero determinant, and the kernel
+# then decides a point is left of an edge here and right of it there.
+# In integers the sign of the determinant IS the answer.
+fn orient2d(a Point, b Point, c Point) i64
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+
+# Twice the signed area of a triangle.
+#
+# Twice, and never halved: the doubled value is always a whole number
+# where the halved one is not, and comparing areas, testing a winding or
+# summing a polygon are all unaffected by the constant factor. Halving
+# is the only step that could lose anything.
+fn double_area(a Point, b Point, c Point) i64
+  return orient2d(a: a, b: b, c: c)
+
+# The squared distance between two points.
+#
+# Squared, and never the root: a square root leaves the integers, and
+# every kernel use of a distance — comparing two, finding the nearest,
+# testing a tolerance — works on the square. A real length is a display
+# concern.
+fn distance_squared(a Point, b Point) i64
+  return (b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y)
+
+# Widen an i64 into i128 before it is multiplied.
+#
+# Written out rather than left implicit: arithmetic widens i32 to i64,
+# which is right everywhere except here. Making every subtraction in the
+# language i128 to serve one predicate would be the wrong trade.
+fn wide(value i64) i128
+  return value + 0
+
+# Which side of the plane through a, b, c the point d falls on.
+#
+#   > 0   above, the side the normal of a->b->c points to
+#   = 0   COPLANAR, exactly
+#   < 0   below
+#
+# A 3x3 determinant: six products of three coordinates. A coordinate
+# reaches 10^7, so a triple product reaches 10^21 and i64 is two orders
+# short — and a wrapped determinant does not merely lose precision, it
+# can carry the WRONG SIGN, placing a point on the wrong side of a face.
+# That is what i128 is here for.
+fn orient3d(a Point3, b Point3, c Point3, d Point3) i128
+  let bx = wide(value: b.x - a.x)
+  let by = wide(value: b.y - a.y)
+  let bz = wide(value: b.z - a.z)
+  let cx = wide(value: c.x - a.x)
+  let cy = wide(value: c.y - a.y)
+  let cz = wide(value: c.z - a.z)
+  let dx = wide(value: d.x - a.x)
+  let dy = wide(value: d.y - a.y)
+  let dz = wide(value: d.z - a.z)
+  return bx * (cy * dz - cz * dy) - by * (cx * dz - cz * dx) + bz * (cx * dy - cy * dx)

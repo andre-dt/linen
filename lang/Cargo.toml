@@ -4,8 +4,13 @@
 # Three crates, split along the one seam that matters: LLVM.
 #
 #   syntax   source text -> AST. Knows nothing about backends.
+#   runtime  the arena and the `linen:` drivers. No LLVM: this is what
+#            gets linked INTO a compiled kernel, and a kernel should not
+#            carry a compiler.
 #   compile  AST -> LLVM IR. The only crate that links LLVM.
-#   cli      the `lang` binary.
+#   draw     the rasteriser and the mosaic. No compiler, no geometry —
+#            a mesh in, an image out.
+#   cli      the `linen` binary.
 #
 # The split is not ceremony. Linking LLVM is the slow part of every
 # build, and the parser is the part that changes every ten minutes —
@@ -15,7 +20,7 @@
 
 [workspace]
 resolver = "2"
-members = ["crates/syntax", "crates/compile", "crates/cli"]
+members = ["crates/syntax", "crates/runtime", "crates/compile", "crates/draw", "crates/cli"]
 
 [workspace.package]
 edition = "2021"
@@ -24,6 +29,8 @@ version = "0.0.0"
 [workspace.dependencies]
 syntax = { path = "crates/syntax" }
 compile = { path = "crates/compile" }
+runtime = { path = "crates/runtime" }
+draw = { path = "crates/draw" }
 
 # LLVM 18, linked through inkwell. The version is pinned to the one the
 # system provides: inkwell picks its LLVM by cargo feature, so a mismatch

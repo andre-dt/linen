@@ -57,6 +57,7 @@ pub fn resolve(unit: &Unit) -> Result<(), ResolveError> {
 
     for item in &unit.items {
         match item {
+            Item::Import(_) => {}
             Item::Function(function) => {
                 signatures.insert(
                     &function.name,
@@ -98,6 +99,10 @@ pub fn resolve(unit: &Unit) -> Result<(), ResolveError> {
             Item::Function(function) => check_statements(&function.body, &signatures)?,
             Item::Test(test) => check_statements(&test.body, &signatures)?,
             Item::Shape(_) => {}
+            // Nothing to resolve: the loader merged the imported items
+            // into this unit before resolution ran, so the names an
+            // import brought in are already ordinary declarations here.
+            Item::Import(_) => {}
         }
     }
     Ok(())
@@ -110,6 +115,7 @@ fn check_statements(
     for statement in statements {
         match statement {
             Statement::Let { value, .. } => check_expression(value, signatures)?,
+            Statement::Call { call, .. } => check_expression(call, signatures)?,
             Statement::Return { value, .. } => {
                 if let Some(value) = value {
                     check_expression(value, signatures)?;

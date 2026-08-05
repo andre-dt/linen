@@ -70,17 +70,31 @@ impl<'a> Parser<'a> {
             if self.peek_name() != Some("fn") {
                 return Err(self.error_here("expected `fn` after `export`"));
             }
-            return Ok(Item::Function(self.function(true)?));
+            return Ok(Item::Function(self.function(true, false)?));
+        }
+
+        // `driver fn` — a signature bound to Rust. Not combinable with
+        // `export`: one says what crosses INTO the language, the other
+        // what crosses out, and a function cannot be both.
+        if self.peek_name() == Some("driver") {
+            self.advance();
+            if self.peek_name() != Some("fn") {
+                return Err(self.error_here("expected `fn` after `driver`"));
+            }
+            return Ok(Item::Function(self.function(false, true)?));
         }
         match self.peek_name() {
-            Some("fn") => Ok(Item::Function(self.function(false)?)),
+            Some("from") => Ok(Item::Import(self.import()?)),
+            Some("fn") => Ok(Item::Function(self.function(false, false)?)),
             Some("shape") => Ok(Item::Shape(self.shape()?)),
             Some("test") => Ok(Item::Test(self.test()?)),
-            _ => Err(self.error_here("expected `fn`, `export fn`, `shape` or `test` at the top level")),
+            _ => Err(self.error_here(
+                "expected `from`, `fn`, `export fn`, `driver fn`, `shape` or `test` at the top level",
+            )),
         }
     }
 
-    fn function(&mut self, exported: bool) -> Result<Function, ParseError> {
+    fn function(&mut self, exported: bool, driver: bool) -> Result<Function, ParseError> {
         let start = self.span_here();
         self.advance(); // fn
         let name_span = self.span_here();
@@ -124,9 +138,25 @@ impl<'a> Parser<'a> {
             Some(self.type_name()?)
         };
 
-        let body = self.block()?;
+        // A driver ends at its signature: the body is Rust, and there is
+        // nothing here to write. Everything else needs one.
+        let body = if driver {
+            self.expect(&TokenKind::Newline, "a line break after the driver signature")?;
+            // An indented block after the signature is the obvious slip,
+            // and it deserves its own message: the generic one talks
+            // about the top level, which does not explain why a body is
+            // wrong HERE.
+            if self.check(&TokenKind::Indent) {
+                return Err(self.error_here(
+                    "a driver has no body — the implementation is Rust, bound at link time",
+                ));
+            }
+            Vec::new()
+        } else {
+            self.block()?
+        };
         let span = start.to(self.span_before());
-        Ok(Function { name, exported, generics, parameters, result, body, span })
+        Ok(Function { name, exported, driver, generics, parameters, result, body, span })
     }
 
     fn parameter(&mut self) -> Result<Parameter, ParseError> {
@@ -291,6 +321,56 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// `from './brep' use Vertex, Edge, Body`
+    ///
+    /// One line, no block, so it ends at the newline. The path comes
+    /// first because that is the order the question is asked in — where
+    /// from, then what.
+    fn import(&mut self) -> Result<Import, ParseError> {
+        let start = self.span_here();
+        self.advance(); // from
+
+        let path = match &self.peek().kind {
+            TokenKind::Text(text) => {
+                let text = text.clone();
+                self.advance();
+                text
+            }
+            _ => {
+                return Err(self.error_here(
+                    "a module path is quoted, as in `from './brep' use Vertex`",
+                ))
+            }
+        };
+
+        if self.peek_name() != Some("use") {
+            return Err(self.error_here(
+                "`from` names what it takes, as in `from './brep' use Vertex, Edge`",
+            ));
+        }
+        self.advance(); // use
+
+        let mut names = Vec::new();
+        loop {
+            let span = self.span_here();
+            let TokenKind::Name(name) = &self.peek().kind else {
+                return Err(self.error_here("expected a name to import"));
+            };
+            names.push(ImportedName { name: name.clone(), span });
+            self.advance();
+
+            if matches!(self.peek().kind, TokenKind::Comma) {
+                self.advance();
+                continue;
+            }
+            break;
+        }
+
+        self.expect(&TokenKind::Newline, "a line break after the import")?;
+        let span = start.to(self.span_before());
+        Ok(Import { path, names, span })
+    }
+
     fn test(&mut self) -> Result<Test, ParseError> {
         let start = self.span_here();
         self.advance(); // test
@@ -364,13 +444,17 @@ impl<'a> Parser<'a> {
         }
 
         let statement = match self.peek_name() {
-            Some("solid") => self.solid_statement()?,
+            Some("solid") => self.mesh_statement(MeshKind::Solid)?,
+            Some("wire") => self.mesh_statement(MeshKind::Wire)?,
             Some("let") => self.let_statement()?,
             Some("return") => self.return_statement()?,
             Some("throw") => self.throw_statement()?,
+            // A call written for its effect. Checked last, so a keyword
+            // is never mistaken for a function name.
+            Some(_) if self.starts_a_call() => self.call_statement()?,
             _ => {
                 return Err(self.error_here(
-                    "expected `let`, `return`, `throw`, `solid`, `if`, `while` or `for`",
+                    "expected `let`, `return`, `throw`, `solid`, `wire`, `if`, `while` or `for`",
                 ))
             }
         };
@@ -440,12 +524,32 @@ impl<'a> Parser<'a> {
     }
 
     /// `solid(points: …, triangles: …)`
-    fn solid_statement(&mut self) -> Result<Statement, ParseError> {
+    fn mesh_statement(&mut self, kind: MeshKind) -> Result<Statement, ParseError> {
         let start = self.span_here();
-        self.advance(); // solid
-        self.expect(&TokenKind::LeftParen, "`(` after `solid`")?;
+        self.advance(); // solid / wire
+        self.expect(&TokenKind::LeftParen, "`(` after the geometry")?;
         let arguments = self.named_arguments("argument")?;
-        Ok(Statement::Solid { arguments, span: start.to(self.span_before()) })
+        Ok(Statement::Solid { arguments, kind, span: start.to(self.span_before()) })
+    }
+
+    /// Whether the statement here is `name(` — a call, and not the
+    /// start of anything else a statement can be.
+    fn starts_a_call(&self) -> bool {
+        matches!(self.peek().kind, TokenKind::Name(_))
+            && matches!(self.peek_at(1).kind, TokenKind::LeftParen)
+    }
+
+    /// A call whose result is thrown away.
+    fn call_statement(&mut self) -> Result<Statement, ParseError> {
+        let start = self.span_here();
+        let call = self.expression()?;
+        if !matches!(call, Expression::Call { .. }) {
+            return Err(ParseError {
+                message: "only a call can stand alone as a statement".to_string(),
+                span: start.to(self.span_before()),
+            });
+        }
+        Ok(Statement::Call { call, span: start.to(self.span_before()) })
     }
 
     fn let_statement(&mut self) -> Result<Statement, ParseError> {
@@ -723,6 +827,11 @@ impl<'a> Parser<'a> {
         // The lexer always ends with `End`, so there is nothing past it
         // to index into.
         &self.tokens[self.at.min(self.tokens.len() - 1)]
+    }
+
+    /// The token `ahead` positions on, clamped the same way.
+    fn peek_at(&self, ahead: usize) -> &Token {
+        &self.tokens[(self.at + ahead).min(self.tokens.len() - 1)]
     }
 
     /// `name: value, name: value)` — the inside of a call or a

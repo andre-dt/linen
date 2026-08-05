@@ -107,3 +107,48 @@ fn a_fault_does_not_leak_into_the_next_test() {
     assert!(out[0].1.is_some(), "the first test read out of range");
     assert_eq!(out[1].1, None, "the second test did nothing wrong");
 }
+
+// =====================================================================
+// Reading past the end of an ARRAY.
+//
+// The same defect as on a list, and now the same report. An array's
+// size is in its type, so the bound is a constant in the generated
+// code — but the INDEX is a computed value, so nothing at compile time
+// can decide it in general.
+//
+// Before this it read whatever was next in memory and carried on: a
+// value that looks like geometry and is not.
+// =====================================================================
+
+#[test]
+fn reading_past_the_end_of_an_array_is_reported() {
+    let out = run(
+        "fn three() [i32; 3]\n  return [10, 20, 30]\n\ntest \"t\"\n  let xs = three()\n  throw \"unreachable\" unless xs[5] == 0\n",
+    );
+    let failed = out[0].1.as_deref().expect("an out-of-range read should fail the test");
+    assert!(
+        failed.contains("element 5") && failed.contains("of 3"),
+        "the message should say which index and how long the array was, got: {failed}"
+    );
+}
+
+#[test]
+fn reading_a_negative_array_index_is_reported() {
+    let out = run(
+        "fn three() [i32; 3]\n  return [10, 20, 30]\n\ntest \"t\"\n  let xs = three()\n  throw \"unreachable\" unless xs[0 - 1] == 0\n",
+    );
+    assert!(
+        out[0].1.is_some(),
+        "a negative index is as much a defect as one past the end"
+    );
+}
+
+#[test]
+fn an_array_read_in_range_is_not_reported() {
+    // The other half: a check that fired on every read would make the
+    // suite useless, and this is what says it does not.
+    let out = run(
+        "fn three() [i32; 3]\n  return [10, 20, 30]\n\ntest \"t\"\n  let xs = three()\n  throw \"the last element\" unless xs[2] == 30\n",
+    );
+    assert_eq!(out[0].1, None, "index 2 of three is in range");
+}

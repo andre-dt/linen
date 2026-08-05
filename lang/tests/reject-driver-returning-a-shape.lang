@@ -1,0 +1,24 @@
+#~ crosses the boundary
+# A driver may not return a shape.
+#
+# The rule this file exists for cost a real bug: `vertex_at` declared as
+# returning a three-i32 shape compiled, linked, ran — and lost two of
+# the three fields. A 12-byte aggregate returns through a hidden pointer
+# on SysV, and the generated code returned it by value.
+#
+# It failed with `x` still correct, which is the worst possible failure:
+# a careless test passes. Nothing about it was catchable at run time,
+# and it was written two screens below a comment saying not to do it.
+#
+# So the compiler enforces it. Integers and handles cross; anything with
+# a layout does not.
+
+shape Vertex
+  x i32
+  y i32
+  z i32
+
+driver fn vertex_at(index i32) Vertex
+
+test "t"
+  throw "x" unless vertex_at(index: 0).x == 0

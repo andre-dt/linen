@@ -1,0 +1,24 @@
+# =====================================================================
+# runtime — WHAT A COMPILED KERNEL NEEDS AT RUN TIME.
+#
+# The arena, and every `linen:` driver. Compiled code calls these by
+# name; without them, `liblinen.a` has undefined symbols and only links
+# for a caller who happens to provide them.
+#
+# Its own crate, not part of `compile`, because it must be buildable
+# WITHOUT LLVM. `linen build` links this into the archive it produces,
+# and a kernel shipped to a customer should not carry a compiler.
+#
+# Both a rlib and a staticlib: the rlib is what `compile` uses to run
+# tests in-process, and the staticlib is the object that goes into
+# liblinen.a. One source, so the two can never disagree about what
+# `push` does.
+# =====================================================================
+
+[package]
+name = "runtime"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["rlib", "staticlib"]

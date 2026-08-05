@@ -1,0 +1,4 @@
+from './shared' use Point
+
+fn left_of(p Point) i32
+  return p.x

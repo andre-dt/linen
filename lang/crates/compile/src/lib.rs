@@ -6,8 +6,12 @@
 // second, and it would not if it lived here.
 // =====================================================================
 
-pub mod arena;
 pub mod emit;
 pub mod host;
 pub mod object;
 pub mod run;
+
+// The arena and the drivers live in `runtime`, which builds without
+// LLVM: they are linked into a compiled kernel, and a kernel should not
+// carry a compiler. Re-exported so callers keep one path to them.
+pub use runtime::{arena, drivers};

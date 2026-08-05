@@ -1,0 +1,16 @@
+# A module: shapes and functions another file can name.
+#
+# There is no `export` marker. Everything at the top level of a file is
+# importable, and `export` keeps the meaning it already had — a symbol
+# that survives into the object file for NAPI. Two different questions,
+# so two different words.
+
+shape Point
+  x i32
+  y i32
+
+fn doubled(n i32) i32
+  return n * 2
+
+fn origin() Point
+  return Point(x: 0, y: 0)

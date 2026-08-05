@@ -1,0 +1,4 @@
+from './shared' use Point
+
+fn right_of(p Point) i32
+  return p.y

@@ -10,6 +10,7 @@
 pub mod ast;
 pub mod check;
 pub mod lex;
+pub mod load;
 pub mod parse;
 pub mod resolve;
 pub mod token;

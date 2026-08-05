@@ -17,8 +17,6 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-mod gallery;
-mod render;
 mod scene;
 mod report;
 mod run;
@@ -71,6 +69,10 @@ fn dispatch(arguments: &[String]) -> Result<ExitCode, String> {
     match command.as_str() {
         "build" => run::build(&Options::parse(rest)?),
         "test" => run::test(&Options::parse(rest)?),
+        // Runs ONE file, for the subprocess `test` spawns per file.
+        // Not in the usage text: it is how `test` is implemented, not
+        // something to reach for.
+        "test-file" => run::test_file(&Options::parse(rest)?),
         "clean" => run::clean(),
         other => Err(format!(
             "`{other}` is not a command. Try `build`, `test` or `clean`."

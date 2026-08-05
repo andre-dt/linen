@@ -1,0 +1,278 @@
+# TESSELLATION — the BREP turned into triangles.
+#
+# The kernel's job, not the viewer's. A BREP says "this face is bounded
+# by this closed loop of coedges, lying in this plane"; a GPU draws
+# triangles and nothing else. Turning one into the other is geometry, and
+# geometry belongs to the kernel — the same body must tessellate the same
+# way on the server, in a test, and in an export, or the picture the user
+# validates is not the picture the kernel computed.
+#
+# WHY EAR CLIPPING
+# ----------------
+# A face's loop is a simple polygon in the face's own plane. Ear clipping
+# removes one triangle at a time from a corner that is convex and empty,
+# which is the only algorithm here that needs no arithmetic beyond the
+# exact predicates already written: `turn` decides convex, and
+# `turn` three times decides containment. No angles, no square roots,
+# no tolerance — an integer polygon triangulates exactly or not at all.
+#
+# WHY THE POLYGON IS IN 2D
+# ------------------------
+# A planar face is a 2D problem wearing 3D coordinates. Dropping the axis
+# in which the face's plane varies least keeps the projection
+# non-degenerate — a face standing straight up in z would collapse to a
+# line if x and y were kept blindly — and the sign of `turn` in the
+# kept plane still says the same thing about winding it said in 3D.
+
+from './predicates' use wide, Point3, orient3d
+from 'linen:brep' use Body, vertex_x, vertex_y, vertex_z, face_count, face_outer, face_a, face_b, face_c, loop_size, loop_coedge, coedge_start, vertex_count
+
+# A point in the face's own plane, after the least-varying axis is
+# dropped. `where` is the index of the 3D vertex it came from, so a
+# triangle in 2D names vertices of the body.
+# A vertex, as a value on the language side.
+#
+# Not the driver's: a three-i32 shape cannot cross the C ABI, so the
+# driver hands back coordinates one at a time and they are gathered
+# into a shape here, where a shape costs nothing.
+shape Vertex
+  x i32
+  y i32
+  z i32
+
+shape Flat
+  x i64
+  y i64
+  where i32
+
+fn widen(value i32) i64
+  return value + 0
+
+# Back down to i32.
+#
+# Needed because arithmetic widens: `face * 4` is i64 even where `face`
+# is i32, and an i64 has no business being the element type of a list of
+# indices.
+fn narrow(value i64) i32
+  return value
+
+fn turn(ax i64, ay i64, bx i64, by i64, cx i64, cy i64) i128
+  return wide(value: bx - ax) * wide(value: cy - ay) - wide(value: by - ay) * wide(value: cx - ax)
+
+fn absolute(value i128) i128
+  return if value < 0 then 0 - value else value
+
+# Which axis of the face's normal is largest, AND WHICH WAY IT POINTS.
+#
+# 0, 1, 2 for a normal pointing along plus x, y, z; 3, 4, 5 for minus.
+# The sign matters as much as the axis: dropping z is the same drop for a
+# face pointing up and one pointing down, but keeping (x, y) in the same
+# order for both reverses the winding of the second. The bottom face of a
+# box is exactly that case.
+#
+# The normal's components are the three 2x2 minors of the two edge
+# vectors — computed exactly, never normalised, because only their
+# comparison and their sign matter.
+fn dominant_axis(a Vertex, b Vertex, c Vertex) i32
+  let bx = wide(value: b.x - a.x)
+  let by = wide(value: b.y - a.y)
+  let bz = wide(value: b.z - a.z)
+  let cx = wide(value: c.x - a.x)
+  let cy = wide(value: c.y - a.y)
+  let cz = wide(value: c.z - a.z)
+  let sx = by * cz - bz * cy
+  let sy = bz * cx - bx * cz
+  let sz = bx * cy - by * cx
+  let nx = absolute(value: sx)
+  let ny = absolute(value: sy)
+  let nz = absolute(value: sz)
+  if nx >= ny and nx >= nz
+    return if sx < 0 then 3 else 0
+  if ny >= nz
+    return if sy < 0 then 4 else 1
+  return if sz < 0 then 5 else 2
+
+# The face's plane, as 2D. The dropped axis is the dominant one, and the
+# remaining two are kept in the order that preserves the winding: for a
+# face whose normal points along +x, (y, z) winds the same way (x, y)
+# does for a normal along +z.
+#
+# When the normal points the other way the same two axes are kept but
+# SWAPPED, which flips the 2D winding back — the mirror the projection
+# would otherwise introduce, undone.
+fn flatten(v Vertex, axis i32, index i32) Flat
+  if axis == 0
+    return Flat(x: widen(value: v.y), y: widen(value: v.z), where: index)
+  if axis == 1
+    return Flat(x: widen(value: v.z), y: widen(value: v.x), where: index)
+  if axis == 2
+    return Flat(x: widen(value: v.x), y: widen(value: v.y), where: index)
+  if axis == 3
+    return Flat(x: widen(value: v.z), y: widen(value: v.y), where: index)
+  if axis == 4
+    return Flat(x: widen(value: v.x), y: widen(value: v.z), where: index)
+  return Flat(x: widen(value: v.y), y: widen(value: v.x), where: index)
+
+# A vertex of a body, as a value.
+#
+# Three calls, because a three-i32 shape cannot cross the boundary —
+# see the header of `linen:brep`. Gathered back into a shape HERE, on
+# the language side, where a shape is just a value and costs nothing.
+fn vertex_of(body Body, index i32) Vertex
+  return Vertex(
+    x: vertex_x(body: body, index: index),
+    y: vertex_y(body: body, index: index),
+    z: vertex_z(body: body, index: index))
+
+# The face's loop, as a 2D polygon.
+#
+# A face is an INDEX now, not a shape: the topology lives on the other
+# side of the driver, and what crosses is the number naming it.
+fn polygon(body Body, face i32) List<Flat>
+  let axis = dominant_axis(
+    a: vertex_of(body: body, index: face_a(body: body, index: face)),
+    b: vertex_of(body: body, index: face_b(body: body, index: face)),
+    c: vertex_of(body: body, index: face_c(body: body, index: face)))
+  return gathering(body: body, ring: face_outer(body: body, index: face), axis: axis, from: 0, built: list())
+
+fn gathering(body Body, ring i32, axis i32, from i32, built List<Flat>) List<Flat>
+  if from >= loop_size(body: body, ring: ring)
+    return built
+  let which = loop_coedge(body: body, ring: ring, position: from)
+  let index = coedge_start(body: body, index: which)
+  let point = flatten(v: vertex_of(body: body, index: index), axis: axis, index: index)
+  return gathering(body: body, ring: ring, axis: axis, from: from + 1, built: push(list: built, value: point))
+
+fn polygon_area(points List<Flat>) i128
+  return summing(points: points, from: 0, total: wide(value: 0))
+
+fn summing(points List<Flat>, from i32, total i128) i128
+  if from >= length(list: points)
+    return total
+  let a = at(list: points, index: from)
+  let b = at(list: points, index: (from + 1) % length(list: points))
+  return summing(points: points, from: from + 1, total: total + wide(value: a.x) * wide(value: b.y) - wide(value: b.x) * wide(value: a.y))
+
+fn inside(ax i64, ay i64, bx i64, by i64, cx i64, cy i64, px i64, py i64) bool
+  let first = turn(ax: ax, ay: ay, bx: bx, by: by, cx: px, cy: py)
+  let second = turn(ax: bx, ay: by, bx: cx, by: cy, cx: px, cy: py)
+  let third = turn(ax: cx, ay: cy, bx: ax, by: ay, cx: px, cy: py)
+  return first > 0 and second > 0 and third > 0
+
+fn is_ear(points List<Flat>, at_index i32) bool
+  let count = length(list: points)
+  let a = at(list: points, index: (at_index + count - 1) % count)
+  let b = at(list: points, index: at_index)
+  let c = at(list: points, index: (at_index + 1) % count)
+  if turn(ax: a.x, ay: a.y, bx: b.x, by: b.y, cx: c.x, cy: c.y) <= 0
+    return false
+  return empty(points: points, at_index: at_index, ax: a.x, ay: a.y, bx: b.x, by: b.y, cx: c.x, cy: c.y, from: 0)
+
+fn empty(points List<Flat>, at_index i32, ax i64, ay i64, bx i64, by i64, cx i64, cy i64, from i32) bool
+  let count = length(list: points)
+  if from >= count
+    return true
+  let previous = (at_index + count - 1) % count
+  let next = (at_index + 1) % count
+  if from == at_index or from == previous or from == next
+    return empty(points: points, at_index: at_index, ax: ax, ay: ay, bx: bx, by: by, cx: cx, cy: cy, from: from + 1)
+  let p = at(list: points, index: from)
+  if inside(ax: ax, ay: ay, bx: bx, by: by, cx: cx, cy: cy, px: p.x, py: p.y)
+    return false
+  return empty(points: points, at_index: at_index, ax: ax, ay: ay, bx: bx, by: by, cx: cx, cy: cy, from: from + 1)
+
+fn triangulate(points List<Flat>) List<i32>
+  return clipping(points: points, out: list())
+
+# Terminates because `without` returns a strictly shorter polygon every
+# step, so no separate iteration guard is needed — and a guard counting
+# clips rather than failed passes would silently truncate a polygon that
+# simply has many corners.
+fn clipping(points List<Flat>, out List<i32>) List<i32>
+  let count = length(list: points)
+  if count < 3
+    return out
+  let ear = find_ear(points: points, from: 0)
+  if ear < 0
+    # No ear anywhere in the polygon. Every simple polygon with more than
+    # three corners has at least two, so this means the input was not
+    # simple — self-intersecting, or wound the wrong way.
+    return out
+  let a = at(list: points, index: (ear + count - 1) % count)
+  let b = at(list: points, index: ear)
+  let c = at(list: points, index: (ear + 1) % count)
+  let grown = push(list: push(list: push(list: out, value: a.where), value: b.where), value: c.where)
+  return clipping(points: without(points: points, at_index: ear), out: grown)
+
+fn find_ear(points List<Flat>, from i32) i32
+  if from >= length(list: points)
+    return 0 - 1
+  if is_ear(points: points, at_index: from)
+    return from
+  return find_ear(points: points, from: from + 1)
+
+fn without(points List<Flat>, at_index i32) List<Flat>
+  return copying(points: points, at_index: at_index, from: 0, built: list())
+
+fn copying(points List<Flat>, at_index i32, from i32, built List<Flat>) List<Flat>
+  if from >= length(list: points)
+    return built
+  if from == at_index
+    return copying(points: points, at_index: at_index, from: from + 1, built: built)
+  return copying(points: points, at_index: at_index, from: from + 1, built: push(list: built, value: at(list: points, index: from)))
+
+fn tessellate_face(body Body, face i32) List<i32>
+  return triangulate(points: polygon(body: body, face: face))
+
+# Every face of a body, tessellated, as one flat list of vertex indices.
+#
+# One list for the whole body rather than one per face, because that is
+# what a renderer draws and what the mesh buffer holds: the faces share
+# the body's vertices, and a triangle is three indices into them
+# regardless of which face it came from.
+fn tessellate(body Body) List<i32>
+  return tessellating(body: body, from: 0, built: list())
+
+fn tessellating(body Body, from i32, built List<i32>) List<i32>
+  if from >= face_count(body: body)
+    return built
+  return tessellating(
+    body: body,
+    from: from + 1,
+    built: joined(into: built, more: tessellate_face(body: body, face: from), at_index: 0))
+
+fn joined(into List<i32>, more List<i32>, at_index i32) List<i32>
+  if at_index >= length(list: more)
+    return into
+  return joined(into: push(list: into, value: at(list: more, index: at_index)), more: more, at_index: at_index + 1)
+
+# The body's vertices, flattened to x, y, z — what `solid` draws.
+fn coordinates(body Body) List<i32>
+  return spreading(body: body, from: 0, built: list())
+
+fn spreading(body Body, from i32, built List<i32>) List<i32>
+  if from >= vertex_count(body: body)
+    return built
+  let v = vertex_of(body: body, index: from)
+  return spreading(
+    body: body,
+    from: from + 1,
+    built: push(list: push(list: push(list: built, value: v.x), value: v.y), value: v.z))
+
+# --- a vertex as the predicate sees it --------------------------------
+
+# `orient3d` is declared over `Point3` in the predicates, which is the
+# same three coordinates a `Vertex` holds. Converting rather than
+# declaring a second predicate: two copies of a determinant is two
+# places for a sign to be wrong, and the one in the predicates is the
+# one with the i128 reasoning written against it.
+fn as_point(v Vertex) Point3
+  return Point3(x: v.x, y: v.y, z: v.z)
+
+# Which side of the plane through a, b, c the vertex d falls on.
+fn side_of(a Vertex, b Vertex, c Vertex, d Vertex) i128
+  return orient3d(
+    a: as_point(v: a),
+    b: as_point(v: b),
+    c: as_point(v: c),
+    d: as_point(v: d))

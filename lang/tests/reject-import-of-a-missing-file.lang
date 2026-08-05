@@ -1,0 +1,10 @@
+#~ No such file
+# A module path pointing at nothing.
+#
+# Reported against the line that asked for it, not against the missing
+# file: the import is the thing a reader can fix.
+
+from './modules/not-here' use anything
+
+test "t"
+  throw "x" unless 1 == 1

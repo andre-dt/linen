@@ -1,0 +1,12 @@
+#~ two tests are called
+# Two tests with the same name.
+#
+# A test's name is how a failure is reported, so two of them make a
+# failure ambiguous — the runner names one and the reader looks at the
+# other. Prose, but prose that has to identify.
+
+test "adds two numbers"
+  throw "two and two" unless 2 + 2 == 4
+
+test "adds two numbers"
+  throw "one and one" unless 1 + 1 == 2

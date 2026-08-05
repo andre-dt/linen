@@ -55,6 +55,14 @@ enum ArenaSignature {
 /// function under this name before the JIT starts.
 pub const SOLID_SYMBOL: &str = "linen_solid";
 
+/// What a `driver fn`'s symbol is prefixed with.
+///
+/// `driver fn digits` becomes `linen_digits`, which is the name the
+/// runtime exports and the name a linker resolves. Bare names would
+/// put `release` and `digits` in the global namespace of everything
+/// that links this.
+pub const DRIVER_PREFIX: &str = "linen_";
+
 #[derive(Debug)]
 pub struct EmitError {
     pub message: String,
@@ -118,6 +126,13 @@ pub fn emit<'context>(
 
     for item in &unit.items {
         if let Item::Function(function) = item {
+            // A driver is declared and never defined: the body is Rust,
+            // linked in later. `declare` above already emitted exactly
+            // the right thing — a signature with no blocks, which is
+            // what an external symbol IS in LLVM.
+            if function.driver {
+                continue;
+            }
             emitter.function_body(function)?;
         }
     }
@@ -292,8 +307,95 @@ impl<'a, 'context> Emitter<'a, 'context> {
             None => self.context.void_type().fn_type(&parameters, false),
         };
 
-        let value = self.module.add_function(&function.name, signature, None);
+        // A driver's symbol carries the `linen_` prefix; everything
+        // else keeps the name it was written with.
+        //
+        // The prefix is what makes it findable by a LINKER. The JIT can
+        // map any name to any address, so this went unnoticed for as
+        // long as tests were the only thing running — but `liblinen.a`
+        // had `add_vertex` undefined while the runtime exported
+        // `linen_add_vertex`, and nothing said so until someone linked.
+        //
+        // Prefixed rather than bare, because these names land in the
+        // global namespace of whatever links this: `release` and
+        // `digits` as plain symbols would collide with half the world.
+        let symbol = if function.driver {
+            format!("{DRIVER_PREFIX}{}", function.name)
+        } else {
+            function.name.clone()
+        };
+        let value = self.module.add_function(&symbol, signature, None);
         self.functions.insert(function.name.clone(), value);
+        Ok(())
+    }
+
+    /// A call, with its arguments marshalled — shared by the expression
+    /// form and the statement form.
+    ///
+    /// One function rather than two, because the marshalling is the
+    /// hard part: defaults, declaration order, and a conversion per
+    /// argument. The two forms differ only in whether they then ask for
+    /// a value, and a second copy of this would be a second place for
+    /// the argument rules to drift.
+    fn emit_call(
+        &mut self,
+        callee: &str,
+        arguments: &[FieldValue],
+        scope: &Scope<'context>,
+    ) -> Result<inkwell::values::CallSiteValue<'context>, EmitError> {
+        let function = *self.functions.get(callee).ok_or_else(|| EmitError {
+            message: format!("there is no `{callee}` here"),
+        })?;
+
+        // Arguments are given in declaration order — resolve.rs
+        // enforced that — but a default may have been skipped, so the
+        // parameters are walked and each one either takes the argument
+        // written for it or its default.
+        let declared = self.parameters_of(callee)?;
+        let mut values = Vec::new();
+        for parameter in &declared {
+            let written = arguments.iter().find(|given| given.name == parameter.name);
+            let (source, of) = match written {
+                Some(given) => (&given.value, self.checked_type(&given.value, scope)?),
+                None => {
+                    let default = parameter.default.as_ref().ok_or_else(|| EmitError {
+                        message: format!(
+                            "`{}` of `{callee}` has no default, so it must be given",
+                            parameter.name
+                        ),
+                    })?;
+                    (default, self.checked_type(default, scope)?)
+                }
+            };
+            let value = self.expression(source, scope)?;
+            let wanted = self.type_of_name(&parameter.type_name)?;
+            values.push(self.convert_any(value, of, wanted)?.into());
+        }
+
+        self.builder
+            .build_call(function, &values, "call")
+            .map_err(builder_error)
+    }
+
+    /// A call written for its effect, with whatever it returned thrown
+    /// away.
+    fn call_discarding(
+        &mut self,
+        call: &Expression,
+        scope: &Scope<'context>,
+    ) -> Result<(), EmitError> {
+        let Expression::Call { callee, arguments, .. } = call else {
+            return Err(EmitError {
+                message: "only a call can stand alone as a statement".to_string(),
+            });
+        };
+        // The list builtins go through their own path, which produces a
+        // value; discarding it here is the same as never asking.
+        if matches!(callee.as_str(), "list" | "push" | "length" | "at") {
+            self.expression(call, scope)?;
+            return Ok(());
+        }
+        self.emit_call(callee, arguments, scope)?;
         Ok(())
     }
 
@@ -351,8 +453,14 @@ impl<'a, 'context> Emitter<'a, 'context> {
         Ok(())
     }
 
-    /// `void linen_solid(i32* points, i32 point_count, i32* triangles,
-    /// i32 triangle_count)` — declared here, provided by the runner.
+    /// `void linen_solid(i32* points, i32 point_count, i32* indices,
+    /// i32 index_count, i32 kind)` — declared here, provided by the
+    /// runner.
+    ///
+    /// One symbol for both `solid` and `wire`, told apart by `kind`.
+    /// The payload is identical — points and indices — and the only
+    /// difference is how many indices make one primitive, which the
+    /// runner is the one that needs to know.
     ///
     /// Flat pointers and lengths rather than anything structured, for
     /// the same reason the N-API boundary is: those are the shapes every
@@ -365,7 +473,7 @@ impl<'a, 'context> Emitter<'a, 'context> {
         let pointer = self.context.ptr_type(inkwell::AddressSpace::default());
         let count = self.context.i32_type();
         let signature = self.context.void_type().fn_type(
-            &[pointer.into(), count.into(), pointer.into(), count.into()],
+            &[pointer.into(), count.into(), pointer.into(), count.into(), count.into()],
             false,
         );
         self.module.add_function(SOLID_SYMBOL, signature, None)
@@ -469,6 +577,14 @@ impl<'a, 'context> Emitter<'a, 'context> {
                 let of = self.checked_type(value, scope)?;
                 let emitted = self.expression(value, scope)?;
                 scope.push((name.clone(), of, emitted));
+            }
+
+            // A call for its effect. Emitted through `call_void`
+            // rather than `expression`, because a function returning
+            // nothing produces no value to ask for — and asking is
+            // where the generic path would fail.
+            Statement::Call { call, .. } => {
+                self.call_discarding(call, scope)?;
             }
 
             Statement::Return { value, .. } => match value {
@@ -594,9 +710,9 @@ impl<'a, 'context> Emitter<'a, 'context> {
             // as pointer plus length, the same flat shape the N-API
             // boundary uses. Nothing about a mesh crosses as an
             // aggregate.
-            Statement::Solid { arguments, .. } => {
+            Statement::Solid { arguments, kind, .. } => {
                 let mut passed: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
-                for wanted in ["points", "triangles"] {
+                for wanted in ["points", kind.indices()] {
                     let argument = arguments
                         .iter()
                         .find(|given| given.name == wanted)
@@ -660,6 +776,18 @@ impl<'a, 'context> Emitter<'a, 'context> {
                         }
                     }
                 }
+
+                // Which kind, so the runner knows whether three
+                // indices make a triangle or two make a line.
+                passed.push(
+                    self.context
+                        .i32_type()
+                        .const_int(match kind {
+                            MeshKind::Solid => 0,
+                            MeshKind::Wire => 1,
+                        }, false)
+                        .into(),
+                );
 
                 let solid = self.solid_declaration();
                 self.builder
@@ -856,41 +984,7 @@ impl<'a, 'context> Emitter<'a, 'context> {
             }
 
             Expression::Call { callee, arguments, .. } => {
-                let function = *self.functions.get(callee).ok_or_else(|| EmitError {
-                    message: format!("there is no `{callee}` here"),
-                })?;
-
-                // Arguments are given in declaration order — resolve.rs
-                // enforced that — but a default may have been skipped, so
-                // the parameters are walked and each one either takes the
-                // argument written for it or its default.
-                let declared = self.parameters_of(callee)?;
-                let mut values = Vec::new();
-                for parameter in &declared {
-                    let written = arguments.iter().find(|given| given.name == parameter.name);
-                    let (source, of) = match written {
-                        Some(given) => {
-                            (&given.value, self.checked_type(&given.value, scope)?)
-                        }
-                        None => {
-                            let default = parameter.default.as_ref().ok_or_else(|| EmitError {
-                                message: format!(
-                                    "`{}` of `{callee}` has no default, so it must be given",
-                                    parameter.name
-                                ),
-                            })?;
-                            (default, self.checked_type(default, scope)?)
-                        }
-                    };
-                    let value = self.expression(source, scope)?;
-                    let wanted = self.type_of_name(&parameter.type_name)?;
-                    values.push(self.convert_any(value, of, wanted)?.into());
-                }
-
-                let call = self
-                    .builder
-                    .build_call(function, &values, "call")
-                    .map_err(builder_error)?;
+                let call = self.emit_call(callee, arguments, scope)?;
                 call.try_as_basic_value().left().ok_or_else(|| EmitError {
                     message: format!("`{callee}` returns nothing, so it has no value here"),
                 })
@@ -1023,10 +1117,37 @@ impl<'a, 'context> Emitter<'a, 'context> {
                     self.checked_type(index, scope)?,
                     Type::I64,
                 )?;
+                // Bounds-checked. An array's size is in its TYPE, so
+                // the bound is a constant here rather than something
+                // read from the value.
+                //
+                // The check reports and CLAMPS rather than trapping:
+                // this crosses into Rust, where a panic is undefined
+                // behaviour, and the fault is already recorded — so the
+                // test fails with a name attached however the read
+                // turns out. Without it, `xs[5]` in an array of three
+                // read whatever was next in memory and carried on,
+                // which is a value that looks like geometry and is not.
+                let checked = self.index_check();
+                let position = self
+                    .builder
+                    .build_call(
+                        checked,
+                        &[
+                            position.into(),
+                            self.context.i64_type().const_int(info.size as u64, false).into(),
+                        ],
+                        "checked",
+                    )
+                    .map_err(builder_error)?
+                    .try_as_basic_value()
+                    .left()
+                    .expect("the index check returns an index")
+                    .into_int_value();
+
                 let zero = self.context.i64_type().const_zero();
-                // Safety: the index is not bounds-checked yet. That is a
-                // runtime check with nowhere to report to — recorded in
-                // PENDING.md rather than left to be discovered.
+                // Safety: `position` came back from the bounds check, so
+                // it is inside the array whatever the caller wrote.
                 let element = unsafe {
                     self.builder
                         .build_gep(array_type, slot, &[zero, position], "element")
@@ -1038,6 +1159,18 @@ impl<'a, 'context> Emitter<'a, 'context> {
                     .map_err(builder_error)
             }
         }
+    }
+
+    /// `i64 linen_check_index(i64 index, i64 length)` — declared here,
+    /// provided by the runtime.
+    fn index_check(&mut self) -> FunctionValue<'context> {
+        const SYMBOL: &str = "linen_check_index";
+        if let Some(existing) = self.module.get_function(SYMBOL) {
+            return existing;
+        }
+        let word = self.context.i64_type();
+        let signature = word.fn_type(&[word.into(), word.into()], false);
+        self.module.add_function(SYMBOL, signature, None)
     }
 
     /// How many bytes one element of a type occupies.
