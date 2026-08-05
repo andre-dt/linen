@@ -218,12 +218,32 @@ fn resolve_path(directory: &Path, written: &str, root: &Path) -> PathBuf {
 /// Flattens `.` and `..` so that two spellings of one file compare
 /// equal.
 ///
+/// ABSOLUTE, so that a relative spelling and an absolute one compare
+/// equal too. `linen:draft` resolves against the kernel's own root,
+/// which is absolute; `'./../src/draft'` resolves against the importing
+/// file, which is not. Left as written they are two keys for one file,
+/// and a diamond through the two spellings merged it twice — reported
+/// as `Point` being declared twice, at a column in whatever line
+/// happened to be there.
+///
 /// Textual, not `canonicalize`: the file may not exist yet, and a
 /// missing file should be reported as missing rather than as a path
 /// error. Symlinks are not followed, which means two names for one file
 /// would load twice — noted rather than solved, since nothing in the
 /// kernel is behind a symlink.
 fn normalise(path: &Path) -> PathBuf {
+    // Anchored at the working directory when relative. The kernel is
+    // always loaded from one process with one working directory, so
+    // this is the same anchor for every path in a build.
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    };
+    let path = path.as_path();
+
     let mut parts: Vec<std::ffi::OsString> = Vec::new();
     for part in path.components() {
         match part {

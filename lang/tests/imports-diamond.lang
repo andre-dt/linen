@@ -1,0 +1,40 @@
+# A DIAMOND OF IMPORTS LOADS ITS SHARED MODULE ONCE.
+#
+# `draft` and `tessellate` both import `predicates`. A file importing
+# both reaches `predicates` twice, and the loader has to notice that the
+# two paths name one file — otherwise every declaration in it is merged
+# twice and `Point` is reported as declared twice.
+#
+# WHY IT IS ABOUT SPELLING AND NOT ABOUT DIAMONDS
+# -----------------------------------------------
+# The loader already deduplicated by path, and diamonds through
+# `linen:` worked. What did not was a diamond where the two arms spell
+# the same file DIFFERENTLY: the kernel's own modules import each other
+# through `linen:`, which resolves against an absolute root, while a
+# test reaching the same file through `'./../src/...'` produced a
+# relative path. Two spellings, two keys, one file merged twice.
+#
+# The message made it hard to see: it named `Point`, pointed at whatever
+# symbol happened to sit at that column of the import line, and moved as
+# the line was edited — so it read as a problem with the import being
+# written rather than with one loaded underneath it.
+
+from './../src/draft' use Draft, closed_draft, add, count
+from './../src/tessellate' use Vertex, vertex_of
+from './../src/predicates' use Point
+
+test "a file can import two modules that share a dependency"
+  # The assertion is that this file COMPILES. Everything below merely
+  # uses each import, so that none is dropped as unused and the test
+  # keeps meaning what it says.
+  let path = add(draft: closed_draft(), point: Point(x: 1, y: 2))
+  throw "one point" unless count(draft: path) == 1
+
+test "the shared module's shapes are usable from both arms"
+  # `Point` arrives through `draft`, `Vertex` through `tessellate`, and
+  # both modules built theirs from the same `predicates`. If the loader
+  # had merged that file twice these would be two different types with
+  # one name.
+  let corner = Point(x: 30, y: 40)
+  throw "x" unless corner.x == 30
+  throw "y" unless corner.y == 40

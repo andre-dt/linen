@@ -11,6 +11,9 @@
 # proves the tessellator right.
 
 from './../src/predicates' use wide
+from './../src/extrude' use extrude
+from './../src/plane' use top
+from './../src/draft' use Draft, closed_draft, add
 from 'linen:brep' use Body, empty_body, add_vertex, add_edge, add_coedge, add_loop, extend_loop, add_face, face_count, loop_size, loop_coedge, coedge_start, coedge_end
 from './../src/tessellate' use Vertex, Flat, turn, side_of, dominant_axis, flatten, polygon, polygon_area, inside, is_ear, triangulate, tessellate_face, tessellate, coordinates, narrow, vertex_of
 
@@ -107,96 +110,34 @@ fn square_body() Body
   add_face(body: body, outer: ring, a: a, b: b, c: c)
   return body
 
-# A box, as a real BREP: eight vertices, twelve edges, six faces, and
-# every edge used by exactly two faces in opposite directions.
+# A box, BUILT rather than typed.
 #
-#   z          7-------6
-#   | y       /|      /|
-#   |/       4-------5 |
-#   +--x     | 3-----|-2
-#            |/      |/
-#            0-------1
+# This used to be eighty lines: eight vertices, twelve edges and six
+# loops written out corner by corner, with a comment diagram to keep
+# them straight. That was data pretending to be a model — nothing about
+# it said what a box IS, only what one particular box happened to
+# contain.
+#
+# Now it is a square extruded, which is what a box is. Every picture
+# below it is unchanged, and that is the proof the two agree: a builder
+# that got any winding wrong would render inside-out immediately.
 fn box_body(width i32, depth i32, height i32) Body
-  let body = empty_body()
+  return extrude(profile: rectangle(width: width, depth: depth), plane: top(), distance: height)
 
-  add_vertex(body: body, x: 0, y: 0, z: 0)
-  add_vertex(body: body, x: width, y: 0, z: 0)
-  add_vertex(body: body, x: width, y: depth, z: 0)
-  add_vertex(body: body, x: 0, y: depth, z: 0)
-  add_vertex(body: body, x: 0, y: 0, z: height)
-  add_vertex(body: body, x: width, y: 0, z: height)
-  add_vertex(body: body, x: width, y: depth, z: height)
-  add_vertex(body: body, x: 0, y: depth, z: height)
-
-  # Bottom ring 0-3, top ring 4-7, then the four uprights.
-  add_edge(body: body, from: 0, to: 1)
-  add_edge(body: body, from: 1, to: 2)
-  add_edge(body: body, from: 2, to: 3)
-  add_edge(body: body, from: 3, to: 0)
-  add_edge(body: body, from: 4, to: 5)
-  add_edge(body: body, from: 5, to: 6)
-  add_edge(body: body, from: 6, to: 7)
-  add_edge(body: body, from: 7, to: 4)
-  add_edge(body: body, from: 0, to: 4)
-  add_edge(body: body, from: 1, to: 5)
-  add_edge(body: body, from: 2, to: 6)
-  add_edge(body: body, from: 3, to: 7)
-
-  # Each face's plane is the FIRST THREE VERTICES OF ITS OWN LOOP, in
-  # loop order. Not any three of its corners: the orientation decides
-  # which axis is dropped and which way the flattened polygon winds, so
-  # three taken out of order describe the same plane facing the other
-  # way, and every triangle of that face comes out reversed.
-
-  # bottom (z = 0), seen from below, so the bottom ring reversed
-  let bottom = add_loop(body: body)
-  extend_loop(body: body, ring: bottom, coedge: add_coedge(body: body, edge: 3, forward: false))
-  extend_loop(body: body, ring: bottom, coedge: add_coedge(body: body, edge: 2, forward: false))
-  extend_loop(body: body, ring: bottom, coedge: add_coedge(body: body, edge: 1, forward: false))
-  extend_loop(body: body, ring: bottom, coedge: add_coedge(body: body, edge: 0, forward: false))
-  add_face(body: body, outer: bottom, a: 0, b: 3, c: 2)
-
-  # top (z = height), the top ring forward
-  let top = add_loop(body: body)
-  extend_loop(body: body, ring: top, coedge: add_coedge(body: body, edge: 4, forward: true))
-  extend_loop(body: body, ring: top, coedge: add_coedge(body: body, edge: 5, forward: true))
-  extend_loop(body: body, ring: top, coedge: add_coedge(body: body, edge: 6, forward: true))
-  extend_loop(body: body, ring: top, coedge: add_coedge(body: body, edge: 7, forward: true))
-  add_face(body: body, outer: top, a: 4, b: 5, c: 6)
-
-  # front (y = 0): 0 -> 1 -> 5 -> 4
-  let front = add_loop(body: body)
-  extend_loop(body: body, ring: front, coedge: add_coedge(body: body, edge: 0, forward: true))
-  extend_loop(body: body, ring: front, coedge: add_coedge(body: body, edge: 9, forward: true))
-  extend_loop(body: body, ring: front, coedge: add_coedge(body: body, edge: 4, forward: false))
-  extend_loop(body: body, ring: front, coedge: add_coedge(body: body, edge: 8, forward: false))
-  add_face(body: body, outer: front, a: 0, b: 1, c: 5)
-
-  # right (x = width): 1 -> 2 -> 6 -> 5
-  let right = add_loop(body: body)
-  extend_loop(body: body, ring: right, coedge: add_coedge(body: body, edge: 1, forward: true))
-  extend_loop(body: body, ring: right, coedge: add_coedge(body: body, edge: 10, forward: true))
-  extend_loop(body: body, ring: right, coedge: add_coedge(body: body, edge: 5, forward: false))
-  extend_loop(body: body, ring: right, coedge: add_coedge(body: body, edge: 9, forward: false))
-  add_face(body: body, outer: right, a: 1, b: 2, c: 6)
-
-  # back (y = depth): 2 -> 3 -> 7 -> 6
-  let back = add_loop(body: body)
-  extend_loop(body: body, ring: back, coedge: add_coedge(body: body, edge: 2, forward: true))
-  extend_loop(body: body, ring: back, coedge: add_coedge(body: body, edge: 11, forward: true))
-  extend_loop(body: body, ring: back, coedge: add_coedge(body: body, edge: 6, forward: false))
-  extend_loop(body: body, ring: back, coedge: add_coedge(body: body, edge: 10, forward: false))
-  add_face(body: body, outer: back, a: 2, b: 3, c: 7)
-
-  # left (x = 0): 3 -> 0 -> 4 -> 7
-  let left = add_loop(body: body)
-  extend_loop(body: body, ring: left, coedge: add_coedge(body: body, edge: 3, forward: true))
-  extend_loop(body: body, ring: left, coedge: add_coedge(body: body, edge: 8, forward: true))
-  extend_loop(body: body, ring: left, coedge: add_coedge(body: body, edge: 7, forward: false))
-  extend_loop(body: body, ring: left, coedge: add_coedge(body: body, edge: 11, forward: false))
-  add_face(body: body, outer: left, a: 3, b: 0, c: 4)
-
-  return body
+# The base square, wound counter-clockwise.
+#
+# Written out here rather than imported from `shapes`: importing it
+# would pull `predicates` in a second time, under a second identity, and
+# `Point` would be declared twice. That is a limitation of the loader
+# worth fixing on its own rather than working around everywhere.
+fn rectangle(width i32, depth i32) Draft
+  return add(
+    draft: add(
+      draft: add(
+        draft: add(draft: closed_draft(), point: Point(x: 0, y: 0)),
+        point: Point(x: width, y: 0)),
+      point: Point(x: width, y: depth)),
+    point: Point(x: 0, y: depth))
 
 test "a body of one square face tessellates to two triangles"
   let body = square_body()
