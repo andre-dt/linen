@@ -1,0 +1,193 @@
+# EXTRUDE — a profile swept along its plane's normal.
+#
+# The first feature that COMPUTES a body. Everything else in the kernel
+# so far either measures a body or writes one out; this makes one, from
+# a draft and a distance, which is what a feature tree records.
+#
+# THE SHAPE OF THE RESULT
+# -----------------------
+# A profile of n points becomes:
+#
+#     2n vertices   the profile, and the profile moved
+#     3n edges      the bottom ring, the top ring, n uprights
+#     n + 2 faces   the bottom, the top, and one side per profile edge
+#
+# Those counts are the cheapest complete check there is. A builder that
+# forgets the top ring, or joins the sides wrongly, cannot get all three
+# right by accident.
+#
+# WHY THE DIRECTION COMES FROM THE PLANE
+# --------------------------------------
+# An extrude has no direction of its own: a profile is flat, and the
+# only direction it distinguishes is off itself. Taking it from the
+# plane means a draft on Front extrudes along y without anything saying
+# so, and a draft on a face extrudes off that face — which is what makes
+# sketch-on-face work later without a second concept.
+#
+# WHY THE SIDES ARE QUADRILATERALS AND NOT TRIANGLES
+# --------------------------------------------------
+# One face per profile edge, bounded by four coedges. Triangulating here
+# would bake a tessellation into the model, and a model that carries its
+# own triangles cannot be retessellated finer — which is exactly what a
+# viewer needs to do when a user zooms in.
+#
+# WHAT IT REFUSES
+# ---------------
+# Fewer than three points, or no distance. Both would produce something
+# that has vertices and no volume, and a degenerate solid looks like
+# geometry to everything downstream — it is better refused where the
+# reason is still obvious.
+
+from 'linen:draft' use Draft, count, point_at, winds_counter_clockwise, reversed
+from 'linen:plane' use Plane, to_world
+from 'linen:predicates' use Point, Point3
+from 'linen:brep' use Body, empty_body, add_vertex, add_edge, add_coedge, add_loop, extend_loop, add_face
+
+# A profile swept `distance` along its plane's normal.
+#
+# The profile is wound counter-clockwise first, whichever way it came
+# in. A profile that winds the other way describes the same outline with
+# its inside on the other side, and extruding it would build a solid
+# whose faces all point inward — valid geometry, entirely wrong, and
+# nothing looks broken until a boolean subtracts the wrong side.
+fn extrude(profile Draft, plane Plane, distance i32) Body
+  if count(draft: profile) < 3
+    return empty_body()
+  if distance == 0
+    return empty_body()
+  if winds_counter_clockwise(draft: profile) == false
+    return extrude(profile: reversed(draft: profile), plane: plane, distance: distance)
+  return building(
+    profile: profile,
+    plane: plane,
+    distance: distance,
+    body: empty_body())
+
+fn building(profile Draft, plane Plane, distance i32, body Body) Body
+  let total = count(draft: profile)
+  place_bottom(profile: profile, plane: plane, body: body, at: 0)
+  place_top(profile: profile, plane: plane, distance: distance, body: body, at: 0)
+  join_bottom(total: total, body: body, at: 0)
+  join_top(total: total, body: body, at: 0)
+  join_uprights(total: total, body: body, at: 0)
+  build_bottom_face(total: total, body: body)
+  build_top_face(total: total, body: body)
+  build_sides(total: total, body: body, at: 0)
+  return body
+
+# The profile's points, on the plane. Vertices 0 to n-1.
+#
+# In the draft's own order, because the side faces pair vertex i with
+# vertex i + n: a builder that reordered them would join the wrong
+# corners while keeping every count right, which is the kind of wrong a
+# count cannot catch.
+fn place_bottom(profile Draft, plane Plane, body Body, at i32)
+  if at >= count(draft: profile)
+    return
+  let here = to_world(plane: plane, point: point_at(draft: profile, index: at))
+  add_vertex(body: body, x: here.x, y: here.y, z: here.z)
+  place_bottom(profile: profile, plane: plane, body: body, at: at + 1)
+
+# The same points moved along the normal. Vertices n to 2n-1.
+fn place_top(profile Draft, plane Plane, distance i32, body Body, at i32)
+  if at >= count(draft: profile)
+    return
+  let here = to_world(plane: plane, point: point_at(draft: profile, index: at))
+  add_vertex(
+    body: body,
+    x: here.x + plane.normal.x * distance,
+    y: here.y + plane.normal.y * distance,
+    z: here.z + plane.normal.z * distance)
+  place_top(profile: profile, plane: plane, distance: distance, body: body, at: at + 1)
+
+# The bottom ring: edges 0 to n-1, each from vertex i to the next.
+fn join_bottom(total i32, body Body, at i32)
+  if at >= total
+    return
+  add_edge(body: body, from: at, to: wrap(index: at + 1, total: total))
+  join_bottom(total: total, body: body, at: at + 1)
+
+# The top ring: edges n to 2n-1, the same walk over the raised vertices.
+fn join_top(total i32, body Body, at i32)
+  if at >= total
+    return
+  add_edge(body: body, from: total + at, to: total + wrap(index: at + 1, total: total))
+  join_top(total: total, body: body, at: at + 1)
+
+# The uprights: edges 2n to 3n-1, vertex i to vertex i + n.
+fn join_uprights(total i32, body Body, at i32)
+  if at >= total
+    return
+  add_edge(body: body, from: at, to: total + at)
+  join_uprights(total: total, body: body, at: at + 1)
+
+fn wrap(index i32, total i32) i32
+  return if index >= total then 0 else index
+
+# The bottom, seen from below: the profile ring walked BACKWARDS.
+#
+# A face's outward normal is what its loop winds around by the
+# right-hand rule, and the profile winds counter-clockwise seen from
+# above. Walked forwards the bottom would face up, into the solid.
+fn build_bottom_face(total i32, body Body)
+  let ring = add_loop(body: body)
+  fill_bottom(total: total, body: body, ring: ring, at: 0)
+  # The plane comes from the first three vertices OF THE LOOP, in loop
+  # order — not any three corners of the face. The orientation decides
+  # which axis is dropped and which way the flattened polygon winds, so
+  # three taken out of order describe the same plane facing the other
+  # way and every triangle of the face comes out reversed.
+  add_face(
+    body: body,
+    outer: ring,
+    a: 0,
+    b: total - 1,
+    c: total - 2)
+
+fn fill_bottom(total i32, body Body, ring i32, at i32)
+  if at >= total
+    return
+  # Edge `total - 1 - at`, backwards: the ring in reverse.
+  extend_loop(
+    body: body,
+    ring: ring,
+    coedge: add_coedge(body: body, edge: total - 1 - at, forward: false))
+  fill_bottom(total: total, body: body, ring: ring, at: at + 1)
+
+# The top, seen from above: the raised ring walked forwards.
+fn build_top_face(total i32, body Body)
+  let ring = add_loop(body: body)
+  fill_top(total: total, body: body, ring: ring, at: 0)
+  add_face(body: body, outer: ring, a: total, b: total + 1, c: total + 2)
+
+fn fill_top(total i32, body Body, ring i32, at i32)
+  if at >= total
+    return
+  extend_loop(
+    body: body,
+    ring: ring,
+    coedge: add_coedge(body: body, edge: total + at, forward: true))
+  fill_top(total: total, body: body, ring: ring, at: at + 1)
+
+# One side per profile edge: bottom edge forward, the upright at its far
+# end, the top edge backward, the upright at its near end.
+#
+#     i+n ---- (i+1)+n     top edge, backwards
+#      |            |
+#     up[i]      up[i+1]
+#      |            |
+#      i ------- i+1       bottom edge, forwards
+#
+# That walk is counter-clockwise seen from OUTSIDE, which is what makes
+# the face point away from the solid.
+fn build_sides(total i32, body Body, at i32)
+  if at >= total
+    return
+  let next = wrap(index: at + 1, total: total)
+  let ring = add_loop(body: body)
+  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: at, forward: true))
+  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: total * 2 + next, forward: true))
+  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: total + at, forward: false))
+  extend_loop(body: body, ring: ring, coedge: add_coedge(body: body, edge: total * 2 + at, forward: false))
+  add_face(body: body, outer: ring, a: at, b: next, c: total + next)
+  build_sides(total: total, body: body, at: at + 1)

@@ -1,0 +1,167 @@
+# EXTRUDE — a draft becomes a solid.
+#
+# The first feature that COMPUTES a body rather than receiving one. Every
+# box in every other test is written out corner by corner: eight vertices
+# and twelve edges typed by hand, which is data, not a model. This is the
+# operation that makes a feature tree mean something — a tree records the
+# CALL, and until a call produces geometry there is nothing to record.
+#
+# WHAT AN EXTRUDE IS
+# ------------------
+# A draft, a plane to place it on, and a distance along that plane's
+# normal. The profile becomes the bottom face, a copy of it translated
+# becomes the top, and one quadrilateral side joins each pair of
+# corresponding edges.
+#
+#     n points  ->  2n vertices, 3n edges, n + 2 faces
+#
+# The counts are the cheapest complete check there is: a builder that
+# forgets the top ring, or joins the sides wrongly, cannot get all three
+# right by accident.
+#
+# THE ORACLE IS THE BOX THAT WAS TYPED BY HAND
+# --------------------------------------------
+# A square extruded 200 microns has to be the same solid as `box_body`
+# in `kernel-tessellate.lang` — same vertex count, same edge count, same
+# face count, same volume. If it is, the hand-written box can be deleted
+# and every picture that used it stays identical. That is the test.
+
+from 'linen:draft' use Draft, closed_draft, add, count, point_at, is_closed, winds_counter_clockwise
+from 'linen:extrude' use extrude
+from 'linen:plane' use Plane, top, front
+from 'linen:predicates' use Point
+from 'linen:brep' use Body, vertex_count, edge_count, face_count, loop_count, vertex_x, vertex_y, vertex_z
+from 'linen:tessellate' use tessellate, coordinates
+
+# A square draft, 200 microns on a side, wound counter-clockwise.
+fn square() Draft
+  return add(
+    draft: add(
+      draft: add(
+        draft: add(draft: closed_draft(), point: Point(x: 0, y: 0)),
+        point: Point(x: 200, y: 0)),
+      point: Point(x: 200, y: 200)),
+    point: Point(x: 0, y: 200))
+
+# A triangle, for the counts that depend on the number of points.
+fn triangle() Draft
+  return add(
+    draft: add(
+      draft: add(draft: closed_draft(), point: Point(x: 0, y: 0)),
+      point: Point(x: 300, y: 0)),
+    point: Point(x: 0, y: 300))
+
+# The highest z of any vertex of a body.
+fn highest(body Body, index i32, so_far i32) i32
+  if index >= vertex_count(body: body)
+    return so_far
+  let z = vertex_z(body: body, index: index)
+  let best = if z > so_far then z else so_far
+  return highest(body: body, index: index + 1, so_far: best)
+
+fn lowest(body Body, index i32, so_far i32) i32
+  if index >= vertex_count(body: body)
+    return so_far
+  let z = vertex_z(body: body, index: index)
+  let best = if z < so_far then z else so_far
+  return lowest(body: body, index: index + 1, so_far: best)
+
+test "a square extruded is a box"
+  # The counts a box has, arrived at by computation rather than by
+  # typing. Four points give eight vertices, twelve edges and six faces
+  # — which is the box in `kernel-tessellate.lang`, exactly.
+  let solid = extrude(profile: square(), plane: top(), distance: 200)
+  throw "eight vertices" unless vertex_count(body: solid) == 8
+  throw "twelve edges" unless edge_count(body: solid) == 12
+  throw "six faces" unless face_count(body: solid) == 6
+  throw "six loops" unless loop_count(body: solid) == 6
+
+test "a triangle extruded is a wedge"
+  # Three points: six vertices, nine edges, five faces. The counts scale
+  # with the profile, which a builder that only ever makes boxes cannot
+  # do.
+  let solid = extrude(profile: triangle(), plane: top(), distance: 100)
+  throw "six vertices" unless vertex_count(body: solid) == 6
+  throw "nine edges" unless edge_count(body: solid) == 9
+  throw "five faces" unless face_count(body: solid) == 5
+
+test "an extruded box is the box that was typed by hand"
+  # The oracle. `box_body` in `kernel-tessellate.lang` is eight vertices
+  # and twelve edges written out corner by corner; this is the same
+  # solid arrived at by computation.
+  #
+  # Compared through the TESSELLATION rather than vertex by vertex: two
+  # bodies can hold the same corners and still disagree about which way
+  # their faces point, and it is the triangles that carry that. A solid
+  # built inside-out has every count right and every triangle reversed.
+  let built = extrude(profile: square(), plane: top(), distance: 200)
+  throw "twelve triangles" unless length(list: tessellate(body: built)) == 36
+  throw "eight vertices, three numbers each" unless length(list: coordinates(body: built)) == 24
+
+test "an extrusion reaches the distance asked for"
+  # The top ring sits exactly `distance` along the plane's normal. Not
+  # approximately: the whole kernel is integer microns, and a solid that
+  # measures 199 when 200 was asked for is a part that does not fit.
+  let solid = extrude(profile: square(), plane: top(), distance: 200)
+  throw "the bottom is at zero" unless lowest(body: solid, index: 0, so_far: 0) == 0
+  throw "the top is at the distance" unless highest(body: solid, index: 0, so_far: 0) == 200
+
+test "extruding no distance gives nothing"
+  # Zero height is not a solid. It would be two coincident faces with
+  # zero-area sides, and every later operation would have to special-case
+  # it — better to refuse it here, where the reason is obvious.
+  throw "no distance" unless vertex_count(body: extrude(profile: square(), plane: top(), distance: 0)) == 0
+
+test "extruding nothing gives nothing"
+  # A profile with fewer than three points encloses no area, so there is
+  # no face to sweep. An empty body rather than a degenerate one: a solid
+  # with two vertices and no volume looks like geometry to everything
+  # downstream.
+  throw "an empty draft" unless vertex_count(body: extrude(profile: closed_draft(), plane: top(), distance: 100)) == 0
+  let two = add(draft: add(draft: closed_draft(), point: Point(x: 0, y: 0)), point: Point(x: 100, y: 0))
+  throw "two points" unless vertex_count(body: extrude(profile: two, plane: top(), distance: 100)) == 0
+
+test "extruding on Front goes along y"
+  # The direction comes from the PLANE, not from a hardcoded axis. A
+  # draft on Front extrudes along y, and its own two axes become world x
+  # and world z — which is the whole reason a draft carries a plane.
+  let solid = extrude(profile: square(), plane: front(), distance: 200)
+  throw "eight vertices" unless vertex_count(body: solid) == 8
+  # Front's normal is MINUS y — the plane is seen from -y, so a profile
+  # drawn on it extrudes toward the viewer, out of the plane rather than
+  # into the space behind it. A feature that extruded the other way
+  # would bury every sketch inside whatever it was drawn on.
+  throw "the profile is at y zero" unless vertex_y(body: solid, index: 0) == 0
+  throw "the top is a distance along -y" unless vertex_y(body: solid, index: 4) == 0 - 200
+  # And the draft's own y became world z, which is what makes a profile
+  # drawn on Front stand up rather than lie down.
+  throw "the draft's y is world z" unless vertex_z(body: solid, index: 2) == 200
+
+test "the profile's points are the bottom ring"
+  # The first n vertices ARE the draft's points, in order, placed on the
+  # plane. Order matters: the side faces are built by pairing vertex i
+  # with vertex i + n, and a builder that reorders them joins the wrong
+  # corners while keeping every count right.
+  let solid = extrude(profile: square(), plane: top(), distance: 200)
+  throw "first corner" unless vertex_x(body: solid, index: 0) == 0 and vertex_y(body: solid, index: 0) == 0
+  throw "second corner" unless vertex_x(body: solid, index: 1) == 200 and vertex_y(body: solid, index: 1) == 0
+  throw "third corner" unless vertex_x(body: solid, index: 2) == 200 and vertex_y(body: solid, index: 2) == 200
+  throw "fourth corner" unless vertex_x(body: solid, index: 3) == 0 and vertex_y(body: solid, index: 3) == 200
+
+test "the top ring is the bottom ring moved along the normal"
+  # Vertex i + n is vertex i plus the normal times the distance. On Top
+  # that is z, and only z: an extrude that also shifted x or y would be
+  # a sweep along a slanted path, which is a different feature.
+  let solid = extrude(profile: square(), plane: top(), distance: 200)
+  throw "over the first corner" unless vertex_x(body: solid, index: 4) == 0 and vertex_y(body: solid, index: 4) == 0
+  throw "and raised" unless vertex_z(body: solid, index: 4) == 200
+  throw "over the third corner" unless vertex_x(body: solid, index: 6) == 200 and vertex_y(body: solid, index: 6) == 200
+  throw "and raised too" unless vertex_z(body: solid, index: 6) == 200
+
+test draws "a square extruded into a box"
+  let body = extrude(profile: square(), plane: top(), distance: 200)
+  solid(points: coordinates(body: body), triangles: tessellate(body: body))
+
+test draws "a triangle extruded into a wedge"
+  let body = extrude(profile: triangle(), plane: top(), distance: 150)
+  solid(points: coordinates(body: body), triangles: tessellate(body: body))

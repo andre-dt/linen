@@ -188,18 +188,6 @@ impl Image {
         ];
     }
 
-    fn set_if_nearer(&mut self, x: i64, y: i64, depth: i64, colour: [u8; 3]) {
-        if x < 0 || y < 0 || x >= self.width as i64 || y >= self.height as i64 {
-            return;
-        }
-        let at = y as usize * self.width + x as usize;
-        if depth <= self.depth[at] {
-            return;
-        }
-        self.depth[at] = depth;
-        self.pixels[at] = colour;
-    }
-
     /// Copies another image in at an offset — how the gallery is built.
     pub fn blit(&mut self, other: &Image, left: usize, top: usize) {
         for y in 0..other.height {
@@ -460,125 +448,6 @@ fn triangle(
             image.blend_if_nearer(x, y, coverage, depth, colour);
         }
     }
-}
-
-/// For each triangle, which of its three sides — a-b, b-c, c-a — lie
-/// on the shape's boundary rather than being shared with a neighbour.
-///
-/// A side used by exactly two triangles is interior; anything else is
-/// on the outside. That includes a side shared by two triangles that
-/// face DIFFERENT ways, such as the fold between two faces of a box:
-/// there the surface really does turn, and smoothing it is right.
-///
-/// The same information `outline` derives for drawing edges, computed
-/// separately because it is needed per-triangle-per-side rather than
-/// per-edge.
-fn boundary_sides(mesh: &Mesh) -> Vec<[bool; 3]> {
-    use std::collections::HashMap;
-
-    let mut shared: HashMap<(usize, usize), usize> = HashMap::new();
-    for corner in mesh.triangles.chunks_exact(3) {
-        for (from, to) in [
-            (corner[0], corner[1]),
-            (corner[1], corner[2]),
-            (corner[2], corner[0]),
-        ] {
-            let key = if from < to { (from, to) } else { (to, from) };
-            *shared.entry(key).or_insert(0) += 1;
-        }
-    }
-
-    mesh.triangles
-        .chunks_exact(3)
-        .map(|corner| {
-            let mut outer = [true; 3];
-            for (side, (from, to)) in [
-                (corner[0], corner[1]),
-                (corner[1], corner[2]),
-                (corner[2], corner[0]),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                let key = if from < to { (from, to) } else { (to, from) };
-                outer[side] = shared.get(&key).copied().unwrap_or(1) < 2;
-            }
-            outer
-        })
-        .collect()
-}
-
-/// How much of a pixel a triangle covers, out of `FULL`.
-///
-/// Each `edge` value is twice the area of the triangle made by the
-/// pixel and one side, which is the pixel's distance from that side
-/// scaled by the side's length. Dividing by the length gives the
-/// distance, and a pixel within half a pixel of a side is covered in
-/// proportion to how far in it reaches.
-///
-/// The NEAREST side decides. At a corner two sides cut the same pixel,
-/// and the one cutting away most governs how much is left; taking the
-/// minimum is what keeps a corner from coming out brighter than the
-/// edges meeting there.
-///
-/// Approximate rather than exact — true coverage of a square by a
-/// half-plane needs an integral — but at this size the difference is
-/// invisible, and it is the same integer arithmetic the lines use.
-fn coverage_of(
-    first: i64,
-    second: i64,
-    third: i64,
-    a: Projected,
-    b: Projected,
-    c: Projected,
-    outer: [bool; 3],
-) -> i64 {
-    // An interior side contributes nothing to the fade: it is reported
-    // as fully inside however near the pixel is, so the neighbouring
-    // triangle's own fill meets it exactly.
-    let along = |from: Projected, to: Projected, doubled: i64, outer: bool| -> i64 {
-        if doubled < 0 {
-            // Outside this side, whichever kind it is.
-            let length = integer_hypotenuse(to.x - from.x, to.y - from.y).max(1);
-            return doubled * FULL / length;
-        }
-        if !outer {
-            return FULL;
-        }
-        let length = integer_hypotenuse(to.x - from.x, to.y - from.y).max(1);
-        doubled * FULL / length
-    };
-
-    let nearest = along(a, b, first, outer[0])
-        .min(along(b, c, second, outer[1]))
-        .min(along(c, a, third, outer[2]));
-
-    // A pixel whose centre is more than half a pixel inside is fully
-    // covered; more than half a pixel outside, not at all; between
-    // those it takes the share it reaches.
-    (nearest + FULL / 2).clamp(0, FULL)
-}
-
-/// The length of a vector, in whole pixels, without floating point.
-///
-/// The kernel avoids roots because geometry must be exact; here the
-/// number only scales a coverage that is approximate anyway, so an
-/// integer root is enough — and it keeps this file free of floating
-/// point like the rest of the project.
-fn integer_hypotenuse(run: i64, rise: i64) -> i64 {
-    let squared = run * run + rise * rise;
-    if squared <= 0 {
-        return 0;
-    }
-    let mut root = squared;
-    let mut previous = 0;
-    // Newton's method on integers: each step is nearer, and it stops
-    // when it stops moving.
-    while root != previous {
-        previous = root;
-        root = (root + squared / root) / 2;
-    }
-    root
 }
 
 /// A line drawn `thickness` samples wide, centred on the path.
@@ -1145,7 +1014,7 @@ fn render_flat(mesh: &Mesh, width: usize, height: usize, view: View) -> Image {
     // outside a small one.
     let bounds = extent(mesh);
 
-    for (index, corner) in mesh.triangles.chunks_exact(3).enumerate() {
+    for corner in mesh.triangles.chunks_exact(3) {
         let (a, b, c) = (
             placed[corner[0]],
             placed[corner[1]],
