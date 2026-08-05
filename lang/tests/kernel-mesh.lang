@@ -1,0 +1,113 @@
+# THE BOUNDARY THE APP CROSSES.
+#
+# Everything else in `tests/` checks geometry. This checks the crossing:
+# what the N-API addon calls, what comes back, and whether the numbers
+# survive the trip as the packed layout the viewer decodes.
+#
+# WHY IT IS TESTED HERE AND NOT IN TYPESCRIPT
+# -------------------------------------------
+# The layout has two authors — this file writes it, `viewer/mesh.ts`
+# reads it — and a format with two authors and no shared test is a
+# format that drifts. Testing it from the language side pins the writer;
+# the reader has its own tests against the same numbers.
+#
+# THE LAYOUT
+# ----------
+#   header:     u32 vertexCount, u32 triangleCount, u32 faceGroupCount
+#   positions:  f32 * 3 * vertexCount
+#   normals:    f32 * 3 * vertexCount
+#   indices:    u32 * 3 * triangleCount
+#   faceGroups: (u32 faceId, u32 firstTriangle, u32 triangleCount) * n
+#
+# Written as i32 words rather than bytes: every field is four bytes, so
+# a list of i32 IS the buffer, and the addon hands its pointer straight
+# to Node. Floats are the one exception — positions and normals are f32
+# in the buffer and integers here — so they cross as raw bit patterns.
+
+from './../src/draft' use Draft, closed_draft, add, count
+from './../src/extrude' use extrude
+from './../src/plane' use top
+from './../src/predicates' use Point
+from './../src/brep' use Body, vertex_count, face_count
+from './../src/mesh' use mesh_of, mesh_header_words
+
+fn square(side i32) Draft
+  return add(
+    draft: add(
+      draft: add(
+        draft: add(draft: closed_draft(), point: Point(x: 0, y: 0)),
+        point: Point(x: side, y: 0)),
+      point: Point(x: side, y: side)),
+    point: Point(x: 0, y: side))
+
+test "a mesh buffer starts with its three counts"
+  # The header is what the reader trusts to slice every other section.
+  # A box is eight vertices and twelve triangles; the face groups are
+  # six, one per face of the solid, which is what makes picking work.
+  let buffer = mesh_of(body: extrude(profile: square(side: 200), plane: top(), distance: 200))
+  throw "vertex count" unless at(list: buffer, index: 0) == 8
+  throw "triangle count" unless at(list: buffer, index: 1) == 12
+  throw "face group count" unless at(list: buffer, index: 2) == 6
+
+test "a mesh buffer is exactly as long as its header says"
+  # Truncation is the failure the reader cannot recover from: it would
+  # read past one section into the next and render garbage that looks
+  # like a geometry bug. The length is a function of the counts, so it
+  # can be checked here rather than discovered there.
+  let buffer = mesh_of(body: extrude(profile: square(side: 200), plane: top(), distance: 200))
+  let vertices = at(list: buffer, index: 0)
+  let triangles = at(list: buffer, index: 1)
+  let groups = at(list: buffer, index: 2)
+  # positions and normals are three words per vertex each; indices are
+  # three per triangle; a group is three.
+  let expected = mesh_header_words() + vertices * 3 + vertices * 3 + triangles * 3 + groups * 3
+  throw "the buffer is the length its header implies" unless length(list: buffer) == expected
+
+test "an empty body gives an empty mesh"
+  # Not a malformed one. A body with no faces has no triangles, and the
+  # reader has to be handed a valid header saying so rather than a short
+  # buffer it cannot slice.
+  let buffer = mesh_of(body: extrude(profile: closed_draft(), plane: top(), distance: 100))
+  throw "no vertices" unless at(list: buffer, index: 0) == 0
+  throw "no triangles" unless at(list: buffer, index: 1) == 0
+  throw "no groups" unless at(list: buffer, index: 2) == 0
+  throw "just the header" unless length(list: buffer) == mesh_header_words()
+
+test "every triangle names a vertex that exists"
+  # The check that catches an index written against the wrong section.
+  # A triangle naming vertex 9 of an eight-vertex mesh renders as a
+  # spike to the origin, which reads as a modelling error rather than a
+  # marshalling one.
+  let buffer = mesh_of(body: extrude(profile: square(side: 200), plane: top(), distance: 200))
+  throw "indices are in range" unless indices_in_range(buffer: buffer, at: 0)
+
+fn indices_in_range(buffer List<i32>, at i32) bool
+  let vertices = at(list: buffer, index: 0)
+  let triangles = at(list: buffer, index: 1)
+  if at >= triangles * 3
+    return true
+  let first = mesh_header_words() + vertices * 6
+  let index = at(list: buffer, index: first + at)
+  if index < 0 or index >= vertices
+    return false
+  return indices_in_range(buffer: buffer, at: at + 1)
+
+test "the face groups cover every triangle exactly once"
+  # A group says which triangles belong to which face, and that is what
+  # a click resolves to. Overlapping groups would make one triangle two
+  # faces; a gap would make a face unclickable.
+  let buffer = mesh_of(body: extrude(profile: square(side: 200), plane: top(), distance: 200))
+  throw "the groups tile the triangles" unless groups_tile(buffer: buffer, group: 0, next: 0)
+
+fn groups_tile(buffer List<i32>, group i32, next i32) bool
+  let vertices = at(list: buffer, index: 0)
+  let triangles = at(list: buffer, index: 1)
+  let groups = at(list: buffer, index: 2)
+  if group >= groups
+    return next == triangles
+  let first = mesh_header_words() + vertices * 6 + triangles * 3
+  let start = at(list: buffer, index: first + group * 3 + 1)
+  let count = at(list: buffer, index: first + group * 3 + 2)
+  if start != next
+    return false
+  return groups_tile(buffer: buffer, group: group + 1, next: next + count)
